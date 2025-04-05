@@ -1,0 +1,19 @@
+{
+  "name": "MMM-SPCOutlook",
+  "version": "1.0.0",
+  "description": "A MagicMirror module to interpret SPC Convective Outlooks",
+  "main": "MMM-SPCOutlook.js",
+  "scripts": {
+    "start": "node node_helper.js"
+  },
+  // "repository": {
+  //   "type": "git",
+  //   "url": "https://github.com/lightningjim/MMM-SPCOutlook"
+  // },
+  "author": "Kyle Creasey",
+  "license": "MIT",
+  "dependencies": {
+    "node-fetch": "^2.6.1",
+    "@turf/turf": "^6.5.0"
+  }
+}
