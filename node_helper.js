@@ -11,17 +11,19 @@ module.exports = NodeHelper.create({
   socketNotificationReceived: async function(notification, payload) {
     if (notification === "GET_SPC_DATA") {
     	console.log("SPC Outlook: GET_SPC_DATA GET")
-      const { lat, lon } = payload;
-      const result = await this.getSpcOutlook(lat, lon);
+      const { lat, lon, extended } = payload;
+      console.log("SPC-Outlook - intermediate payload" + lat + " " + lon + " " + extended)
+      const result = await this.getSpcOutlook(lat, lon, extended);
       // Send the results back to your front-end module
       console.log("SPC Outlook: " + result.day1);
       this.sendSocketNotification("SPC_DATA_RESULT", result);
     }
   },
 
-  async getSpcOutlook(lat, lon) {
+  async getSpcOutlook(lat, lon, extended) {
     try {
       //console.log("SPC-Outlook: I'M IN")
+      console.log("SPC-Outlook: Day 4-8 extended - " + extended)
 
       // The Python script has “risk_to_value” and “value_to_risk” logic:
       const riskToValue = {
@@ -88,19 +90,25 @@ module.exports = NodeHelper.create({
       response = await fetch(url);
       geojson = await response.json();
       const day2TorRisk = this.checkDayPerc(geojson, lat, lon);
-      console.log("SPC-Outlook: Day 2 Tor Risk" + day1TorRisk)
+      console.log("SPC-Outlook: Day 2 Tor Risk" + day2TorRisk)
+      day2TorSign = false;
+      if(day2TorRisk > 0) day2TorSign = this.checkDaySign(geojson, lat, lon);
       //Hail
       url = "https://www.spc.noaa.gov/products/outlook/day2otlk_hail.lyr.geojson";
       response = await fetch(url);
       geojson = await response.json();
       const day2HailRisk = this.checkDayPerc(geojson, lat, lon);
-      console.log("SPC-Outlook: Day 2 Hail Risk" + day2HailRisk)
+      console.log("SPC-Outlook: Day 2 Hail Risk" + day2HailRisk);
+      day2HailSign = false;
+      if(day2HailRisk > 0) day2HailSign = this.checkDaySign(geojson, lat, lon);
       //wind
       url = "https://www.spc.noaa.gov/products/outlook/day2otlk_wind.lyr.geojson";
       response = await fetch(url);
       geojson = await response.json();
       const day2WindRisk = this.checkDayPerc(geojson, lat, lon);
       console.log("SPC-Outlook: Day 2 Wind Risk" + day1WindRisk)
+      day2WindSign = false;
+      if(day2WindRisk > 0) day2HailSign = this.checkDaySign(geojson, lat, lon);
 
       if (day2TorRisk > 0 || day2HailRisk > 0 || day2WindRisk > 0) day2ProbRisk = true;
       console.log("SPC-Outlook: Day 2 Prob Risk test | " + day2ProbRisk)
@@ -109,28 +117,132 @@ module.exports = NodeHelper.create({
       response = await fetch(url);
       geojson = await response.json();
       const day3Risk = this.checkDayCat(geojson, lat, lon, riskToValue, valueToRisk);
-      //console.log("SPC-Outlook: Day 2 Risk got - " + this.day2Risk);
+      console.log("SPC-Outlook: Day 2 Risk got - " + this.day2Risk);
       url = "https://www.spc.noaa.gov/products/outlook/day3otlk_prob.lyr.geojson";
       response = await fetch(url);
       geojson = await response.json();
       const day3ProbRisk = this.checkDayPerc(geojson, lat, lon);
-      console.log("SPC-Outlook: Day 2 Prob Risk" + day3ProbRisk)
+      console.log("SPC-Outlook: Day 3 Prob Risk" + day3ProbRisk);
+      day3Sign = false;
+      if(day3ProbRisk > 0) day3Sign = this.checkDaySign(geojson, lat, lon);
+
+      if (!extended)
+      {
+        return {
+          day1: {
+           "risk": day1Risk,
+           "text": valueToFullRisk[day1Risk],
+           "color": riskToColor[day1Risk],
+           "probRisk": day1ProbRisk,
+           "torRisk": day1TorRisk,
+           "torSign": day1TorSign,
+           "hailRisk": day1HailRisk,
+           "hailSign": day1HailSign,
+           "windRisk": day1WindRisk,
+           "windSign": day1WindSign
+          },
+          day2: {
+            "risk": day2Risk,
+            "text": valueToFullRisk[day2Risk],
+            "color": riskToColor[day2Risk],
+            "probRisk": day2ProbRisk,
+            "torRisk": day2TorRisk,
+            "torSign": day2TorSign,
+            "hailRisk": day2HailRisk,
+            "hailSign": day2HailSign,
+            "windRisk": day2WindRisk
+            "windSign": day2WindSign
+          },
+          day3: {
+          "risk": day3Risk,
+          "text": valueToFullRisk[day3Risk],
+          "color": riskToColor[day3Risk],
+          "probRisk": day3ProbRisk
+          "sign": day3Sign
+          }
+        };
+      }
+
+      day48Risk = false;
+
+      url = "https://www.spc.noaa.gov/products/exper/day4-8/day4prob.lyr.geojson";
+      response = await fetch(url);
+      geojson = await response.json();
+      const day4Risk = this.checkDayPerc(geojson, lat, lon);
+      day4Sign = false;
+      if(day4Risk > 0) day4Sign = this.checkDaySign(geojson, lat, lon);
+
+      url = "https://www.spc.noaa.gov/products/exper/day4-8/day5prob.lyr.geojson";
+      response = await fetch(url);
+      geojson = await response.json();
+      const day5Risk = this.checkDayPerc(geojson, lat, lon);
+      day5Sign = false;
+      if(day5Risk > 0) day5Sign = this.checkDaySign(geojson, lat, lon);
+
+      url = "https://www.spc.noaa.gov/products/exper/day4-8/day6prob.lyr.geojson";
+      response = await fetch(url);
+      geojson = await response.json();
+      const day6Risk = this.checkDayPerc(geojson, lat, lon);
+      day6Sign = false;
+      if(day6Risk > 0) day6Sign = this.checkDaySign(geojson, lat, lon);
+
+      url = "https://www.spc.noaa.gov/products/exper/day4-8/day7prob.lyr.geojson";
+      response = await fetch(url);
+      geojson = await response.json();
+      const day7Risk = this.checkDayPerc(geojson, lat, lon);
+      day7Sign = false;
+      if(day7Risk > 0) day7Sign = this.checkDaySign(geojson, lat, lon);
+
+      url = "https://www.spc.noaa.gov/products/exper/day4-8/day8prob.lyr.geojson";
+      response = await fetch(url);
+      geojson = await response.json();
+      const day8Risk = this.checkDayPerc(geojson, lat, lon);
+      day8Sign = false;
+      if(day8Risk > 0) day8Sign = this.checkDaySign(geojson, lat, lon);
+
+      if(day4Risk > 0 || day5Risk > 0 || day6Risk > 0 || day7Risk > 0 || day8Risk > 0) day48Risk = true;
 
       return {
-        day1: {
-          "risk": day1Risk,
-          "text": valueToFullRisk[day1Risk],
-          "color": riskToColor[day1Risk],
-          "probRisk": day1ProbRisk,
-          "torRisk": day1TorRisk,
-          "torSign": day1TorSign,
-          "hailRisk": day1HailRisk,
-          "hailSign": day1HailSign,
-          "windRisk": day1WindRisk,
-          "windSign": day1WindSign
+        "day48Risk": day48Risk,
+        
+        return {
+          day1: {
+           "risk": day1Risk,
+           "text": valueToFullRisk[day1Risk],
+           "color": riskToColor[day1Risk],
+           "probRisk": day1ProbRisk,
+           "torRisk": day1TorRisk,
+           "torSign": day1TorSign,
+           "hailRisk": day1HailRisk,
+           "hailSign": day1HailSign,
+           "windRisk": day1WindRisk,
+           "windSign": day1WindSign
+          },
+          day2: {
+            "risk": day2Risk,
+            "text": valueToFullRisk[day2Risk],
+            "color": riskToColor[day2Risk],
+            "probRisk": day2ProbRisk,
+            "torRisk": day2TorRisk,
+            "torSign": day2TorSign,
+            "hailRisk": day2HailRisk,
+            "hailSign": day2HailSign,
+            "windRisk": day2WindRisk
+            "windSign": day2WindSign
+          },
+          day3: {
+          "risk": day3Risk,
+          "text": valueToFullRisk[day3Risk],
+          "color": riskToColor[day3Risk],
+          "probRisk": day3ProbRisk
+          "sign": day3Sign
+          }
         },
-        day2: {"risk": day2Risk, "text": valueToFullRisk[day2Risk], "color": riskToColor[day2Risk], "probRisk": day2ProbRisk, "torRisk": day2TorRisk, "hailRisk": day2HailRisk, "windRisk": day2WindRisk},
-        day3: {"risk": day3Risk, "text": valueToFullRisk[day3Risk], "color": riskToColor[day3Risk], "probRisk": day3ProbRisk}
+        day4: {"risk": day4Risk, "sign": day4Sign},
+        day5: {"risk": day5Risk, "sign": day5Sign},
+        day6: {"risk": day6Risk, "sign": day6Sign},
+        day7: {"risk": day7Risk, "sign": day7Sign},
+        day8: {"risk": day8Risk, "sign": day8Sign},
       };
 
     } catch (err) {
