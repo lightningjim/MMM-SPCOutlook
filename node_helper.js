@@ -10,7 +10,7 @@ module.exports = NodeHelper.create({
   // Called when the front-end (MMM-SPCOutlook.js) sends a socket notification
   socketNotificationReceived: async function(notification, payload) {
     if (notification === "GET_SPC_DATA") {
-    	console.log("SPC Outlook: GET_SPC_DATA GET")
+      console.log("SPC Outlook: GET_SPC_DATA GET")
       const { lat, lon, extended } = payload;
       console.log("SPC-Outlook - intermediate payload" + lat + " " + lon + " " + extended)
       const result = await this.getSpcOutlook(lat, lon, extended);
@@ -41,7 +41,7 @@ module.exports = NodeHelper.create({
       }
 
       const riskToColor = {
-      	NONE: "afddf6", TSTM: "d2ffa6", MRGL: "7ac687", SLGT: "f7f690", ENH: "e9c188", MDT: "eb7e82", HIGH: "ff81f8"
+        NONE: "afddf6", TSTM: "d2ffa6", MRGL: "7ac687", SLGT: "f7f690", ENH: "e9c188", MDT: "eb7e82", HIGH: "ff81f8"
       }; // https://www.spc.noaa.gov/new/css/SPCmain.css
       // Then repeat for day2, day3, etc.
 
@@ -150,14 +150,14 @@ module.exports = NodeHelper.create({
             "torSign": day2TorSign,
             "hailRisk": day2HailRisk,
             "hailSign": day2HailSign,
-            "windRisk": day2WindRisk
+            "windRisk": day2WindRisk,
             "windSign": day2WindSign
           },
           day3: {
           "risk": day3Risk,
           "text": valueToFullRisk[day3Risk],
           "color": riskToColor[day3Risk],
-          "probRisk": day3ProbRisk
+          "probRisk": day3ProbRisk,
           "sign": day3Sign
           }
         };
@@ -204,8 +204,6 @@ module.exports = NodeHelper.create({
 
       return {
         "day48Risk": day48Risk,
-        
-        return {
           day1: {
            "risk": day1Risk,
            "text": valueToFullRisk[day1Risk],
@@ -227,17 +225,16 @@ module.exports = NodeHelper.create({
             "torSign": day2TorSign,
             "hailRisk": day2HailRisk,
             "hailSign": day2HailSign,
-            "windRisk": day2WindRisk
+            "windRisk": day2WindRisk,
             "windSign": day2WindSign
           },
           day3: {
           "risk": day3Risk,
           "text": valueToFullRisk[day3Risk],
           "color": riskToColor[day3Risk],
-          "probRisk": day3ProbRisk
+          "probRisk": day3ProbRisk,
           "sign": day3Sign
-          }
-        },
+          },
         day4: {"risk": day4Risk, "sign": day4Sign},
         day5: {"risk": day5Risk, "sign": day5Sign},
         day6: {"risk": day6Risk, "sign": day6Sign},
