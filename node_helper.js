@@ -140,7 +140,7 @@ module.exports = NodeHelper.create({
       geojson = await response.json();
       const day1WindRisk = this.checkDayPerc(geojson, lat, lon);
       day1WindSign = false;
-      if(day1WindRisk > 0) day1HailSign = this.checkDaySign(geojson, lat, lon);
+      if(day1WindRisk > 0) day1WindSign = this.checkDaySign(geojson, lat, lon);
       //Log.info("SPC-Outlook: Day 1 Wind Risk" + day1WindRisk)
 
       if (day1TorRisk > 0 || day1HailRisk > 0 || day1WindRisk > 0) day1ProbRisk = true;
@@ -174,7 +174,7 @@ module.exports = NodeHelper.create({
       const day2WindRisk = this.checkDayPerc(geojson, lat, lon);
       //Log.info("SPC-Outlook: Day 2 Wind Risk" + day1WindRisk)
       day2WindSign = false;
-      if(day2WindRisk > 0) day2HailSign = this.checkDaySign(geojson, lat, lon);
+      if(day2WindRisk > 0) day2WindRisk = this.checkDaySign(geojson, lat, lon);
 
       if (day2TorRisk > 0 || day2HailRisk > 0 || day2WindRisk > 0) day2ProbRisk = true;
       //Log.info("SPC-Outlook: Day 2 Prob Risk test | " + day2ProbRisk)
