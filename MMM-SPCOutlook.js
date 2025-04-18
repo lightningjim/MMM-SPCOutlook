@@ -43,7 +43,7 @@ Module.register("MMM-SPCOutlook", {
       wrapper.innerHTML = "";
       if(this.mds) {
         for(const MD of this.mds){
-          wrapper.innerHTML += MD + "in effect.<br/>"
+          wrapper.innerHTML += "<span style=\"color: #0059E0\">" + MD + " in effect.</span><br/>"
         }
       }
       if(this.spcrisk.day1.risk != "NONE") 
