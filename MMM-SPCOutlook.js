@@ -25,6 +25,12 @@ Module.register("MMM-SPCOutlook", {
     }
   },
 
+  getStyles: function() {
+    return [
+      this.file("node_modules/weather-icons/css/weather-icons.min.css")
+    ];
+  },
+
   getDom: function() {
     const wrapper = document.createElement("div");
     if (!this.spcrisk) {
@@ -44,9 +50,9 @@ Module.register("MMM-SPCOutlook", {
         wrapper.innerHTML = "Day 1: <span style=\"color:#" + this.spcrisk.day1.color + "\">" + this.spcrisk.day1.text + "</span><br/>";
       if(this.spcrisk.day1.probRisk) {
         probRiskHTML = ""
-        if (this.spcrisk.day1.torRisk > 0) probRiskHTML += (this.spcrisk.day1.torSign ? "⚠" : "") + "🌪️ " + 100 * this.spcrisk.day1.torRisk + "% ";
-        if (this.spcrisk.day1.hailRisk > 0) probRiskHTML += (this.spcrisk.day1.hailSign ? "⚠" : "") + "⚪ " + 100 * this.spcrisk.day1.hailRisk + "% ";
-        if (this.spcrisk.day1.windRisk > 0) probRiskHTML += (this.spcrisk.day1.windSign ? "⚠" : "") + "🌬️ " + 100 * this.spcrisk.day1.windRisk + "%";
+        if (this.spcrisk.day1.torRisk > 0) probRiskHTML += (this.spcrisk.day1.torSign ? "<i class=\"wi wi-cloud-up\"></i>" : "") + "<i class=\"wi wi-tornado\"></i> " + 100 * this.spcrisk.day1.torRisk + "% ";
+        if (this.spcrisk.day1.hailRisk > 0) probRiskHTML += (this.spcrisk.day1.hailSign ? "<i class=\"wi wi-cloud-up\"></i>" : "") + "<i class=\"wi wi-meteor\"></i> " + 100 * this.spcrisk.day1.hailRisk + "% ";
+        if (this.spcrisk.day1.windRisk > 0) probRiskHTML += (this.spcrisk.day1.windSign ? "<i class=\"wi wi-cloud-up\"></i>" : "") + "<i class=\"wi wi-strong-wind\"></i> " + 100 * this.spcrisk.day1.windRisk + "%";
         wrapper.innerHTML += probRiskHTML+"<br/>";
       }}
       
@@ -55,24 +61,24 @@ Module.register("MMM-SPCOutlook", {
         wrapper.innerHTML += "Day 2: <span style=\"color:#" + this.spcrisk.day2.color + "\">" + this.spcrisk.day2.text + "</span><br/>";
       if(this.spcrisk.day2.probRisk) {
         probRiskHTML = ""
-        if (this.spcrisk.day2.torRisk > 0) probRiskHTML += (this.spcrisk.day2.torSign ? "⚠" : "") + "🌪️ " + 100 * this.spcrisk.day2.torRisk + "% ";
-        if (this.spcrisk.day2.hailRisk > 0) probRiskHTML += (this.spcrisk.day2.hailSign ? "⚠" : "") + "⚪ " + 100 * this.spcrisk.day2.hailRisk + "% ";
-        if (this.spcrisk.day2.windRisk > 0) probRiskHTML += (this.spcrisk.day2.windSign ? "⚠" : "") + "🌬️ " + 100 * this.spcrisk.day2.windRisk + "%";
+        if (this.spcrisk.day2.torRisk > 0) probRiskHTML += (this.spcrisk.day2.torSign ? "<i class=\"wi wi-cloud-up\"></i>" : "") + "<i class=\"wi wi-tornado\"></i> " + 100 * this.spcrisk.day2.torRisk + "% ";
+        if (this.spcrisk.day2.hailRisk > 0) probRiskHTML += (this.spcrisk.day2.hailSign ? "<i class=\"wi wi-cloud-up\"></i>" : "") + "<i class=\"wi wi-meteor\"></i> " + 100 * this.spcrisk.day2.hailRisk + "% ";
+        if (this.spcrisk.day2.windRisk > 0) probRiskHTML += (this.spcrisk.day2.windSign ? "<i class=\"wi wi-cloud-up\"></i>" : "") + "<i class=\"wi wi-strong-wind\"></i> " + 100 * this.spcrisk.day2.windRisk + "%";
         wrapper.innerHTML += probRiskHTML+"<br/>";
       }}
       if(this.spcrisk.day3.risk != "NONE") 
       {
       wrapper.innerHTML += "Day 3: <span style=\"color:#" + this.spcrisk.day3.color + "\">" + this.spcrisk.day3.text + "</span><br/>";
       if(this.spcrisk.day3.probRisk) {
-        wrapper.innerHTML += (this.spcrisk.day3.sign ? "⚠" : "") + "🌪️⚪🌬️" + 100 * this.spcrisk.day3.probRisk + "%";
+        wrapper.innerHTML += (this.spcrisk.day3.sign ? "<i class=\"wi wi-cloud-up\"></i>" : "") + "<i class=\"wi wi-thunderstorm\"></i> " + 100 * this.spcrisk.day3.probRisk + "%";
       }}
       if(this.config.extended)
       {
-        if(this.spcrisk.day4.risk) wrapper.innerHTML += "Day 4: " + (this.spcrisk.day4.sign ? "⚠" : "") + 100 * this.spcrisk.day4.risk + "%<br/>";
-        if(this.spcrisk.day5.risk) wrapper.innerHTML += "Day 5: " + (this.spcrisk.day5.sign ? "⚠" : "") + 100 * this.spcrisk.day5.risk + "%<br/>";
-        if(this.spcrisk.day6.risk) wrapper.innerHTML += "Day 6: " + (this.spcrisk.day6.sign ? "⚠" : "") + 100 * this.spcrisk.day6.risk + "%<br/>";
-        if(this.spcrisk.day7.risk) wrapper.innerHTML += "Day 7: " + (this.spcrisk.day7.sign ? "⚠" : "") + 100 * this.spcrisk.day7.risk + "%<br/>";
-        if(this.spcrisk.day8.risk) wrapper.innerHTML += "Day 8: " + (this.spcrisk.day8.sign ? "⚠" : "") + 100 * this.spcrisk.day8.risk + "%<br/>";
+        if(this.spcrisk.day4.risk) wrapper.innerHTML += "Day 4: " + (this.spcrisk.day4.sign ? "<i class=\"wi wi-cloud-up\"></i>" : "") + 100 * this.spcrisk.day4.risk + "%<br/>";
+        if(this.spcrisk.day5.risk) wrapper.innerHTML += "Day 5: " + (this.spcrisk.day5.sign ? "<i class=\"wi wi-cloud-up\"></i>" : "") + 100 * this.spcrisk.day5.risk + "%<br/>";
+        if(this.spcrisk.day6.risk) wrapper.innerHTML += "Day 6: " + (this.spcrisk.day6.sign ? "<i class=\"wi wi-cloud-up\"></i>" : "") + 100 * this.spcrisk.day6.risk + "%<br/>";
+        if(this.spcrisk.day7.risk) wrapper.innerHTML += "Day 7: " + (this.spcrisk.day7.sign ? "<i class=\"wi wi-cloud-up\"></i>" : "") + 100 * this.spcrisk.day7.risk + "%<br/>";
+        if(this.spcrisk.day8.risk) wrapper.innerHTML += "Day 8: " + (this.spcrisk.day8.sign ? "<i class=\"wi wi-cloud-up\"></i>" : "") + 100 * this.spcrisk.day8.risk + "%<br/>";
       }
     }
     return wrapper;
