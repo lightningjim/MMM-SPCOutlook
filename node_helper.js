@@ -114,7 +114,7 @@ module.exports = NodeHelper.create({
       url = "https://www.spc.noaa.gov/products/outlook/day1otlk_cat.lyr.geojson";
       response = await fetch(url);
       geojson = await response.json();
-      const day1Risk = this.checkDayCat(geojson, lat, lon, riskToValue, valueToRisk);
+      var day1Risk = this.checkDayCat(geojson, lat, lon, riskToValue, valueToRisk);
       //Log.info("SPC-Outlook: Day 1 Risk got - " + this.day1Risk);
 
       day1ProbRisk = false; 
@@ -122,7 +122,7 @@ module.exports = NodeHelper.create({
       url = "https://www.spc.noaa.gov/products/outlook/day1otlk_torn.lyr.geojson";
       response = await fetch(url);
       geojson = await response.json();
-      const day1TorRisk = this.checkDayPerc(geojson, lat, lon);
+      var day1TorRisk = this.checkDayPerc(geojson, lat, lon);
       //Log.info("SPC-Outlook: Day 1 Tor Risk" + day1TorRisk)
       day1TorSign = false;
       if(day1TorRisk > 0) day1TorSign = this.checkDaySign(geojson, lat, lon);
@@ -130,7 +130,7 @@ module.exports = NodeHelper.create({
       url = "https://www.spc.noaa.gov/products/outlook/day1otlk_hail.lyr.geojson";
       response = await fetch(url);
       geojson = await response.json();
-      const day1HailRisk = this.checkDayPerc(geojson, lat, lon);
+      var day1HailRisk = this.checkDayPerc(geojson, lat, lon);
       day1HailSign = false;
       if(day1HailRisk > 0) day1HailSign = this.checkDaySign(geojson, lat, lon);
       //Log.info("SPC-Outlook: Day 1 Hail Risk" + day1HailRisk)
@@ -138,7 +138,7 @@ module.exports = NodeHelper.create({
       url = "https://www.spc.noaa.gov/products/outlook/day1otlk_wind.lyr.geojson";
       response = await fetch(url);
       geojson = await response.json();
-      const day1WindRisk = this.checkDayPerc(geojson, lat, lon);
+      var day1WindRisk = this.checkDayPerc(geojson, lat, lon);
       day1WindSign = false;
       if(day1WindRisk > 0) day1WindSign = this.checkDaySign(geojson, lat, lon);
       //Log.info("SPC-Outlook: Day 1 Wind Risk" + day1WindRisk)
@@ -149,13 +149,13 @@ module.exports = NodeHelper.create({
       url = "https://www.spc.noaa.gov/products/outlook/day2otlk_cat.lyr.geojson";
       response = await fetch(url);
       geojson = await response.json();
-      const day2Risk = this.checkDayCat(geojson, lat, lon, riskToValue, valueToRisk);
+      var day2Risk = this.checkDayCat(geojson, lat, lon, riskToValue, valueToRisk);
       day2ProbRisk = false; 
       //Torn
       url = "https://www.spc.noaa.gov/products/outlook/day2otlk_torn.lyr.geojson";
       response = await fetch(url);
       geojson = await response.json();
-      const day2TorRisk = this.checkDayPerc(geojson, lat, lon);
+      var day2TorRisk = this.checkDayPerc(geojson, lat, lon);
       //Log.info("SPC-Outlook: Day 2 Tor Risk" + day2TorRisk)
       day2TorSign = false;
       if(day2TorRisk > 0) day2TorSign = this.checkDaySign(geojson, lat, lon);
@@ -163,7 +163,7 @@ module.exports = NodeHelper.create({
       url = "https://www.spc.noaa.gov/products/outlook/day2otlk_hail.lyr.geojson";
       response = await fetch(url);
       geojson = await response.json();
-      const day2HailRisk = this.checkDayPerc(geojson, lat, lon);
+      var day2HailRisk = this.checkDayPerc(geojson, lat, lon);
       //Log.info("SPC-Outlook: Day 2 Hail Risk" + day2HailRisk);
       day2HailSign = false;
       if(day2HailRisk > 0) day2HailSign = this.checkDaySign(geojson, lat, lon);
@@ -171,7 +171,7 @@ module.exports = NodeHelper.create({
       url = "https://www.spc.noaa.gov/products/outlook/day2otlk_wind.lyr.geojson";
       response = await fetch(url);
       geojson = await response.json();
-      const day2WindRisk = this.checkDayPerc(geojson, lat, lon);
+      var day2WindRisk = this.checkDayPerc(geojson, lat, lon);
       //Log.info("SPC-Outlook: Day 2 Wind Risk" + day1WindRisk)
       day2WindSign = false;
       if(day2WindRisk > 0) day2WindRisk = this.checkDaySign(geojson, lat, lon);
@@ -182,12 +182,12 @@ module.exports = NodeHelper.create({
       url = "https://www.spc.noaa.gov/products/outlook/day3otlk_cat.lyr.geojson";
       response = await fetch(url);
       geojson = await response.json();
-      const day3Risk = this.checkDayCat(geojson, lat, lon, riskToValue, valueToRisk);
+      var day3Risk = this.checkDayCat(geojson, lat, lon, riskToValue, valueToRisk);
       //Log.info("SPC-Outlook: Day 2 Risk got - " + this.day2Risk);
       url = "https://www.spc.noaa.gov/products/outlook/day3otlk_prob.lyr.geojson";
       response = await fetch(url);
       geojson = await response.json();
-      const day3ProbRisk = this.checkDayPerc(geojson, lat, lon);
+      var day3ProbRisk = this.checkDayPerc(geojson, lat, lon);
       //Log.info("SPC-Outlook: Day 3 Prob Risk" + day3ProbRisk);
       day3Sign = false;
       if(day3ProbRisk > 0) day3Sign = this.checkDaySign(geojson, lat, lon);
@@ -234,35 +234,35 @@ module.exports = NodeHelper.create({
       url = "https://www.spc.noaa.gov/products/exper/day4-8/day4prob.lyr.geojson";
       response = await fetch(url);
       geojson = await response.json();
-      const day4Risk = this.checkDayPerc(geojson, lat, lon);
+      var day4Risk = this.checkDayPerc(geojson, lat, lon);
       day4Sign = false;
       if(day4Risk > 0) day4Sign = this.checkDaySign(geojson, lat, lon);
 
       url = "https://www.spc.noaa.gov/products/exper/day4-8/day5prob.lyr.geojson";
       response = await fetch(url);
       geojson = await response.json();
-      const day5Risk = this.checkDayPerc(geojson, lat, lon);
+      var day5Risk = this.checkDayPerc(geojson, lat, lon);
       day5Sign = false;
       if(day5Risk > 0) day5Sign = this.checkDaySign(geojson, lat, lon);
 
       url = "https://www.spc.noaa.gov/products/exper/day4-8/day6prob.lyr.geojson";
       response = await fetch(url);
       geojson = await response.json();
-      const day6Risk = this.checkDayPerc(geojson, lat, lon);
+      var day6Risk = this.checkDayPerc(geojson, lat, lon);
       day6Sign = false;
       if(day6Risk > 0) day6Sign = this.checkDaySign(geojson, lat, lon);
 
       url = "https://www.spc.noaa.gov/products/exper/day4-8/day7prob.lyr.geojson";
       response = await fetch(url);
       geojson = await response.json();
-      const day7Risk = this.checkDayPerc(geojson, lat, lon);
+      var day7Risk = this.checkDayPerc(geojson, lat, lon);
       day7Sign = false;
       if(day7Risk > 0) day7Sign = this.checkDaySign(geojson, lat, lon);
 
       url = "https://www.spc.noaa.gov/products/exper/day4-8/day8prob.lyr.geojson";
       response = await fetch(url);
       geojson = await response.json();
-      const day8Risk = this.checkDayPerc(geojson, lat, lon);
+      var day8Risk = this.checkDayPerc(geojson, lat, lon);
       day8Sign = false;
       if(day8Risk > 0) day8Sign = this.checkDaySign(geojson, lat, lon);
 
