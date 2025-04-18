@@ -1,29 +1,95 @@
 const NodeHelper = require("node_helper");
 const fetch = (...args) => import('node-fetch').then(({ default: f }) => f(...args));
-const turf = require("@turf/turf"); // or another geometry library
+const turf = require("@turf/turf"); // or another geometry librarykmz-
+const Log = require("logger");
+const ZIP = require("adm-zip");
+const { DOMParser } = require("@xmldom/xmldom");
+const KMLtoGJ = require("@tmcw/togeojson");
+const xpath    = require("xpath");
+const select = xpath.useNamespaces({
+  k: "http://www.opengis.net/kml/2.2"
+});
 
 module.exports = NodeHelper.create({
   start: function() {
-    console.log("Starting node_helper for MMM-SPCOutlook...");
+    Log.info("Starting node_helper for MMM-SPCOutlook...");
   },
 
   // Called when the front-end (MMM-SPCOutlook.js) sends a socket notification
   socketNotificationReceived: async function(notification, payload) {
     if (notification === "GET_SPC_DATA") {
-      console.log("SPC Outlook: GET_SPC_DATA GET")
+      Log.info("SPC Outlook: GET_SPC_DATA GET")
       const { lat, lon, extended } = payload;
-      console.log("SPC-Outlook - intermediate payload" + lat + " " + lon + " " + extended)
-      const result = await this.getSpcOutlook(lat, lon, extended);
+      Log.info("SPC-Outlook - intermediate payload" + lat + " " + lon + " " + extended); 
+      const md = await this.getMesoscaleDiscussion(lat, lon);
+      const outlook = await this.getSpcOutlook(lat, lon, extended);
       // Send the results back to your front-end module
-      console.log("SPC Outlook: " + result.day1);
-      this.sendSocketNotification("SPC_DATA_RESULT", result);
+      this.sendSocketNotification("SPC_DATA_RESULT", [outlook, md]);
     }
+  },
+
+  async fetchBinBuffer(url){
+    const res = await fetch(url);
+    if(!res.ok) throw new Error(`Failed to fetch ${url}: ${res.status}`);
+    return Buffer.from(await res.arrayBuffer());
+  },
+
+  kmzToKmlfilename(url) {
+    const segments = url.split("/");
+    const kmzFileName = segments[segments.length-1];
+    return kmzFileName.slice(0,-1)+"l";
+  },
+
+  extractKmlFromKmz(buffer, filename){
+    const ZIPper = new ZIP(buffer);
+    const entry = ZIPper.getEntry(filename);
+    if(!entry) throw new Error('KMZ downloaded has no KML');
+    //Log.info("SPC-Outlook: " + ZIPper.readFile(entry))
+    return ZIPper.readFile(entry).toString();
+  },
+
+  parseNetworkLinks(kmlText) {
+    const doc = new DOMParser().parseFromString(kmlText, "text/xml");
+    //Log.info("SPC-Outlook: Parsed DOM" + doc);
+    const nodes = select("//k:NetworkLink/k:Link/k:href/text()", doc);
+    const MDS = nodes.map(n => n.nodeValue.trim());
+    //Log.info("SPC‑Outlook: Nodes –", JSON.stringify(MDS));
+    return MDS;
+  },
+
+  kmlToGeoJson(kmlText) {
+    const doc = new DOMParser().parseFromString(kmlText, "text/xml");
+    const gj  = KMLtoGJ.kml(doc);
+    return gj;
+  },
+
+  async getMesoscaleDiscussion(lat,lon){
+    var ActiveURL = "https://www.spc.noaa.gov/products/md/ActiveMD.kmz"
+    const ActiveKMZ = await this.fetchBinBuffer(ActiveURL);
+    //Log.info("SPC-Outlook: KMZ = " + ActiveKMZ);
+    const ActiveKML = this.extractKmlFromKmz(ActiveKMZ, "ActiveMD.kml");
+    //Log.info("SPC-Outlook: KML = " + ActiveKML);
+    const MDURLs = this.parseNetworkLinks(ActiveKML);
+    //Log.ifo("SPC-outlook: Total MDs #" + MDURLs)
+    if(MDURLs.length == 0) return false;
+    MDArray = [];
+    for(const MDURL of MDURLs){
+      const MDKMZ = await this.fetchBinBuffer(MDURL);
+      const MDKML = this.extractKmlFromKmz(MDKMZ, this.kmzToKmlfilename(MDURL));
+      const MDgj = this.kmlToGeoJson(MDKML);
+      const MDApplies = this.checkInPolygon(MDgj, lat, lon);
+      console.log("SPC-Outlook MD Test:" + MDgj.features[0].properties.name + " | " + MDApplies);
+      if(MDApplies) MDArray.push(MDgj.features[0].properties.name);
+    }
+    Log.info("SPC-Outlook MDArray: " + MDArray);
+    if (MDArray.length == 0) return false;
+    return MDArray;
   },
 
   async getSpcOutlook(lat, lon, extended) {
     try {
-      //console.log("SPC-Outlook: I'M IN")
-      console.log("SPC-Outlook: Day 4-8 extended - " + extended)
+      //Log.info("SPC-Outlook: I'M IN")
+      //Log.info("SPC-Outlook: Day 4-8 extended - " + extended)
 
       // The Python script has “risk_to_value” and “value_to_risk” logic:
       const riskToValue = {
@@ -49,7 +115,7 @@ module.exports = NodeHelper.create({
       response = await fetch(url);
       geojson = await response.json();
       const day1Risk = this.checkDayCat(geojson, lat, lon, riskToValue, valueToRisk);
-      //console.log("SPC-Outlook: Day 1 Risk got - " + this.day1Risk);
+      //Log.info("SPC-Outlook: Day 1 Risk got - " + this.day1Risk);
 
       day1ProbRisk = false; 
       //Torn
@@ -57,7 +123,7 @@ module.exports = NodeHelper.create({
       response = await fetch(url);
       geojson = await response.json();
       const day1TorRisk = this.checkDayPerc(geojson, lat, lon);
-      console.log("SPC-Outlook: Day 1 Tor Risk" + day1TorRisk)
+      //Log.info("SPC-Outlook: Day 1 Tor Risk" + day1TorRisk)
       day1TorSign = false;
       if(day1TorRisk > 0) day1TorSign = this.checkDaySign(geojson, lat, lon);
       //Hail
@@ -67,7 +133,7 @@ module.exports = NodeHelper.create({
       const day1HailRisk = this.checkDayPerc(geojson, lat, lon);
       day1HailSign = false;
       if(day1HailRisk > 0) day1HailSign = this.checkDaySign(geojson, lat, lon);
-      console.log("SPC-Outlook: Day 1 Hail Risk" + day1HailRisk)
+      //Log.info("SPC-Outlook: Day 1 Hail Risk" + day1HailRisk)
       //wind
       url = "https://www.spc.noaa.gov/products/outlook/day1otlk_wind.lyr.geojson";
       response = await fetch(url);
@@ -75,10 +141,10 @@ module.exports = NodeHelper.create({
       const day1WindRisk = this.checkDayPerc(geojson, lat, lon);
       day1WindSign = false;
       if(day1WindRisk > 0) day1HailSign = this.checkDaySign(geojson, lat, lon);
-      console.log("SPC-Outlook: Day 1 Wind Risk" + day1WindRisk)
+      //Log.info("SPC-Outlook: Day 1 Wind Risk" + day1WindRisk)
 
       if (day1TorRisk > 0 || day1HailRisk > 0 || day1WindRisk > 0) day1ProbRisk = true;
-      console.log("SPC-Outlook: Day 1 Prob Risk test | " + day1ProbRisk)
+      //Log.info("SPC-Outlook: Day 1 Prob Risk test | " + day1ProbRisk)
 
       url = "https://www.spc.noaa.gov/products/outlook/day2otlk_cat.lyr.geojson";
       response = await fetch(url);
@@ -90,7 +156,7 @@ module.exports = NodeHelper.create({
       response = await fetch(url);
       geojson = await response.json();
       const day2TorRisk = this.checkDayPerc(geojson, lat, lon);
-      console.log("SPC-Outlook: Day 2 Tor Risk" + day2TorRisk)
+      //Log.info("SPC-Outlook: Day 2 Tor Risk" + day2TorRisk)
       day2TorSign = false;
       if(day2TorRisk > 0) day2TorSign = this.checkDaySign(geojson, lat, lon);
       //Hail
@@ -98,7 +164,7 @@ module.exports = NodeHelper.create({
       response = await fetch(url);
       geojson = await response.json();
       const day2HailRisk = this.checkDayPerc(geojson, lat, lon);
-      console.log("SPC-Outlook: Day 2 Hail Risk" + day2HailRisk);
+      //Log.info("SPC-Outlook: Day 2 Hail Risk" + day2HailRisk);
       day2HailSign = false;
       if(day2HailRisk > 0) day2HailSign = this.checkDaySign(geojson, lat, lon);
       //wind
@@ -106,23 +172,23 @@ module.exports = NodeHelper.create({
       response = await fetch(url);
       geojson = await response.json();
       const day2WindRisk = this.checkDayPerc(geojson, lat, lon);
-      console.log("SPC-Outlook: Day 2 Wind Risk" + day1WindRisk)
+      //Log.info("SPC-Outlook: Day 2 Wind Risk" + day1WindRisk)
       day2WindSign = false;
       if(day2WindRisk > 0) day2HailSign = this.checkDaySign(geojson, lat, lon);
 
       if (day2TorRisk > 0 || day2HailRisk > 0 || day2WindRisk > 0) day2ProbRisk = true;
-      console.log("SPC-Outlook: Day 2 Prob Risk test | " + day2ProbRisk)
+      //Log.info("SPC-Outlook: Day 2 Prob Risk test | " + day2ProbRisk)
 
       url = "https://www.spc.noaa.gov/products/outlook/day3otlk_cat.lyr.geojson";
       response = await fetch(url);
       geojson = await response.json();
       const day3Risk = this.checkDayCat(geojson, lat, lon, riskToValue, valueToRisk);
-      console.log("SPC-Outlook: Day 2 Risk got - " + this.day2Risk);
+      //Log.info("SPC-Outlook: Day 2 Risk got - " + this.day2Risk);
       url = "https://www.spc.noaa.gov/products/outlook/day3otlk_prob.lyr.geojson";
       response = await fetch(url);
       geojson = await response.json();
       const day3ProbRisk = this.checkDayPerc(geojson, lat, lon);
-      console.log("SPC-Outlook: Day 3 Prob Risk" + day3ProbRisk);
+      //Log.info("SPC-Outlook: Day 3 Prob Risk" + day3ProbRisk);
       day3Sign = false;
       if(day3ProbRisk > 0) day3Sign = this.checkDaySign(geojson, lat, lon);
 
@@ -248,6 +314,24 @@ module.exports = NodeHelper.create({
     }
   },
 
+  checkInPolygon(geojson, lat, lon){
+    const pt = turf.point([lon, lat]);
+    for (const feature of geojson.features) {
+      if (!feature.geometry) continue;
+
+      // For polygons vs multipolygons:
+      const geomType = feature.geometry.type;
+      if (geomType === "Polygon") {
+        const poly = turf.polygon(feature.geometry.coordinates);
+        return turf.booleanPointInPolygon(pt, poly);
+      }
+      else if (geomType === "MultiPolygon") {
+        const multiPoly = turf.multiPolygon(feature.geometry.coordinates);
+        return turf.booleanPointInPolygon(pt, multiPoly);
+      }
+    }
+  },
+
   checkDayCat(geojson, lat, lon, riskToValue, valueToRisk) {
     let highestValue = 0;
     const pt = turf.point([lon, lat]);
@@ -272,7 +356,7 @@ module.exports = NodeHelper.create({
         }
       }
     }
-    //console.log("SPC outlook Debug: result = " + highestValue + "|" + valueToRisk[highestValue])
+    //Log.info("SPC outlook Debug: result = " + highestValue + "|" + valueToRisk[highestValue])
     return highestValue === 0 ? "NONE" : valueToRisk[highestValue];
   },
 
@@ -299,7 +383,7 @@ module.exports = NodeHelper.create({
         }
       }
     }
-    console.log("SPC outlook Debug: result = " + highestValue)
+    //Log.info("SPC outlook Debug: result = " + highestValue)
     return highestValue
   },
 

@@ -19,7 +19,8 @@ Module.register("MMM-SPCOutlook", {
     if (notification === "SPC_DATA_RESULT") {
       // Store the results in a variable for display
       console.log("SPC Outlook: SPC_DATA_RESULT Received - " + JSON.stringify(payload));
-      this.spcrisk = payload;
+      this.spcrisk = payload[0];
+      this.mds = payload[1];
       this.updateDom();
     }
   },
@@ -33,7 +34,11 @@ Module.register("MMM-SPCOutlook", {
     } else if (this.spcrisk.day1.risk == "NONE" && this.spcrisk.day2.risk == "NONE" && this.spcrisk.day3.risk == "NONE" && !( this.config.extended && this.spcrisk.day48Risk == 0)) {
       wrapper.innerHTML = "No Severe Weather Risk"
     } else {
-      
+      if(this.mds) {
+        for(const MD of this.mds){
+          wrapper.innerHTML = MD + "in effect.<br/>"
+        }
+      }
       if(this.spcrisk.day1.risk != "NONE") 
       {
         wrapper.innerHTML = "Day 1: <span style=\"color:#" + this.spcrisk.day1.color + "\">" + this.spcrisk.day1.text + "</span><br/>";
