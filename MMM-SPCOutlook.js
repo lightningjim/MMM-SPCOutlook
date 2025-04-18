@@ -40,14 +40,15 @@ Module.register("MMM-SPCOutlook", {
     } else if (this.spcrisk.day1.risk == "NONE" && this.spcrisk.day2.risk == "NONE" && this.spcrisk.day3.risk == "NONE" && !( this.config.extended && this.spcrisk.day48Risk == 0)) {
       wrapper.innerHTML = "No Severe Weather Risk"
     } else {
+      wrapper.innerHTML = "";
       if(this.mds) {
         for(const MD of this.mds){
-          wrapper.innerHTML = MD + "in effect.<br/>"
+          wrapper.innerHTML += MD + "in effect.<br/>"
         }
       }
       if(this.spcrisk.day1.risk != "NONE") 
       {
-        wrapper.innerHTML = "Day 1: <span style=\"color:#" + this.spcrisk.day1.color + "\">" + this.spcrisk.day1.text + "</span><br/>";
+        wrapper.innerHTML += "Day 1: <span style=\"color:#" + this.spcrisk.day1.color + "\">" + this.spcrisk.day1.text + "</span><br/>";
       if(this.spcrisk.day1.probRisk) {
         probRiskHTML = ""
         if (this.spcrisk.day1.torRisk > 0) probRiskHTML += (this.spcrisk.day1.torSign ? "⚠" : "") + "<i class=\"wi wi-tornado\"></i> " + 100 * this.spcrisk.day1.torRisk + "% ";
