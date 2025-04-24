@@ -69,17 +69,18 @@ Module.register("MMM-SPCOutlook", {
       }}
       if(this.spcrisk.day3.risk != "NONE") 
       {
-      wrapper.innerHTML += "Day 3: <span style=\"color:#" + this.spcrisk.day3.color + "\">" + this.spcrisk.day3.text + "</span><br/>";
-      if(this.spcrisk.day3.probRisk) {
-        wrapper.innerHTML += (this.spcrisk.day3.sign ? "⚠" : "") + "<i class=\"wi wi-thunderstorm\"></i> " + 100 * this.spcrisk.day3.probRisk + "%";
-      }}
+      wrapper.innerHTML += "Day 3: <span style=\"color:#" + this.spcrisk.day3.color + "\">" + this.spcrisk.day3.text + "</span>";
+      if(this.spcrisk.day3.probRisk && this.spcrisk.day3.sign) { 
+        wrapper.innerHTML += "<br/>⚠<i class=\"wi wi-thunderstorm\"></i> " + 100 * this.spcrisk.day3.probRisk + "%";
+      }
+      wrapper.innerHTML += "<br/>";}
       if(this.config.extended)
       {
-        if(this.spcrisk.day4.risk) wrapper.innerHTML += "Day 4: " + (this.spcrisk.day4.sign ? "⚠" : "") + 100 * this.spcrisk.day4.risk + "%<br/>";
-        if(this.spcrisk.day5.risk) wrapper.innerHTML += "Day 5: " + (this.spcrisk.day5.sign ? "⚠" : "") + 100 * this.spcrisk.day5.risk + "%<br/>";
-        if(this.spcrisk.day6.risk) wrapper.innerHTML += "Day 6: " + (this.spcrisk.day6.sign ? "⚠" : "") + 100 * this.spcrisk.day6.risk + "%<br/>";
-        if(this.spcrisk.day7.risk) wrapper.innerHTML += "Day 7: " + (this.spcrisk.day7.sign ? "⚠" : "") + 100 * this.spcrisk.day7.risk + "%<br/>";
-        if(this.spcrisk.day8.risk) wrapper.innerHTML += "Day 8: " + (this.spcrisk.day8.sign ? "⚠" : "") + 100 * this.spcrisk.day8.risk + "%<br/>";
+        if(this.spcrisk.day4.probRisk) wrapper.innerHTML += "Day 4: <span style=\"color:#" + this.spcrisk.day4.color + "\">" + this.spcrisk.day4.text + "</span><br/>";
+        if(this.spcrisk.day5.probRisk) wrapper.innerHTML += "Day 5: <span style=\"color:#" + this.spcrisk.day5.color + "\">" + this.spcrisk.day5.text + "</span><br/>";
+        if(this.spcrisk.day6.probRisk) wrapper.innerHTML += "Day 6: <span style=\"color:#" + this.spcrisk.day6.color + "\">" + this.spcrisk.day6.text + "</span><br/>";
+        if(this.spcrisk.day7.probRisk) wrapper.innerHTML += "Day 7: <span style=\"color:#" + this.spcrisk.day7.color + "\">" + this.spcrisk.day7.text + "</span><br/>";
+        if(this.spcrisk.day8.probRisk) wrapper.innerHTML += "Day 8: <span style=\"color:#" + this.spcrisk.day8.color + "\">" + this.spcrisk.day8.text + "</span><br/>";
       }
     }
     return wrapper;

@@ -63,6 +63,41 @@ module.exports = NodeHelper.create({
     return gj;
   },
 
+  // Polygons 
+  extractPolygons(geojson, toValue, includesFeat){
+    const polygons = [];
+    Log.info(geojson);
+    geojson.features.forEach(f =>{
+      const label = f.properties.LABEL || "";
+      const value = toValue(label);
+      if (!includesFeat(label, value)) return;
+
+      let poly;
+      if (f.geometry.type === "Polygon") { poly = turf.polygon(f.geometry.coordinates);}
+      else if (f.geometry.type === "MultiPolygon") { poly = turf.multiPolygon(f.geometry.coordinates);}
+      else return;
+      polygons.push({ label, value, poly });
+    });
+    return polygons;
+  },
+  evaluatePolygons(items, loc, comparator){
+    let best = comparator.initial;
+    //Log.info("SPC-Outlook: Best Init - " + best)
+    //Log.info("SPC-Outlook: Loc being tested = " + JSON.stringify(loc));
+    items.forEach(({label, value, poly}) => {
+      //Log.info("SPC-Outlook: Value being tested = " + JSON.stringify(value));
+      //Log.info("SPC-Outlook: Poly being tested = " + JSON.stringify(poly));
+      //Log.info("SPC-Outlook: Label being tested = " + JSON.stringify(label));
+      result = turf.booleanPointInPolygon(loc, poly);
+      if(result){
+        best = comparator.comparator(best, value);
+        //Log.info("SPC-Outlook: Best updated to " + best);
+      }
+      //else Log.info("SPC-Outlook: PiP test - "  + result + " | No newer best than " + best);
+    });
+    return best;
+  },
+
   async getMesoscaleDiscussion(lat,lon){
     var ActiveURL = "https://www.spc.noaa.gov/products/md/ActiveMD.kmz"
     const ActiveKMZ = await this.fetchBinBuffer(ActiveURL);
@@ -86,8 +121,42 @@ module.exports = NodeHelper.create({
     return MDArray;
   },
 
+  
+  //Day3+ % => risk
+  percToRisk(pct, isSig){
+    //Log.info(`SPC-Outlook: ${pct} | ${isSig}`)
+    if (pct == 0.45) return isSig ? "MDT" : "ENH";
+    if (pct == 0.30) return "ENH";
+    if (pct == 0.15) return "SLGT";
+    if (pct == 0.05) return "MRGL";
+    return "NONE";
+  },
+
+  async fetchGeoJson(url){
+    try {
+      const result = await fetch(url);
+      if(!result.ok) throw new Error(`HTTP ${result.status} fetching ${url}`);
+      const data = await result.json();
+      return data;
+    } catch (err) {
+      Log.error("MMM-SPCOutlook fetchGeoJson error:", err);
+      return null;
+    }
+  },
+
   async getSpcOutlook(lat, lon, extended) {
     try {
+      const catComparator = {
+        initial: 0,
+        comparator: (best, val) => Math.max(best, val)
+      };
+
+      const percComparator = catComparator;
+
+      const sigComparator = {
+        initial: false,
+        comparator: (_, val) => val === "SIGN" || Boolean(val) 
+     };
       //Log.info("SPC-Outlook: I'M IN")
       //Log.info("SPC-Outlook: Day 4-8 extended - " + extended)
 
@@ -102,95 +171,139 @@ module.exports = NodeHelper.create({
         NONE: "None", TSTM: "General Thunderstorms", MRGL: "Marginal", SLGT: "Slight", ENH: "Enhanced", MDT: "Moderate", HIGH: "High"
       };
 
-      const percValueRisk = {
-        0.02: 0.02, 0.05: 0.05, 0.10: 0.10, 0.15: 0.15, 0.30: 0.30
-      }
-
       const riskToColor = {
         NONE: "afddf6", TSTM: "d2ffa6", MRGL: "7ac687", SLGT: "f7f690", ENH: "e9c188", MDT: "eb7e82", HIGH: "ff81f8"
       }; // https://www.spc.noaa.gov/new/css/SPCmain.css
       // Then repeat for day2, day3, etc.
 
-      url = "https://www.spc.noaa.gov/products/outlook/day1otlk_cat.lyr.geojson";
-      response = await fetch(url);
-      geojson = await response.json();
-      var day1Risk = this.checkDayCat(geojson, lat, lon, riskToValue, valueToRisk);
-      //Log.info("SPC-Outlook: Day 1 Risk got - " + this.day1Risk);
+      day1CatURL = "https://www.spc.noaa.gov/products/outlook/day1otlk_cat.lyr.geojson"
+      day1TorURL = "https://www.spc.noaa.gov/products/outlook/day1otlk_torn.lyr.geojson";
+      day1HailURL = "https://www.spc.noaa.gov/products/outlook/day1otlk_hail.lyr.geojson";
+      day1WindURL = "https://www.spc.noaa.gov/products/outlook/day1otlk_wind.lyr.geojson";
 
-      day1ProbRisk = false; 
-      //Torn
-      url = "https://www.spc.noaa.gov/products/outlook/day1otlk_torn.lyr.geojson";
-      response = await fetch(url);
-      geojson = await response.json();
-      var day1TorRisk = this.checkDayPerc(geojson, lat, lon);
-      //Log.info("SPC-Outlook: Day 1 Tor Risk" + day1TorRisk)
+      day2CatURL = "https://www.spc.noaa.gov/products/outlook/day2otlk_cat.lyr.geojson"
+      day2TorURL = "https://www.spc.noaa.gov/products/outlook/day2otlk_torn.lyr.geojson";
+      day2HailURL = "https://www.spc.noaa.gov/products/outlook/day2otlk_hail.lyr.geojson";
+      day2WindURL = "https://www.spc.noaa.gov/products/outlook/day2otlk_wind.lyr.geojson";
+
+      day3CatURL = "https://www.spc.noaa.gov/products/outlook/day3otlk_cat.lyr.geojson";
+      day3ProbURL = "https://www.spc.noaa.gov/products/outlook/day3otlk_prob.lyr.geojson";
+
+      day4URL = "https://www.spc.noaa.gov/products/exper/day4-8/day4prob.lyr.geojson";
+      day5URL = "https://www.spc.noaa.gov/products/exper/day4-8/day5prob.lyr.geojson";
+      day6URL = "https://www.spc.noaa.gov/products/exper/day4-8/day6prob.lyr.geojson";
+      day7URL = "https://www.spc.noaa.gov/products/exper/day4-8/day7prob.lyr.geojson";
+      day8URL = "https://www.spc.noaa.gov/products/exper/day4-8/day8prob.lyr.geojson";
+
+
+      loc = turf.point([lon, lat]);
+
+      //Day 1
+
+      //Day 1 Cat
+      geojson = await this.fetchGeoJson(day1CatURL);
+      var day1RiskPoly = this.extractPolygons(geojson, label => riskToValue[label] || 0, (label, val) => val > 0);
+      var day1RiskResult = this.evaluatePolygons(day1RiskPoly, loc, catComparator);
+      var day1Risk = day1RiskResult === 0 ? "NONE" : valueToRisk[day1RiskResult];
+  
+      // Day 1 Torn
+      geojson = await this.fetchGeoJson(day1TorURL);  
+      var day1TorRiskPoly = this.extractPolygons(geojson, label => label === "" ? 0 : parseFloat(label), (label, val) => val > 0);
+      var day1TorRisk = this.evaluatePolygons(day1TorRiskPoly, loc, percComparator)
       day1TorSign = false;
-      if(day1TorRisk > 0) day1TorSign = this.checkDaySign(geojson, lat, lon);
-      //Hail
-      url = "https://www.spc.noaa.gov/products/outlook/day1otlk_hail.lyr.geojson";
-      response = await fetch(url);
-      geojson = await response.json();
-      var day1HailRisk = this.checkDayPerc(geojson, lat, lon);
+      //Tor SIGN, reuse GEOJSON
+      if(day1TorRisk > 0){
+        day1TorRiskPoly = this.extractPolygons(geojson, label => label => label, (label,val) => label === "SIGN");
+        day1TorSign = this.evaluatePolygons(day1TorRiskPoly, loc, sigComparator)
+      }
+
+      // Day 1 Hail
+      geojson = await this.fetchGeoJson(day1HailURL);  
+      var day1HailRiskPoly = this.extractPolygons(geojson, label => label === "" ? 0 : parseFloat(label), (label, val) => val > 0);
+      var day1HailRisk = this.evaluatePolygons(day1HailRiskPoly, loc, percComparator)
       day1HailSign = false;
-      if(day1HailRisk > 0) day1HailSign = this.checkDaySign(geojson, lat, lon);
-      //Log.info("SPC-Outlook: Day 1 Hail Risk" + day1HailRisk)
-      //wind
-      url = "https://www.spc.noaa.gov/products/outlook/day1otlk_wind.lyr.geojson";
-      response = await fetch(url);
-      geojson = await response.json();
-      var day1WindRisk = this.checkDayPerc(geojson, lat, lon);
+      //Tor SIGN, reuse GEOJSON
+      if(day1HailRisk > 0){
+        day1HailRiskPoly = this.extractPolygons(geojson, label => label => label, (label,val) => label === "SIGN");
+        day1HailSign = this.evaluatePolygons(day1HailRiskPoly, loc, sigComparator);
+      }
+
+      // Day 1 Wind
+      geojson = await this.fetchGeoJson(day1WindURL);  
+      var day1WindRiskPoly = this.extractPolygons(geojson, label => label === "" ? 0 : parseFloat(label), (label, val) => val > 0);
+      var day1WindRisk = this.evaluatePolygons(day1WindRiskPoly, loc, percComparator)
       day1WindSign = false;
-      if(day1WindRisk > 0) day1WindSign = this.checkDaySign(geojson, lat, lon);
-      //Log.info("SPC-Outlook: Day 1 Wind Risk" + day1WindRisk)
+      //Tor SIGN, reuse GEOJSON
+      if(day1WindRisk > 0){
+        day1WindRiskPoly = this.extractPolygons(geojson, label => label => label, (label,val) => label === "SIGN");
+        day1WindSign = this.evaluatePolygons(day1WindRiskPoly, loc, sigComparator);
+      }
 
+      // If Day 1 Risk at all
+      var day1ProbRisk = false; 
       if (day1TorRisk > 0 || day1HailRisk > 0 || day1WindRisk > 0) day1ProbRisk = true;
-      //Log.info("SPC-Outlook: Day 1 Prob Risk test | " + day1ProbRisk)
 
-      url = "https://www.spc.noaa.gov/products/outlook/day2otlk_cat.lyr.geojson";
-      response = await fetch(url);
-      geojson = await response.json();
-      var day2Risk = this.checkDayCat(geojson, lat, lon, riskToValue, valueToRisk);
-      day2ProbRisk = false; 
-      //Torn
-      url = "https://www.spc.noaa.gov/products/outlook/day2otlk_torn.lyr.geojson";
-      response = await fetch(url);
-      geojson = await response.json();
-      var day2TorRisk = this.checkDayPerc(geojson, lat, lon);
-      //Log.info("SPC-Outlook: Day 2 Tor Risk" + day2TorRisk)
+      // Day 2
+
+      //Day 2 Cat
+      geojson = await this.fetchGeoJson(day2CatURL);
+      var day2RiskPoly = this.extractPolygons(geojson, label => riskToValue[label] || 0, (label, val) => val > 0);
+      var day2RiskResult = this.evaluatePolygons(day2RiskPoly, loc, catComparator);
+      var day2Risk = day2RiskResult === 0 ? "NONE" : valueToRisk[day2RiskResult];
+  
+      // Day 2 Torn
+      geojson = await this.fetchGeoJson(day2TorURL);  
+      var day2TorRiskPoly = this.extractPolygons(geojson, label => label === "" ? 0 : parseFloat(label), (label, val) => val > 0);
+      var day2TorRisk = this.evaluatePolygons(day2TorRiskPoly, loc, percComparator);
       day2TorSign = false;
-      if(day2TorRisk > 0) day2TorSign = this.checkDaySign(geojson, lat, lon);
-      //Hail
-      url = "https://www.spc.noaa.gov/products/outlook/day2otlk_hail.lyr.geojson";
-      response = await fetch(url);
-      geojson = await response.json();
-      var day2HailRisk = this.checkDayPerc(geojson, lat, lon);
-      //Log.info("SPC-Outlook: Day 2 Hail Risk" + day2HailRisk);
+      //Tor SIGN, reuse GEOJSON
+      if(day2TorRisk > 0) {
+        day2TorRiskPoly = this.extractPolygons(geojson, label => label => label, (label,val) => label === "SIGN");
+        day2TorSign = this.evaluatePolygons(day2TorRiskPoly, loc, sigComparator);
+      }
+
+      // Day 2 Hail
+      geojson = await this.fetchGeoJson(day2HailURL);  
+      var day2HailRiskPoly = this.extractPolygons(geojson, label => label === "" ? 0 : parseFloat(label), (label, val) => val > 0);
+      var day2HailRisk = this.evaluatePolygons(day2HailRiskPoly, loc, percComparator);
       day2HailSign = false;
-      if(day2HailRisk > 0) day2HailSign = this.checkDaySign(geojson, lat, lon);
-      //wind
-      url = "https://www.spc.noaa.gov/products/outlook/day2otlk_wind.lyr.geojson";
-      response = await fetch(url);
-      geojson = await response.json();
-      var day2WindRisk = this.checkDayPerc(geojson, lat, lon);
-      //Log.info("SPC-Outlook: Day 2 Wind Risk" + day1WindRisk)
+      //Tor SIGN, reuse GEOJSON
+      day2HailRiskPoly = this.extractPolygons(geojson, label => label => label, (label,val) => label === "SIGN");
+     if(day2HailRisk > 0){
+        day2HailRiskPoly = this.extractPolygons(geojson, label => label => label, (label,val) => label === "SIGN");
+        day2HailSign = this.evaluatePolygons(day2HailRiskPoly, loc, sigComparator);
+      } 
+      // Day 2 Wind
+      geojson = await this.fetchGeoJson(day2WindURL);  
+      var day2WindRiskPoly = this.extractPolygons(geojson, label => label === "" ? 0 : parseFloat(label), (label, val) => val > 0);
+      var day2WindRisk = this.evaluatePolygons(day2WindRiskPoly, loc, percComparator)
       day2WindSign = false;
-      if(day2WindRisk > 0) day2WindRisk = this.checkDaySign(geojson, lat, lon);
+      //Tor SIGN, reuse GEOJSON
+      if(day2WindRisk > 0){
+        day2WindRiskPoly = this.extractPolygons(geojson, label => label => label, (label,val) => label === "SIGN");
+        day2WindSign = this.evaluatePolygons(day2WindRiskPoly, loc, sigComparator);
+      } 
 
+      // If Day 2 Risk at all
+      var day2ProbRisk = false; 
       if (day2TorRisk > 0 || day2HailRisk > 0 || day2WindRisk > 0) day2ProbRisk = true;
-      //Log.info("SPC-Outlook: Day 2 Prob Risk test | " + day2ProbRisk)
 
-      url = "https://www.spc.noaa.gov/products/outlook/day3otlk_cat.lyr.geojson";
-      response = await fetch(url);
-      geojson = await response.json();
-      var day3Risk = this.checkDayCat(geojson, lat, lon, riskToValue, valueToRisk);
-      //Log.info("SPC-Outlook: Day 2 Risk got - " + this.day2Risk);
-      url = "https://www.spc.noaa.gov/products/outlook/day3otlk_prob.lyr.geojson";
-      response = await fetch(url);
-      geojson = await response.json();
-      var day3ProbRisk = this.checkDayPerc(geojson, lat, lon);
-      //Log.info("SPC-Outlook: Day 3 Prob Risk" + day3ProbRisk);
-      day3Sign = false;
-      if(day3ProbRisk > 0) day3Sign = this.checkDaySign(geojson, lat, lon);
+      //DAY 3
+      //Day 3 Cat
+
+      geojson = await this.fetchGeoJson(day3CatURL);
+      var day3RiskPoly = this.extractPolygons(geojson, label => riskToValue[label] || 0, (label, val) => val > 0);
+      var day3RiskResult = this.evaluatePolygons(day3RiskPoly, loc, catComparator);
+      var day3Risk = day3RiskResult === 0 ? "NONE" : valueToRisk[day3RiskResult];
+      // Day 3 Prob
+      geojson = await this.fetchGeoJson(day3ProbURL);  
+      var day3ProbRiskPoly = this.extractPolygons(geojson, label => label === "" ? 0 : parseFloat(label), (label, val) => val > 0);
+      var day3ProbRisk = this.evaluatePolygons(day3ProbRiskPoly, loc, percComparator);
+      var day3Sign = false;
+      if(day3ProbRisk > 0){
+        day3ProbRiskPoly = this.extractPolygons(geojson, label => label => label, (label,val) => label === "SIGN");
+        day3Sign = this.evaluatePolygons(day3ProbRiskPoly, loc, sigComparator);
+      }
 
       if (!extended)
       {
@@ -229,44 +342,63 @@ module.exports = NodeHelper.create({
         };
       }
 
-      day48Risk = false;
-
-      url = "https://www.spc.noaa.gov/products/exper/day4-8/day4prob.lyr.geojson";
-      response = await fetch(url);
-      geojson = await response.json();
-      var day4Risk = this.checkDayPerc(geojson, lat, lon);
+      //Day 5
+      geojson = await this.fetchGeoJson(day4URL);
+      var day4RiskPoly = this.extractPolygons(geojson, label => label === "" ? 0 : parseFloat(label), (label, val) => val > 0);
+      var day4ProbRisk = this.evaluatePolygons(day4RiskPoly, loc, percComparator);
       day4Sign = false;
-      if(day4Risk > 0) day4Sign = this.checkDaySign(geojson, lat, lon);
+      if(day4ProbRisk > 0){
+        day4ProbRiskPoly = this.extractPolygons(geojson, label => label => label, (label,val) => label === "SIGN");
+        day4Sign = this.evaluatePolygons(day4ProbRiskPoly, loc, sigComparator);
+      }
+      var day4Risk = this.percToRisk(day4ProbRisk, day4Sign);
 
-      url = "https://www.spc.noaa.gov/products/exper/day4-8/day5prob.lyr.geojson";
-      response = await fetch(url);
-      geojson = await response.json();
-      var day5Risk = this.checkDayPerc(geojson, lat, lon);
+      //Day 5
+      geojson = await this.fetchGeoJson(day5URL);
+      var day5RiskPoly = this.extractPolygons(geojson, label => label === "" ? 0 : parseFloat(label), (label, val) => val > 0);
+      var day5ProbRisk = this.evaluatePolygons(day5RiskPoly, loc, percComparator);
       day5Sign = false;
-      if(day5Risk > 0) day5Sign = this.checkDaySign(geojson, lat, lon);
+      if(day5ProbRisk > 0){
+        day5ProbRiskPoly = this.extractPolygons(geojson, label => label => label, (label,val) => label === "SIGN");
+        day5Sign = this.evaluatePolygons(day5ProbRiskPoly, loc, sigComparator);
+      }
+      var day5Risk = this.percToRisk(day5ProbRisk, day5Sign);
 
-      url = "https://www.spc.noaa.gov/products/exper/day4-8/day6prob.lyr.geojson";
-      response = await fetch(url);
-      geojson = await response.json();
-      var day6Risk = this.checkDayPerc(geojson, lat, lon);
+      //Day 6
+      geojson = await this.fetchGeoJson(day6URL);
+      var day6RiskPoly = this.extractPolygons(geojson, label => label === "" ? 0 : parseFloat(label), (label, val) => val > 0);
+      var day6ProbRisk = this.evaluatePolygons(day6RiskPoly, loc, percComparator);
       day6Sign = false;
-      if(day6Risk > 0) day6Sign = this.checkDaySign(geojson, lat, lon);
+      if(day6ProbRisk > 0){
+        day6ProbRiskPoly = this.extractPolygons(geojson, label => label => label, (label,val) => label === "SIGN");
+        day6Sign = this.evaluatePolygons(day6ProbRiskPoly, loc, sigComparator);
+      }
+      var day6Risk = this.percToRisk(day6ProbRisk, day6Sign);
 
-      url = "https://www.spc.noaa.gov/products/exper/day4-8/day7prob.lyr.geojson";
-      response = await fetch(url);
-      geojson = await response.json();
-      var day7Risk = this.checkDayPerc(geojson, lat, lon);
+      //Day 7
+      geojson = await this.fetchGeoJson(day7URL);
+      var day7RiskPoly = this.extractPolygons(geojson, label => label === "" ? 0 : parseFloat(label), (label, val) => val > 0);
+      var day7ProbRisk = this.evaluatePolygons(day7RiskPoly, loc, percComparator);
       day7Sign = false;
-      if(day7Risk > 0) day7Sign = this.checkDaySign(geojson, lat, lon);
+      if(day7ProbRisk > 0){
+        day7ProbRiskPoly = this.extractPolygons(geojson, label => label => label, (label,val) => label === "SIGN");
+        day7Sign = this.evaluatePolygons(day7ProbRiskPoly, loc, sigComparator);
+      }
+      var day7Risk = this.percToRisk(day7ProbRisk, day7Sign);
 
-      url = "https://www.spc.noaa.gov/products/exper/day4-8/day8prob.lyr.geojson";
-      response = await fetch(url);
-      geojson = await response.json();
-      var day8Risk = this.checkDayPerc(geojson, lat, lon);
+      //Day 8
+      geojson = await this.fetchGeoJson(day8URL);
+      var day8RiskPoly = this.extractPolygons(geojson, label => label === "" ? 0 : parseFloat(label), (label, val) => val > 0);
+      var day8ProbRisk = this.evaluatePolygons(day8RiskPoly, loc, percComparator);
       day8Sign = false;
-      if(day8Risk > 0) day8Sign = this.checkDaySign(geojson, lat, lon);
+      if(day8ProbRisk > 0){
+        day8ProbRiskPoly = this.extractPolygons(geojson, label => label => label, (label,val) => label === "SIGN");
+        day8Sign = this.evaluatePolygons(day8ProbRiskPoly, loc, sigComparator);
+      }
+      var day8Risk = this.percToRisk(day8ProbRisk, day8Sign);
 
-      if(day4Risk > 0 || day5Risk > 0 || day6Risk > 0 || day7Risk > 0 || day8Risk > 0) day48Risk = true;
+      day48Risk = false;
+      if(day4ProbRisk > 0 || day4ProbRisk > 0 || day4ProbRisk > 0 || day4ProbRisk > 0 || day4ProbRisk > 0) day4ProbRisk = true;
 
       return {
         "day48Risk": day48Risk,
@@ -301,11 +433,41 @@ module.exports = NodeHelper.create({
           "probRisk": day3ProbRisk,
           "sign": day3Sign
           },
-        day4: {"risk": day4Risk, "sign": day4Sign},
-        day5: {"risk": day5Risk, "sign": day5Sign},
-        day6: {"risk": day6Risk, "sign": day6Sign},
-        day7: {"risk": day7Risk, "sign": day7Sign},
-        day8: {"risk": day8Risk, "sign": day8Sign},
+        day4: {
+          "risk": day4Risk,
+          "probRisk": day4ProbRisk,
+          "sign": day4Sign,
+          "color": riskToColor[day4Risk],
+          "text": valueToFullRisk[day4Risk],
+        },
+        day5: {
+          "risk": day5Risk,
+          "probRisk": day5ProbRisk,
+          "sign": day5Sign,
+          "color": riskToColor[day5Risk],
+          "text": valueToFullRisk[day5Risk],
+        },
+        day6: {
+          "risk": day6Risk, 
+          "probRisk": day6ProbRisk,
+          "sign": day6Sign,
+          "color": riskToColor[day6Risk],
+          "text": valueToFullRisk[day6Risk],
+        },
+        day7: {
+          "risk": day7Risk, 
+          "probRisk": day7ProbRisk,
+          "sign": day7Sign,
+          "color": riskToColor[day7Risk],
+          "text": valueToFullRisk[day7Risk],
+        },
+        day8: {
+          "risk": day7Risk, 
+          "probRisk": day7ProbRisk,
+          "sign": day7Sign,
+          "color": riskToColor[day7Risk],
+          "text": valueToFullRisk[day8Risk],
+        }
       };
 
     } catch (err) {
