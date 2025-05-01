@@ -51,8 +51,8 @@ Module.register("MMM-SPCOutlook", {
         wrapper.innerHTML += "Day 1: <span style=\"color:#" + this.spcrisk.day1.color + "\">" + this.spcrisk.day1.text + "</span><br/>";
       if(this.spcrisk.day1.probRisk) {
         probRiskHTML = ""
-        if (this.spcrisk.day1.torRisk > 0) probRiskHTML += (this.spcrisk.day1.torSign ? "⚠" : "") + "<i class=\"wi wi-tornado\"></i> " + 100 * this.spcrisk.day1.torRisk + "% ";
-        if (this.spcrisk.day1.hailRisk > 0) probRiskHTML += (this.spcrisk.day1.hailSign ? "⚠" : "") + "<i class=\"wi wi-meteor\"></i> " + 100 * this.spcrisk.day1.hailRisk + "% ";
+        if (this.spcrisk.day1.torRisk > 0) probRiskHTML += "<i class=\"wi wi-tornado\"></i>" + (this.spcrisk.day1.torSign ? "⚠ " : " ") + 100 * this.spcrisk.day1.torRisk + "% ";
+        if (this.spcrisk.day1.hailRisk > 0) probRiskHTML += "<i class=\"wi wi-meteor\"></i>" + (this.spcrisk.day1.hailSign ? "⚠ " : " ") + 100 * this.spcrisk.day1.hailRisk + "% ";
         if (this.spcrisk.day1.windRisk > 0) probRiskHTML += (this.spcrisk.day1.windSign ? "⚠" : "") + "<i class=\"wi wi-strong-wind\"></i> " + 100 * this.spcrisk.day1.windRisk + "%";
         wrapper.innerHTML += probRiskHTML+"<br/>";
       }}
@@ -69,11 +69,12 @@ Module.register("MMM-SPCOutlook", {
       }}
       if(this.spcrisk.day3.risk != "NONE") 
       {
-      wrapper.innerHTML += "Day 3: <span style=\"color:#" + this.spcrisk.day3.color + "\">" + this.spcrisk.day3.text + "</span>";
-      if(this.spcrisk.day3.probRisk && this.spcrisk.day3.sign) { 
-        wrapper.innerHTML += "<br/>⚠<i class=\"wi wi-thunderstorm\"></i> " + 100 * this.spcrisk.day3.probRisk + "%";
+      wrapper.innerHTML += "Day 3: <span style=\"color:#" + this.spcrisk.day3.color + "\">" + this.spcrisk.day3.text + (this.spcrisk.day2.torSign ? " ⚠" : "") +"</span>";
+      // if(this.spcrisk.day3.probRisk && this.spcrisk.day3.sign) { 
+      //   wrapper.innerHTML += "<br/>⚠<i class=\"wi wi-thunderstorm\"></i> " + 100 * this.spcrisk.day3.probRisk + "%";
+      // }
+      // wrapper.innerHTML += "<br/>";
       }
-      wrapper.innerHTML += "<br/>";}
       if(this.config.extended)
       {
         if(this.spcrisk.day4.probRisk) wrapper.innerHTML += "Day 4: <span style=\"color:#" + this.spcrisk.day4.color + "\">" + this.spcrisk.day4.text + "</span><br/>";

@@ -9,6 +9,12 @@ const xpath    = require("xpath");
 const select = xpath.useNamespaces({
   k: "http://www.opengis.net/kml/2.2"
 });
+const valueToFullRisk = {
+  NONE: "None", TSTM: "General Thunderstorms", MRGL: "Marginal", SLGT: "Slight", ENH: "Enhanced", MDT: "Moderate", HIGH: "High"
+};
+const valueToRisk = {
+        1: "TSTM", 2: "MRGL", 3: "SLGT", 4: "ENH", 5: "MDT", 6: "HIGH"
+      };
 
 module.exports = NodeHelper.create({
   start: function() {
@@ -18,9 +24,9 @@ module.exports = NodeHelper.create({
   // Called when the front-end (MMM-SPCOutlook.js) sends a socket notification
   socketNotificationReceived: async function(notification, payload) {
     if (notification === "GET_SPC_DATA") {
-      Log.info("SPC Outlook: GET_SPC_DATA GET")
+      //Log.info("SPC Outlook: GET_SPC_DATA GET")
       const { lat, lon, extended } = payload;
-      Log.info("SPC-Outlook - intermediate payload" + lat + " " + lon + " " + extended); 
+      //Log.info("SPC-Outlook - intermediate payload" + lat + " " + lon + " " + extended); 
       const md = await this.getMesoscaleDiscussion(lat, lon);
       const outlook = await this.getSpcOutlook(lat, lon, extended);
       // Send the results back to your front-end module
@@ -66,7 +72,7 @@ module.exports = NodeHelper.create({
   // Polygons 
   extractPolygons(geojson, toValue, includesFeat){
     const polygons = [];
-    Log.info(geojson);
+    //Log.info(geojson);
     geojson.features.forEach(f =>{
       const label = f.properties.LABEL || "";
       const value = toValue(label);
@@ -82,19 +88,66 @@ module.exports = NodeHelper.create({
   },
   evaluatePolygons(items, loc, comparator){
     let best = comparator.initial;
-    //Log.info("SPC-Outlook: Best Init - " + best)
-    //Log.info("SPC-Outlook: Loc being tested = " + JSON.stringify(loc));
     items.forEach(({label, value, poly}) => {
-      //Log.info("SPC-Outlook: Value being tested = " + JSON.stringify(value));
-      //Log.info("SPC-Outlook: Poly being tested = " + JSON.stringify(poly));
-      //Log.info("SPC-Outlook: Label being tested = " + JSON.stringify(label));
       result = turf.booleanPointInPolygon(loc, poly);
       if(result){
         best = comparator.comparator(best, value);
-        //Log.info("SPC-Outlook: Best updated to " + best);
       }
-      //else Log.info("SPC-Outlook: PiP test - "  + result + " | No newer best than " + best);
     });
+    return best;
+  },
+
+    evaluatePolygonsWeighted(items, loc, comparator, transitionDistance = 30){
+    let best = comparator.initial;
+    let minDist = Infinity;
+    let higherRisk = null;
+    // First get polygon-based risk
+    items.forEach(({value, poly}) => {
+      if(result){
+        best = comparator.comparator(best, value);
+      }
+    });
+    const lamba = Math.log(100) / transitionDistance;
+
+    let num = best;
+    let den = 1;
+
+    items.forEach(({value, poly}) => {
+      if (value >= best) {
+        const d = turf.pointToPolygonDistance(loc, poly, { units: "miles"});
+        if (d <= transitionDistance) {
+          const w = Math.exp(-lambda * d);
+          num += value * w;
+          den += w;
+        }
+      }; 
+    });
+    if (den === 0) return 0;
+    return num / den;
+  },
+
+  evaluatePolygonsContinuous(items, loc, comparator, transitionDistance = 30){
+    let best = comparator.initial;
+    let minDist = Infinity;
+    let higherRisk = null;
+    // First get polygon-based risk
+    items.forEach(({label, value, poly}) => {
+      if (turf.booleanPointInPolygon(loc, poly)) best = comparator.comparator(best, value);
+      if (value > best){
+        minDistTest = turf.pointToPolygonDistance(loc, poly, {units: "miles"});
+        if(minDistTest < transitionDistance) {
+          minDist = minDistTest;
+          higherRisk = value;
+        }
+      }
+    });
+
+    // Now use continous decay to calcuate how close to next highest risk
+    if(higherRisk && minDist < transitionDistance) {
+      const lambda = Math.log(100) / transitionDistance;
+      const pertibation = (higherRisk - best) * Math.exp(-lambda * minDist);
+      return best + pertibation;
+    }
     return best;
   },
 
@@ -105,7 +158,7 @@ module.exports = NodeHelper.create({
     const ActiveKML = this.extractKmlFromKmz(ActiveKMZ, "ActiveMD.kml");
     //Log.info("SPC-Outlook: KML = " + ActiveKML);
     const MDURLs = this.parseNetworkLinks(ActiveKML);
-    //Log.ifo("SPC-outlook: Total MDs #" + MDURLs)
+    //Log.info("SPC-Outlook: Total MDs #" + MDURLs)
     if(MDURLs.length == 0) return false;
     MDArray = [];
     for(const MDURL of MDURLs){
@@ -164,12 +217,8 @@ module.exports = NodeHelper.create({
       const riskToValue = {
         TSTM: 1, MRGL: 2, SLGT: 3, ENH: 4, MDT: 5, HIGH: 6
       };
-      const valueToRisk = {
-        1: "TSTM", 2: "MRGL", 3: "SLGT", 4: "ENH", 5: "MDT", 6: "HIGH"
-      };
-      const valueToFullRisk = {
-        NONE: "None", TSTM: "General Thunderstorms", MRGL: "Marginal", SLGT: "Slight", ENH: "Enhanced", MDT: "Moderate", HIGH: "High"
-      };
+      
+      
 
       const riskToColor = {
         NONE: "afddf6", TSTM: "d2ffa6", MRGL: "7ac687", SLGT: "f7f690", ENH: "e9c188", MDT: "eb7e82", HIGH: "ff81f8"
@@ -205,6 +254,12 @@ module.exports = NodeHelper.create({
       var day1RiskPoly = this.extractPolygons(geojson, label => riskToValue[label] || 0, (label, val) => val > 0);
       var day1RiskResult = this.evaluatePolygons(day1RiskPoly, loc, catComparator);
       var day1Risk = day1RiskResult === 0 ? "NONE" : valueToRisk[day1RiskResult];
+      //testing Continious decay;
+      // var day1RiskCont = this.evaluatePolygonsContinuous(day1RiskPoly, loc, catComparator);
+      // console.log("SPC-Outlook: Test new risk Cont = " + day1RiskCont);
+      // //testing Weighted Average;
+      // var day1RiskWght = this.evaluatePolygonsContinuous(day1RiskPoly, loc, catComparator);
+      // console.log("SPC-Outlook: Test new risk Wghtd = " + day1RiskWght);
   
       // Day 1 Torn
       geojson = await this.fetchGeoJson(day1TorURL);  
@@ -494,78 +549,78 @@ module.exports = NodeHelper.create({
     }
   },
 
-  checkDayCat(geojson, lat, lon, riskToValue, valueToRisk) {
-    let highestValue = 0;
-    const pt = turf.point([lon, lat]);
+//   checkDayCat(geojson, lat, lon, riskToValue, valueToRisk) {
+//     let highestValue = 0;
+//     const pt = turf.point([lon, lat]);
 
-    for (const feature of geojson.features) {
-      if (!feature.geometry) continue;
+//     for (const feature of geojson.features) {
+//       if (!feature.geometry) continue;
 
-      // For polygons vs multipolygons:
-      const geomType = feature.geometry.type;
-      const label = feature.properties.LABEL; // e.g., "SLGT", "ENH", etc.
-      const labelValue = riskToValue[label] || 0;
+//       // For polygons vs multipolygons:
+//       const geomType = feature.geometry.type;
+//       const label = feature.properties.LABEL; // e.g., "SLGT", "ENH", etc.
+//       const labelValue = riskToValue[label] || 0;
 
-      if (geomType === "Polygon") {
-        const poly = turf.polygon(feature.geometry.coordinates);
-        if (turf.booleanPointInPolygon(pt, poly) && labelValue > highestValue) {
-          highestValue = labelValue;
-        }
-      } else if (geomType === "MultiPolygon") {
-        const multiPoly = turf.multiPolygon(feature.geometry.coordinates);
-        if (turf.booleanPointInPolygon(pt, multiPoly) && labelValue > highestValue) {
-          highestValue = labelValue;
-        }
-      }
-    }
-    //Log.info("SPC outlook Debug: result = " + highestValue + "|" + valueToRisk[highestValue])
-    return highestValue === 0 ? "NONE" : valueToRisk[highestValue];
-  },
+//       if (geomType === "Polygon") {
+//         const poly = turf.polygon(feature.geometry.coordinates);
+//         if (turf.booleanPointInPolygon(pt, poly) && labelValue > highestValue) {
+//           highestValue = labelValue;
+//         }
+//       } else if (geomType === "MultiPolygon") {
+//         const multiPoly = turf.multiPolygon(feature.geometry.coordinates);
+//         if (turf.booleanPointInPolygon(pt, multiPoly) && labelValue > highestValue) {
+//           highestValue = labelValue;
+//         }
+//       }
+//     }
+//     //Log.info("SPC outlook Debug: result = " + highestValue + "|" + valueToRisk[highestValue])
+//     return highestValue === 0 ? "NONE" : valueToRisk[highestValue];
+//   },
 
-  checkDayPerc(geojson, lat, lon) {
-    let highestValue = 0;
-    const pt = turf.point([lon, lat]);
+//   checkDayPerc(geojson, lat, lon) {
+//     let highestValue = 0;
+//     const pt = turf.point([lon, lat]);
 
-    for (const feature of geojson.features) {
-      if (!feature.geometry) continue;
+//     for (const feature of geojson.features) {
+//       if (!feature.geometry) continue;
 
-      // For polygons vs multipolygons:
-      const geomType = feature.geometry.type;
-      const labelValue = feature.properties.LABEL;
+//       // For polygons vs multipolygons:
+//       const geomType = feature.geometry.type;
+//       const labelValue = feature.properties.LABEL;
 
-      if (geomType === "Polygon") {
-        const poly = turf.polygon(feature.geometry.coordinates);
-        if (turf.booleanPointInPolygon(pt, poly) && labelValue > highestValue && labelValue != "SIGN") {
-          highestValue = labelValue;
-        }
-      } else if (geomType === "MultiPolygon") {
-        const multiPoly = turf.multiPolygon(feature.geometry.coordinates);
-        if (turf.booleanPointInPolygon(pt, multiPoly) && labelValue > highestValue && labelValue != "SIGN") {
-          highestValue = labelValue;
-        }
-      }
-    }
-    //Log.info("SPC outlook Debug: result = " + highestValue)
-    return highestValue
-  },
+//       if (geomType === "Polygon") {
+//         const poly = turf.polygon(feature.geometry.coordinates);
+//         if (turf.booleanPointInPolygon(pt, poly) && labelValue > highestValue && labelValue != "SIGN") {
+//           highestValue = labelValue;
+//         }
+//       } else if (geomType === "MultiPolygon") {
+//         const multiPoly = turf.multiPolygon(feature.geometry.coordinates);
+//         if (turf.booleanPointInPolygon(pt, multiPoly) && labelValue > highestValue && labelValue != "SIGN") {
+//           highestValue = labelValue;
+//         }
+//       }
+//     }
+//     //Log.info("SPC outlook Debug: result = " + highestValue)
+//     return highestValue
+//   },
 
-  checkDaySign(geojson, lat, lon) {
-  const pt = turf.point([lon, lat]);
-  for (const feature of geojson.features) {
-    if (!feature.geometry) continue;
-    // Only process features that are flagged as SIG
-    if (feature.properties.LABEL === "SIGN") {
-      let polygon;
-      if (feature.geometry.type === "Polygon") {
-        polygon = turf.polygon(feature.geometry.coordinates);
-      } else if (feature.geometry.type === "MultiPolygon") {
-        polygon = turf.multiPolygon(feature.geometry.coordinates);
-      }
-      if (turf.booleanPointInPolygon(pt, polygon)) {
-        return true;
-      }
-    }
-  }
-  return false;
-}
+//   checkDaySign(geojson, lat, lon) {
+//   const pt = turf.point([lon, lat]);
+//   for (const feature of geojson.features) {
+//     if (!feature.geometry) continue;
+//     // Only process features that are flagged as SIG
+//     if (feature.properties.LABEL === "SIGN") {
+//       let polygon;
+//       if (feature.geometry.type === "Polygon") {
+//         polygon = turf.polygon(feature.geometry.coordinates);
+//       } else if (feature.geometry.type === "MultiPolygon") {
+//         polygon = turf.multiPolygon(feature.geometry.coordinates);
+//       }
+//       if (turf.booleanPointInPolygon(pt, polygon)) {
+//         return true;
+//       }
+//     }
+//   }
+//   return false;
+// }
 });
