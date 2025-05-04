@@ -1,4 +1,4 @@
 # MMM-SPCOutlook
-SPC Point-in-Pologon check for location in Outlooks
+SPC Point-in-Polygon check for location in Outlooks
 
 ![Picture showing 3 Day with Risk Types when relevant](screenshot1.png)
