@@ -237,6 +237,7 @@ module.exports = NodeHelper.create({
 
       day3CatURL = "https://www.spc.noaa.gov/products/outlook/day3otlk_cat.lyr.geojson";
       day3ProbURL = "https://www.spc.noaa.gov/products/outlook/day3otlk_prob.lyr.geojson";
+      day3SignUrl = "https://www.spc.noaa.gov/products/outlook/day3otlk_sigprob.lyr.geojson";
 
       day4URL = "https://www.spc.noaa.gov/products/exper/day4-8/day4prob.lyr.geojson";
       day5URL = "https://www.spc.noaa.gov/products/exper/day4-8/day5prob.lyr.geojson";
@@ -356,8 +357,9 @@ module.exports = NodeHelper.create({
       var day3ProbRisk = this.evaluatePolygons(day3ProbRiskPoly, loc, percComparator);
       var day3Sign = false;
       if(day3ProbRisk > 0){
-        day3ProbRiskPoly = this.extractPolygons(geojson, label => label => label, (label,val) => label === "SIGN");
-        day3Sign = this.evaluatePolygons(day3ProbRiskPoly, loc, sigComparator);
+        geojson = await this.fetchGeoJson(day3SignUrl);
+        day3ProbSignPoly = this.extractPolygons(geojson, label => label => label, (label,val) => label === "SIGN");
+        day3Sign = this.evaluatePolygons(day3ProbSignPoly, loc, sigComparator);
       }
 
       if (!extended)
