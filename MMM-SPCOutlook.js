@@ -42,7 +42,7 @@ Module.register("MMM-SPCOutlook", {
       wrapper.innerHTML = "Loading SPC Outlook...";
     } else if (this.spcrisk.error) {
       wrapper.innerHTML = "Error: " + this.spcrisk.error;
-    } else if (this.spcrisk.day1.risk == "NONE" && this.spcrisk.day2.risk == "NONE" && this.spcrisk.day3.risk == "NONE" && !( this.config.extended && this.spcrisk.day48Risk == 0)) {
+    } else if (this.spcrisk.day1.risk == "NONE" && this.spcrisk.day2.risk == "NONE" && this.spcrisk.day3.risk == "NONE" && !( this.config.extended && this.spcrisk.day48Risk )) {
       wrapper.innerHTML = "No Severe Weather Risk"
     } else {
       dow = new Date().getDay();
