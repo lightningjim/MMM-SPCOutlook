@@ -269,7 +269,7 @@ module.exports = NodeHelper.create({
       day1TorSign = false;
       //Tor SIGN, reuse GEOJSON
       if(day1TorRisk > 0){
-        day1TorRiskPoly = this.extractPolygons(geojson, label => label => label, (label,val) => label === "SIGN");
+        day1TorRiskPoly = this.extractPolygons(geojson, label => label, (label,val) => label === "SIGN");
         day1TorSign = this.evaluatePolygons(day1TorRiskPoly, loc, sigComparator)
       }
 
@@ -280,7 +280,7 @@ module.exports = NodeHelper.create({
       day1HailSign = false;
       //Tor SIGN, reuse GEOJSON
       if(day1HailRisk > 0){
-        day1HailRiskPoly = this.extractPolygons(geojson, label => label => label, (label,val) => label === "SIGN");
+        day1HailRiskPoly = this.extractPolygons(geojson, label => label, (label,val) => label === "SIGN");
         day1HailSign = this.evaluatePolygons(day1HailRiskPoly, loc, sigComparator);
       }
 
@@ -291,7 +291,7 @@ module.exports = NodeHelper.create({
       day1WindSign = false;
       //Tor SIGN, reuse GEOJSON
       if(day1WindRisk > 0){
-        day1WindRiskPoly = this.extractPolygons(geojson, label => label => label, (label,val) => label === "SIGN");
+        day1WindRiskPoly = this.extractPolygons(geojson, label => label, (label,val) => label === "SIGN");
         day1WindSign = this.evaluatePolygons(day1WindRiskPoly, loc, sigComparator);
       }
 
@@ -314,7 +314,7 @@ module.exports = NodeHelper.create({
       day2TorSign = false;
       //Tor SIGN, reuse GEOJSON
       if(day2TorRisk > 0) {
-        day2TorRiskPoly = this.extractPolygons(geojson, label => label => label, (label,val) => label === "SIGN");
+        day2TorRiskPoly = this.extractPolygons(geojson, label => label, (label,val) => label === "SIGN");
         day2TorSign = this.evaluatePolygons(day2TorRiskPoly, loc, sigComparator);
       }
 
@@ -324,9 +324,9 @@ module.exports = NodeHelper.create({
       var day2HailRisk = this.evaluatePolygons(day2HailRiskPoly, loc, percComparator);
       day2HailSign = false;
       //Tor SIGN, reuse GEOJSON
-      day2HailRiskPoly = this.extractPolygons(geojson, label => label => label, (label,val) => label === "SIGN");
+      day2HailRiskPoly = this.extractPolygons(geojson, label => label, (label,val) => label === "SIGN");
      if(day2HailRisk > 0){
-        day2HailRiskPoly = this.extractPolygons(geojson, label => label => label, (label,val) => label === "SIGN");
+        day2HailRiskPoly = this.extractPolygons(geojson, label => label, (label,val) => label === "SIGN");
         day2HailSign = this.evaluatePolygons(day2HailRiskPoly, loc, sigComparator);
       } 
       // Day 2 Wind
@@ -336,7 +336,7 @@ module.exports = NodeHelper.create({
       day2WindSign = false;
       //Tor SIGN, reuse GEOJSON
       if(day2WindRisk > 0){
-        day2WindRiskPoly = this.extractPolygons(geojson, label => label => label, (label,val) => label === "SIGN");
+        day2WindRiskPoly = this.extractPolygons(geojson, label => label, (label,val) => label === "SIGN");
         day2WindSign = this.evaluatePolygons(day2WindRiskPoly, loc, sigComparator);
       } 
 
@@ -358,7 +358,7 @@ module.exports = NodeHelper.create({
       var day3Sign = false;
       if(day3ProbRisk > 0){
         geojson = await this.fetchGeoJson(day3SignUrl);
-        day3ProbSignPoly = this.extractPolygons(geojson, label => label => label, (label,val) => label === "SIGN");
+        day3ProbSignPoly = this.extractPolygons(geojson, label => label, (label,val) => label === "SIGN");
         day3Sign = this.evaluatePolygons(day3ProbSignPoly, loc, sigComparator);
       }
 
@@ -405,7 +405,7 @@ module.exports = NodeHelper.create({
       var day4ProbRisk = this.evaluatePolygons(day4RiskPoly, loc, percComparator);
       day4Sign = false;
       if(day4ProbRisk > 0){
-        day4ProbRiskPoly = this.extractPolygons(geojson, label => label => label, (label,val) => label === "SIGN");
+        day4ProbRiskPoly = this.extractPolygons(geojson, label => label, (label,val) => label === "SIGN");
         day4Sign = this.evaluatePolygons(day4ProbRiskPoly, loc, sigComparator);
       }
       var day4Risk = this.percToRisk(day4ProbRisk, day4Sign);
@@ -416,7 +416,7 @@ module.exports = NodeHelper.create({
       var day5ProbRisk = this.evaluatePolygons(day5RiskPoly, loc, percComparator);
       day5Sign = false;
       if(day5ProbRisk > 0){
-        day5ProbRiskPoly = this.extractPolygons(geojson, label => label => label, (label,val) => label === "SIGN");
+        day5ProbRiskPoly = this.extractPolygons(geojson, label => label, (label,val) => label === "SIGN");
         day5Sign = this.evaluatePolygons(day5ProbRiskPoly, loc, sigComparator);
       }
       var day5Risk = this.percToRisk(day5ProbRisk, day5Sign);
@@ -427,7 +427,7 @@ module.exports = NodeHelper.create({
       var day6ProbRisk = this.evaluatePolygons(day6RiskPoly, loc, percComparator);
       day6Sign = false;
       if(day6ProbRisk > 0){
-        day6ProbRiskPoly = this.extractPolygons(geojson, label => label => label, (label,val) => label === "SIGN");
+        day6ProbRiskPoly = this.extractPolygons(geojson, label => label, (label,val) => label === "SIGN");
         day6Sign = this.evaluatePolygons(day6ProbRiskPoly, loc, sigComparator);
       }
       var day6Risk = this.percToRisk(day6ProbRisk, day6Sign);
@@ -438,7 +438,7 @@ module.exports = NodeHelper.create({
       var day7ProbRisk = this.evaluatePolygons(day7RiskPoly, loc, percComparator);
       day7Sign = false;
       if(day7ProbRisk > 0){
-        day7ProbRiskPoly = this.extractPolygons(geojson, label => label => label, (label,val) => label === "SIGN");
+        day7ProbRiskPoly = this.extractPolygons(geojson, label => label, (label,val) => label === "SIGN");
         day7Sign = this.evaluatePolygons(day7ProbRiskPoly, loc, sigComparator);
       }
       var day7Risk = this.percToRisk(day7ProbRisk, day7Sign);
@@ -449,7 +449,7 @@ module.exports = NodeHelper.create({
       var day8ProbRisk = this.evaluatePolygons(day8RiskPoly, loc, percComparator);
       day8Sign = false;
       if(day8ProbRisk > 0){
-        day8ProbRiskPoly = this.extractPolygons(geojson, label => label => label, (label,val) => label === "SIGN");
+        day8ProbRiskPoly = this.extractPolygons(geojson, label => label, (label,val) => label === "SIGN");
         day8Sign = this.evaluatePolygons(day8ProbRiskPoly, loc, sigComparator);
       }
       var day8Risk = this.percToRisk(day8ProbRisk, day8Sign);
