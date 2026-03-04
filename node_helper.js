@@ -538,17 +538,17 @@ module.exports = NodeHelper.create({
     for (const feature of geojson.features) {
       if (!feature.geometry) continue;
 
-      // For polygons vs multipolygons:
       const geomType = feature.geometry.type;
       if (geomType === "Polygon") {
         const poly = turf.polygon(feature.geometry.coordinates);
-        return turf.booleanPointInPolygon(pt, poly);
+        if (turf.booleanPointInPolygon(pt, poly)) return true;
       }
       else if (geomType === "MultiPolygon") {
         const multiPoly = turf.multiPolygon(feature.geometry.coordinates);
-        return turf.booleanPointInPolygon(pt, multiPoly);
+        if (turf.booleanPointInPolygon(pt, multiPoly)) return true;
       }
     }
+    return false;
   },
 
 //   checkDayCat(geojson, lat, lon, riskToValue, valueToRisk) {
