@@ -1,4 +1,4 @@
-# Roadmap: MMM-SPCOutlook
+/gs:# Roadmap: MMM-SPCOutlook
 
 ## Overview
 
@@ -29,7 +29,11 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. Day 8 shows Day 8 risk (not Day 7 risk) when extended mode is enabled
   3. The Day 4-8 aggregate indicator activates when any day in that range carries a risk
   4. When the user's location overlaps multiple active Mesoscale Discussions, all of them appear on the display (not just the first)
-**Plans**: TBD
+**Plans**: 2 plans
+
+Plans:
+- [ ] 01-01-PLAN.md — Fix BUG-01 (SIGN double-arrow), BUG-02 (Day 8 return object), BUG-03 (day48Risk condition) in getSpcOutlook()
+- [ ] 01-02-PLAN.md — Fix BUG-04 (checkInPolygon early-return) so all MD features are evaluated
 
 ### Phase 2: CIG Tier Support
 **Goal**: The module understands and displays the SPC's tiered SIGN severity levels (CIG1, CIG2, CIG3) as distinct risk indicators
@@ -79,7 +83,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Bug Fixes | 0/TBD | Not started | - |
+| 1. Bug Fixes | 0/2 | Not started | - |
 | 2. CIG Tier Support | 0/TBD | Not started | - |
 | 3. Fire Weather | 0/TBD | Not started | - |
 | 4. Performance | 0/TBD | Not started | - |
