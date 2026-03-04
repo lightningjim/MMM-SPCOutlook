@@ -12,7 +12,7 @@ Requirements for this refactor/rewrite milestone.
 - [x] **BUG-01**: SIGN detection works correctly for Tornado/Hail/Wind on Days 1–2 (fix double-arrow syntax error)
 - [x] **BUG-02**: Day 8 displays Day 8 risk (not Day 7) when extended mode is enabled
 - [x] **BUG-03**: Day 4–8 aggregate risk (`day48Risk`) correctly reflects any risk across all five days
-- [ ] **BUG-04**: Mesoscale Discussion detection collects all overlapping active MDs, not just the first
+- [x] **BUG-04**: Mesoscale Discussion detection collects all overlapping active MDs, not just the first
 
 ### SPC API Updates
 
@@ -67,7 +67,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | BUG-01 | Phase 1 | Complete |
 | BUG-02 | Phase 1 | Complete |
 | BUG-03 | Phase 1 | Complete |
-| BUG-04 | Phase 1 | Pending |
+| BUG-04 | Phase 1 | Complete |
 | SPC-01 | Phase 2 | Pending |
 | SPC-02 | Phase 2 | Pending |
 | FIRE-01 | Phase 3 | Pending |

@@ -12,7 +12,7 @@ This milestone refactors and repairs the MMM-SPCOutlook MagicMirror module. The 
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 1: Bug Fixes** - Correct the four known backend logic errors causing wrong risk data
+- [x] **Phase 1: Bug Fixes** - Correct the four known backend logic errors causing wrong risk data (completed 2026-03-04)
 - [ ] **Phase 2: CIG Tier Support** - Update SIGN handling to reflect SPC's new CIG1/CIG2/CIG3 severity system
 - [ ] **Phase 3: Fire Weather** - Add end-to-end fire weather fetch, detection, and display
 - [ ] **Phase 4: Performance** - Cache polygon math results to reduce RPi CPU load
@@ -83,7 +83,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Bug Fixes | 1/2 | In Progress|  |
+| 1. Bug Fixes | 2/2 | Complete   | 2026-03-04 |
 | 2. CIG Tier Support | 0/TBD | Not started | - |
 | 3. Fire Weather | 0/TBD | Not started | - |
 | 4. Performance | 0/TBD | Not started | - |

@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: planning
-stopped_at: Completed 01-bug-fixes-01-PLAN.md
-last_updated: "2026-03-04T22:17:09.331Z"
+stopped_at: Completed 01-bug-fixes-02-PLAN.md
+last_updated: "2026-03-04T22:19:35.420Z"
 last_activity: 2026-03-04 — Roadmap created
 progress:
   total_phases: 5
-  completed_phases: 0
+  completed_phases: 1
   total_plans: 2
-  completed_plans: 1
+  completed_plans: 2
   percent: 50
 ---
 
@@ -51,6 +51,7 @@ Progress: [█████░░░░░] 50%
 
 *Updated after each plan completion*
 | Phase 01-bug-fixes P01 | 4 | 2 tasks | 1 files |
+| Phase 01-bug-fixes P02 | 5 | 1 tasks | 1 files |
 
 ## Accumulated Context
 
@@ -61,6 +62,7 @@ Progress: [█████░░░░░] 50%
 - [Init]: Cache polygon math results — avoid re-running turf if data unchanged (Phase 4)
 - [Phase 01-bug-fixes]: BUG-01: SIGN toValue callback must be single-arrow identity (label => label), not double-arrow (label => label => label)
 - [Phase 01-bug-fixes]: BUG-03: day48Risk is the aggregate Days 4-8 indicator; day4ProbRisk must retain its numeric value for Day 4 return object
+- [Phase 01-bug-fixes]: BUG-04: checkInPolygon must iterate all GeoJSON features, returning true on first match and false after exhausting all features
 
 ### Pending Todos
 
@@ -73,6 +75,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-04T22:17:09.329Z
-Stopped at: Completed 01-bug-fixes-01-PLAN.md
+Last session: 2026-03-04T22:19:35.418Z
+Stopped at: Completed 01-bug-fixes-02-PLAN.md
 Resume file: None
