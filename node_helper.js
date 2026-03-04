@@ -455,7 +455,7 @@ module.exports = NodeHelper.create({
       var day8Risk = this.percToRisk(day8ProbRisk, day8Sign);
 
       day48Risk = false;
-      if(day4ProbRisk > 0 || day4ProbRisk > 0 || day4ProbRisk > 0 || day4ProbRisk > 0 || day4ProbRisk > 0) day4ProbRisk = true;
+      if(day4ProbRisk > 0 || day5ProbRisk > 0 || day6ProbRisk > 0 || day7ProbRisk > 0 || day8ProbRisk > 0) day48Risk = true;
 
       return {
         "day48Risk": day48Risk,
@@ -519,10 +519,10 @@ module.exports = NodeHelper.create({
           "text": valueToFullRisk[day7Risk],
         },
         day8: {
-          "risk": day7Risk, 
-          "probRisk": day7ProbRisk,
-          "sign": day7Sign,
-          "color": riskToColor[day7Risk],
+          "risk": day8Risk,
+          "probRisk": day8ProbRisk,
+          "sign": day8Sign,
+          "color": riskToColor[day8Risk],
           "text": valueToFullRisk[day8Risk],
         }
       };
