@@ -274,33 +274,39 @@ module.exports = NodeHelper.create({
       geojson = await this.fetchGeoJson(day1TorURL);  
       var day1TorRiskPoly = this.extractPolygons(geojson, label => label === "" ? 0 : parseFloat(label), (label, val) => val > 0);
       var day1TorRisk = this.evaluatePolygons(day1TorRiskPoly, loc, percComparator)
-      day1TorSign = false;
-      //Tor SIGN, reuse GEOJSON
-      if(day1TorRisk > 0){
-        day1TorRiskPoly = this.extractPolygons(geojson, label => label, (label,val) => label === "SIGN");
-        day1TorSign = this.evaluatePolygons(day1TorRiskPoly, loc, sigComparator)
+      let day1TorCig = 0;
+      if (day1TorRisk > 0) {
+        const cigGeojson = await this.fetchGeoJson(day1CigTorURL);
+        if (cigGeojson) {
+          const cigPolys = this.extractPolygons(cigGeojson, label => cigToTier[label] || 0, (label, val) => val > 0);
+          day1TorCig = this.evaluatePolygons(cigPolys, loc, cigComparator);
+        }
       }
 
       // Day 1 Hail
       geojson = await this.fetchGeoJson(day1HailURL);  
       var day1HailRiskPoly = this.extractPolygons(geojson, label => label === "" ? 0 : parseFloat(label), (label, val) => val > 0);
       var day1HailRisk = this.evaluatePolygons(day1HailRiskPoly, loc, percComparator)
-      day1HailSign = false;
-      //Tor SIGN, reuse GEOJSON
-      if(day1HailRisk > 0){
-        day1HailRiskPoly = this.extractPolygons(geojson, label => label, (label,val) => label === "SIGN");
-        day1HailSign = this.evaluatePolygons(day1HailRiskPoly, loc, sigComparator);
+      let day1HailCig = 0;
+      if (day1HailRisk > 0) {
+        const cigGeojson = await this.fetchGeoJson(day1CigHailURL);
+        if (cigGeojson) {
+          const cigPolys = this.extractPolygons(cigGeojson, label => cigToTier[label] || 0, (label, val) => val > 0);
+          day1HailCig = this.evaluatePolygons(cigPolys, loc, cigComparator);
+        }
       }
 
       // Day 1 Wind
       geojson = await this.fetchGeoJson(day1WindURL);  
       var day1WindRiskPoly = this.extractPolygons(geojson, label => label === "" ? 0 : parseFloat(label), (label, val) => val > 0);
       var day1WindRisk = this.evaluatePolygons(day1WindRiskPoly, loc, percComparator)
-      day1WindSign = false;
-      //Tor SIGN, reuse GEOJSON
-      if(day1WindRisk > 0){
-        day1WindRiskPoly = this.extractPolygons(geojson, label => label, (label,val) => label === "SIGN");
-        day1WindSign = this.evaluatePolygons(day1WindRiskPoly, loc, sigComparator);
+      let day1WindCig = 0;
+      if (day1WindRisk > 0) {
+        const cigGeojson = await this.fetchGeoJson(day1CigWindURL);
+        if (cigGeojson) {
+          const cigPolys = this.extractPolygons(cigGeojson, label => cigToTier[label] || 0, (label, val) => val > 0);
+          day1WindCig = this.evaluatePolygons(cigPolys, loc, cigComparator);
+        }
       }
 
       // If Day 1 Risk at all
@@ -319,34 +325,39 @@ module.exports = NodeHelper.create({
       geojson = await this.fetchGeoJson(day2TorURL);  
       var day2TorRiskPoly = this.extractPolygons(geojson, label => label === "" ? 0 : parseFloat(label), (label, val) => val > 0);
       var day2TorRisk = this.evaluatePolygons(day2TorRiskPoly, loc, percComparator);
-      day2TorSign = false;
-      //Tor SIGN, reuse GEOJSON
-      if(day2TorRisk > 0) {
-        day2TorRiskPoly = this.extractPolygons(geojson, label => label, (label,val) => label === "SIGN");
-        day2TorSign = this.evaluatePolygons(day2TorRiskPoly, loc, sigComparator);
+      let day2TorCig = 0;
+      if (day2TorRisk > 0) {
+        const cigGeojson = await this.fetchGeoJson(day2CigTorURL);
+        if (cigGeojson) {
+          const cigPolys = this.extractPolygons(cigGeojson, label => cigToTier[label] || 0, (label, val) => val > 0);
+          day2TorCig = this.evaluatePolygons(cigPolys, loc, cigComparator);
+        }
       }
 
       // Day 2 Hail
       geojson = await this.fetchGeoJson(day2HailURL);  
       var day2HailRiskPoly = this.extractPolygons(geojson, label => label === "" ? 0 : parseFloat(label), (label, val) => val > 0);
       var day2HailRisk = this.evaluatePolygons(day2HailRiskPoly, loc, percComparator);
-      day2HailSign = false;
-      //Tor SIGN, reuse GEOJSON
-      day2HailRiskPoly = this.extractPolygons(geojson, label => label, (label,val) => label === "SIGN");
-     if(day2HailRisk > 0){
-        day2HailRiskPoly = this.extractPolygons(geojson, label => label, (label,val) => label === "SIGN");
-        day2HailSign = this.evaluatePolygons(day2HailRiskPoly, loc, sigComparator);
-      } 
+      let day2HailCig = 0;
+      if (day2HailRisk > 0) {
+        const cigGeojson = await this.fetchGeoJson(day2CigHailURL);
+        if (cigGeojson) {
+          const cigPolys = this.extractPolygons(cigGeojson, label => cigToTier[label] || 0, (label, val) => val > 0);
+          day2HailCig = this.evaluatePolygons(cigPolys, loc, cigComparator);
+        }
+      }
       // Day 2 Wind
       geojson = await this.fetchGeoJson(day2WindURL);  
       var day2WindRiskPoly = this.extractPolygons(geojson, label => label === "" ? 0 : parseFloat(label), (label, val) => val > 0);
       var day2WindRisk = this.evaluatePolygons(day2WindRiskPoly, loc, percComparator)
-      day2WindSign = false;
-      //Tor SIGN, reuse GEOJSON
-      if(day2WindRisk > 0){
-        day2WindRiskPoly = this.extractPolygons(geojson, label => label, (label,val) => label === "SIGN");
-        day2WindSign = this.evaluatePolygons(day2WindRiskPoly, loc, sigComparator);
-      } 
+      let day2WindCig = 0;
+      if (day2WindRisk > 0) {
+        const cigGeojson = await this.fetchGeoJson(day2CigWindURL);
+        if (cigGeojson) {
+          const cigPolys = this.extractPolygons(cigGeojson, label => cigToTier[label] || 0, (label, val) => val > 0);
+          day2WindCig = this.evaluatePolygons(cigPolys, loc, cigComparator);
+        }
+      }
 
       // If Day 2 Risk at all
       var day2ProbRisk = false; 
@@ -363,11 +374,13 @@ module.exports = NodeHelper.create({
       geojson = await this.fetchGeoJson(day3ProbURL);  
       var day3ProbRiskPoly = this.extractPolygons(geojson, label => label === "" ? 0 : parseFloat(label), (label, val) => val > 0);
       var day3ProbRisk = this.evaluatePolygons(day3ProbRiskPoly, loc, percComparator);
-      var day3Sign = false;
-      if(day3ProbRisk > 0){
-        geojson = await this.fetchGeoJson(day3SignUrl);
-        day3ProbSignPoly = this.extractPolygons(geojson, label => label, (label,val) => label === "SIGN");
-        day3Sign = this.evaluatePolygons(day3ProbSignPoly, loc, sigComparator);
+      let day3Cig = 0;
+      if (day3ProbRisk > 0) {
+        const cigGeojson = await this.fetchGeoJson(day3CigUrl);
+        if (cigGeojson) {
+          const cigPolys = this.extractPolygons(cigGeojson, label => cigToTier[label] || 0, (label, val) => val > 0);
+          day3Cig = this.evaluatePolygons(cigPolys, loc, cigComparator);
+        }
       }
 
       if (!extended)
