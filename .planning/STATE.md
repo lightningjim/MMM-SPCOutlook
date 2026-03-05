@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: planning
-stopped_at: Completed 02-cig-tier-support-01-PLAN.md
-last_updated: "2026-03-05T00:07:15.328Z"
+stopped_at: Completed 02-cig-tier-support-02-PLAN.md
+last_updated: "2026-03-05T01:31:36.026Z"
 last_activity: 2026-03-04 — Roadmap created
 progress:
   total_phases: 5
-  completed_phases: 1
+  completed_phases: 2
   total_plans: 4
-  completed_plans: 3
+  completed_plans: 4
   percent: 50
 ---
 
@@ -53,6 +53,7 @@ Progress: [█████░░░░░] 50%
 | Phase 01-bug-fixes P01 | 4 | 2 tasks | 1 files |
 | Phase 01-bug-fixes P02 | 5 | 1 tasks | 1 files |
 | Phase 02-cig-tier-support P01 | 4 | 3 tasks | 1 files |
+| Phase 02-cig-tier-support P02 | 10 | 2 tasks | 1 files |
 
 ## Accumulated Context
 
@@ -67,6 +68,8 @@ Progress: [█████░░░░░] 50%
 - [Phase 02-cig-tier-support]: CIG tiers are integers (0/1/2/3) not booleans — returned as torCig/hailCig/windCig and cig for Days 1-3
 - [Phase 02-cig-tier-support]: Each CIG hazard type fetches its own dedicated endpoint (cigtorn/cighail/cigwind) — not reusing torn/hail/wind GeoJSON
 - [Phase 02-cig-tier-support]: Days 4-8 SIGN logic intentionally unchanged — no CIG endpoints exist for those days
+- [Phase 02-cig-tier-support]: cigLabel() returns trailing space for non-zero tiers — consistent spacing without conditional logic at each call site
+- [Phase 02-cig-tier-support]: Day 3 CIG indicator placed after risk text (matching Days 1-2 append pattern)
 
 ### Pending Todos
 
@@ -79,6 +82,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-05T00:07:15.326Z
-Stopped at: Completed 02-cig-tier-support-01-PLAN.md
+Last session: 2026-03-05T01:31:36.024Z
+Stopped at: Completed 02-cig-tier-support-02-PLAN.md
 Resume file: None
