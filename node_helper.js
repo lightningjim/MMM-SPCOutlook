@@ -206,10 +206,11 @@ module.exports = NodeHelper.create({
 
       const percComparator = catComparator;
 
-      const sigComparator = {
-        initial: false,
-        comparator: (_, val) => val === "SIGN" || Boolean(val) 
-     };
+      const cigToTier = { CIG1: 1, CIG2: 2, CIG3: 3 };
+      const cigComparator = {
+        initial: 0,
+        comparator: (best, val) => Math.max(best, val)
+      };
       //Log.info("SPC-Outlook: I'M IN")
       //Log.info("SPC-Outlook: Day 4-8 extended - " + extended)
 
@@ -235,9 +236,16 @@ module.exports = NodeHelper.create({
       day2HailURL = "https://www.spc.noaa.gov/products/outlook/day2otlk_hail.lyr.geojson";
       day2WindURL = "https://www.spc.noaa.gov/products/outlook/day2otlk_wind.lyr.geojson";
 
+      const day1CigTorURL  = "https://www.spc.noaa.gov/products/outlook/day1otlk_cigtorn.lyr.geojson";
+      const day1CigHailURL = "https://www.spc.noaa.gov/products/outlook/day1otlk_cighail.lyr.geojson";
+      const day1CigWindURL = "https://www.spc.noaa.gov/products/outlook/day1otlk_cigwind.lyr.geojson";
+      const day2CigTorURL  = "https://www.spc.noaa.gov/products/outlook/day2otlk_cigtorn.lyr.geojson";
+      const day2CigHailURL = "https://www.spc.noaa.gov/products/outlook/day2otlk_cighail.lyr.geojson";
+      const day2CigWindURL = "https://www.spc.noaa.gov/products/outlook/day2otlk_cigwind.lyr.geojson";
+      const day3CigUrl     = "https://www.spc.noaa.gov/products/outlook/day3otlk_cigprob.lyr.geojson";
+
       day3CatURL = "https://www.spc.noaa.gov/products/outlook/day3otlk_cat.lyr.geojson";
       day3ProbURL = "https://www.spc.noaa.gov/products/outlook/day3otlk_prob.lyr.geojson";
-      day3SignUrl = "https://www.spc.noaa.gov/products/outlook/day3otlk_sigprob.lyr.geojson";
 
       day4URL = "https://www.spc.noaa.gov/products/exper/day4-8/day4prob.lyr.geojson";
       day5URL = "https://www.spc.noaa.gov/products/exper/day4-8/day5prob.lyr.geojson";
