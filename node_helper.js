@@ -392,11 +392,11 @@ module.exports = NodeHelper.create({
            "color": riskToColor[day1Risk],
            "probRisk": day1ProbRisk,
            "torRisk": day1TorRisk,
-           "torSign": day1TorSign,
+           "torCig": day1TorCig,
            "hailRisk": day1HailRisk,
-           "hailSign": day1HailSign,
+           "hailCig": day1HailCig,
            "windRisk": day1WindRisk,
-           "windSign": day1WindSign
+           "windCig": day1WindCig
           },
           day2: {
             "risk": day2Risk,
@@ -404,18 +404,18 @@ module.exports = NodeHelper.create({
             "color": riskToColor[day2Risk],
             "probRisk": day2ProbRisk,
             "torRisk": day2TorRisk,
-            "torSign": day2TorSign,
+            "torCig": day2TorCig,
             "hailRisk": day2HailRisk,
-            "hailSign": day2HailSign,
+            "hailCig": day2HailCig,
             "windRisk": day2WindRisk,
-            "windSign": day2WindSign
+            "windCig": day2WindCig
           },
           day3: {
           "risk": day3Risk,
           "text": valueToFullRisk[day3Risk],
           "color": riskToColor[day3Risk],
           "probRisk": day3ProbRisk,
-          "sign": day3Sign
+          "cig": day3Cig
           }
         };
       }
@@ -486,11 +486,11 @@ module.exports = NodeHelper.create({
            "color": riskToColor[day1Risk],
            "probRisk": day1ProbRisk,
            "torRisk": day1TorRisk,
-           "torSign": day1TorSign,
+           "torCig": day1TorCig,
            "hailRisk": day1HailRisk,
-           "hailSign": day1HailSign,
+           "hailCig": day1HailCig,
            "windRisk": day1WindRisk,
-           "windSign": day1WindSign
+           "windCig": day1WindCig
           },
           day2: {
             "risk": day2Risk,
@@ -498,18 +498,18 @@ module.exports = NodeHelper.create({
             "color": riskToColor[day2Risk],
             "probRisk": day2ProbRisk,
             "torRisk": day2TorRisk,
-            "torSign": day2TorSign,
+            "torCig": day2TorCig,
             "hailRisk": day2HailRisk,
-            "hailSign": day2HailSign,
+            "hailCig": day2HailCig,
             "windRisk": day2WindRisk,
-            "windSign": day2WindSign
+            "windCig": day2WindCig
           },
           day3: {
           "risk": day3Risk,
           "text": valueToFullRisk[day3Risk],
           "color": riskToColor[day3Risk],
           "probRisk": day3ProbRisk,
-          "sign": day3Sign
+          "cig": day3Cig
           },
         day4: {
           "risk": day4Risk,
