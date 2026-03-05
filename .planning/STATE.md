@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: planning
-stopped_at: Completed 01-bug-fixes-02-PLAN.md
-last_updated: "2026-03-04T22:23:13.675Z"
+stopped_at: Completed 02-cig-tier-support-01-PLAN.md
+last_updated: "2026-03-05T00:07:15.328Z"
 last_activity: 2026-03-04 — Roadmap created
 progress:
   total_phases: 5
   completed_phases: 1
-  total_plans: 2
-  completed_plans: 2
+  total_plans: 4
+  completed_plans: 3
   percent: 50
 ---
 
@@ -52,6 +52,7 @@ Progress: [█████░░░░░] 50%
 *Updated after each plan completion*
 | Phase 01-bug-fixes P01 | 4 | 2 tasks | 1 files |
 | Phase 01-bug-fixes P02 | 5 | 1 tasks | 1 files |
+| Phase 02-cig-tier-support P01 | 4 | 3 tasks | 1 files |
 
 ## Accumulated Context
 
@@ -63,6 +64,9 @@ Progress: [█████░░░░░] 50%
 - [Phase 01-bug-fixes]: BUG-01: SIGN toValue callback must be single-arrow identity (label => label), not double-arrow (label => label => label)
 - [Phase 01-bug-fixes]: BUG-03: day48Risk is the aggregate Days 4-8 indicator; day4ProbRisk must retain its numeric value for Day 4 return object
 - [Phase 01-bug-fixes]: BUG-04: checkInPolygon must iterate all GeoJSON features, returning true on first match and false after exhausting all features
+- [Phase 02-cig-tier-support]: CIG tiers are integers (0/1/2/3) not booleans — returned as torCig/hailCig/windCig and cig for Days 1-3
+- [Phase 02-cig-tier-support]: Each CIG hazard type fetches its own dedicated endpoint (cigtorn/cighail/cigwind) — not reusing torn/hail/wind GeoJSON
+- [Phase 02-cig-tier-support]: Days 4-8 SIGN logic intentionally unchanged — no CIG endpoints exist for those days
 
 ### Pending Todos
 
@@ -75,6 +79,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-04T22:19:35.418Z
-Stopped at: Completed 01-bug-fixes-02-PLAN.md
+Last session: 2026-03-05T00:07:15.326Z
+Stopped at: Completed 02-cig-tier-support-01-PLAN.md
 Resume file: None
