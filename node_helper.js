@@ -383,6 +383,41 @@ module.exports = NodeHelper.create({
         }
       }
 
+      // Fire Weather constants
+      const day1FwWindRHURL = "https://www.spc.noaa.gov/products/fire_wx/day1fw_windrh.lyr.geojson";
+      const day1FwDryTURL   = "https://www.spc.noaa.gov/products/fire_wx/day1fw_dryt.lyr.geojson";
+      const day2FwWindRHURL = "https://www.spc.noaa.gov/products/fire_wx/day2fw_windrh.lyr.geojson";
+      const day2FwDryTURL   = "https://www.spc.noaa.gov/products/fire_wx/day2fw_dryt.lyr.geojson";
+      const fireRiskToValue = { ELEV: 1, CRIT: 2, EXTM: 3 };
+      const fireValueToFull = { 0: "None", 1: "Elevated", 2: "Critical", 3: "Extremely Critical" };
+      const fireComparator  = { initial: 0, comparator: (best, val) => Math.max(best, val) };
+
+      // Fire Weather Day 1
+      let day1FireRisk = 0;
+      const fw1WindRHgj = await this.fetchGeoJson(day1FwWindRHURL);
+      if (fw1WindRHgj) {
+        const polys = this.extractPolygons(fw1WindRHgj, label => fireRiskToValue[label] || 0, (label, val) => val > 0);
+        day1FireRisk = Math.max(day1FireRisk, this.evaluatePolygons(polys, loc, fireComparator));
+      }
+      const fw1DryTgj = await this.fetchGeoJson(day1FwDryTURL);
+      if (fw1DryTgj) {
+        const polys = this.extractPolygons(fw1DryTgj, label => fireRiskToValue[label] || 0, (label, val) => val > 0);
+        day1FireRisk = Math.max(day1FireRisk, this.evaluatePolygons(polys, loc, fireComparator));
+      }
+
+      // Fire Weather Day 2
+      let day2FireRisk = 0;
+      const fw2WindRHgj = await this.fetchGeoJson(day2FwWindRHURL);
+      if (fw2WindRHgj) {
+        const polys = this.extractPolygons(fw2WindRHgj, label => fireRiskToValue[label] || 0, (label, val) => val > 0);
+        day2FireRisk = Math.max(day2FireRisk, this.evaluatePolygons(polys, loc, fireComparator));
+      }
+      const fw2DryTgj = await this.fetchGeoJson(day2FwDryTURL);
+      if (fw2DryTgj) {
+        const polys = this.extractPolygons(fw2DryTgj, label => fireRiskToValue[label] || 0, (label, val) => val > 0);
+        day2FireRisk = Math.max(day2FireRisk, this.evaluatePolygons(polys, loc, fireComparator));
+      }
+
       if (!extended)
       {
         return {
@@ -416,6 +451,12 @@ module.exports = NodeHelper.create({
           "color": riskToColor[day3Risk],
           "probRisk": day3ProbRisk,
           "cig": day3Cig
+          },
+          fireWeather: {
+            day1Risk: day1FireRisk,
+            day1Text: fireValueToFull[day1FireRisk],
+            day2Risk: day2FireRisk,
+            day2Text: fireValueToFull[day2FireRisk]
           }
         };
       }
@@ -545,6 +586,12 @@ module.exports = NodeHelper.create({
           "sign": day8Sign,
           "color": riskToColor[day8Risk],
           "text": valueToFullRisk[day8Risk],
+        },
+        fireWeather: {
+          day1Risk: day1FireRisk,
+          day1Text: fireValueToFull[day1FireRisk],
+          day2Risk: day2FireRisk,
+          day2Text: fireValueToFull[day2FireRisk]
         }
       };
 
