@@ -14,7 +14,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Bug Fixes** - Correct the four known backend logic errors causing wrong risk data (completed 2026-03-04)
 - [x] **Phase 2: CIG Tier Support** - Update SIGN handling to reflect SPC's new CIG1/CIG2/CIG3 severity system (completed 2026-03-05)
-- [ ] **Phase 3: Fire Weather** - Add end-to-end fire weather fetch, detection, and display
+- [x] **Phase 3: Fire Weather** - Add end-to-end fire weather fetch, detection, and display (completed 2026-03-05)
 - [ ] **Phase 4: Performance** - Cache polygon math results to reduce RPi CPU load
 - [ ] **Phase 5: Code Quality** - Clean up the codebase after all features and fixes are stable
 
@@ -93,6 +93,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 |-------|----------------|--------|-----------|
 | 1. Bug Fixes | 2/2 | Complete    | 2026-03-04 |
 | 2. CIG Tier Support | 2/2 | Complete   | 2026-03-05 |
-| 3. Fire Weather | 1/2 | In Progress|  |
+| 3. Fire Weather | 2/2 | Complete   | 2026-03-05 |
 | 4. Performance | 0/TBD | Not started | - |
 | 5. Code Quality | 0/TBD | Not started | - |

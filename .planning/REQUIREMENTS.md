@@ -23,7 +23,7 @@ Requirements for this refactor/rewrite milestone.
 
 - [x] **FIRE-01**: Module fetches SPC Fire Weather Outlook GeoJSON from NOAA endpoints
 - [x] **FIRE-02**: Point-in-polygon detection determines if user location is within a Fire Weather risk zone
-- [ ] **FIRE-03**: Fire Weather risk level is displayed on the module alongside convective outlook data
+- [x] **FIRE-03**: Fire Weather risk level is displayed on the module alongside convective outlook data
 
 ### Performance
 
@@ -72,7 +72,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | SPC-02 | Phase 2 | Complete |
 | FIRE-01 | Phase 3 | Complete |
 | FIRE-02 | Phase 3 | Complete |
-| FIRE-03 | Phase 3 | Pending |
+| FIRE-03 | Phase 3 | Complete |
 | PERF-01 | Phase 4 | Pending |
 | PERF-02 | Phase 4 | Pending |
 | QUAL-01 | Phase 5 | Pending |
