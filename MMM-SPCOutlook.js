@@ -43,12 +43,19 @@ Module.register("MMM-SPCOutlook", {
       if (cig === 1) return "① ";
       return "";
     };
+    const fireRiskToColor = { 0: "aaaaaa", 1: "FF7F00", 2: "FF0000", 3: "FF00FF" };
     const wrapper = document.createElement("div");
     if (!this.spcrisk) {
       wrapper.innerHTML = "Loading SPC Outlook...";
     } else if (this.spcrisk.error) {
       wrapper.innerHTML = "Error: " + this.spcrisk.error;
-    } else if (this.spcrisk.day1.risk == "NONE" && this.spcrisk.day2.risk == "NONE" && this.spcrisk.day3.risk == "NONE" && !( this.config.extended && this.spcrisk.day48Risk )) {
+    } else if (
+      this.spcrisk.day1.risk == "NONE" &&
+      this.spcrisk.day2.risk == "NONE" &&
+      this.spcrisk.day3.risk == "NONE" &&
+      !( this.config.extended && this.spcrisk.day48Risk ) &&
+      !(this.spcrisk.fireWeather && (this.spcrisk.fireWeather.day1Risk > 0 || this.spcrisk.fireWeather.day2Risk > 0))
+    ) {
       wrapper.innerHTML = "No Severe Weather Risk"
     } else {
       dow = new Date().getDay();
@@ -94,6 +101,18 @@ Module.register("MMM-SPCOutlook", {
         if(this.spcrisk.day6.probRisk) wrapper.innerHTML += dowToText(dow+5) + " (Day 6): <span style=\"color:#" + this.spcrisk.day6.color + "\">" + this.spcrisk.day6.text + "</span><br/>";
         if(this.spcrisk.day7.probRisk) wrapper.innerHTML += dowToText(dow+6) + " (Day 7): <span style=\"color:#" + this.spcrisk.day7.color + "\">" + this.spcrisk.day7.text + "</span><br/>";
         if(this.spcrisk.day8.probRisk) wrapper.innerHTML += dowToText(dow+7) + " (Day 8): <span style=\"color:#" + this.spcrisk.day8.color + "\">" + this.spcrisk.day8.text + "</span><br/>";
+      }
+      if (this.spcrisk.fireWeather) {
+        if (this.spcrisk.fireWeather.day1Risk > 0) {
+          wrapper.innerHTML += "Fire Wx (Day 1): <span style=\"color:#" +
+            fireRiskToColor[this.spcrisk.fireWeather.day1Risk] + "\">" +
+            this.spcrisk.fireWeather.day1Text + "</span><br/>";
+        }
+        if (this.spcrisk.fireWeather.day2Risk > 0) {
+          wrapper.innerHTML += "Fire Wx (Day 2): <span style=\"color:#" +
+            fireRiskToColor[this.spcrisk.fireWeather.day2Risk] + "\">" +
+            this.spcrisk.fireWeather.day2Text + "</span><br/>";
+        }
       }
     }
     return wrapper;
