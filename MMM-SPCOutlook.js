@@ -37,6 +37,12 @@ Module.register("MMM-SPCOutlook", {
       if (day >= 7) day -= 7;
       return weekday[day];
     }
+    const cigLabel = (cig) => {
+      if (cig === 3) return "③ ";
+      if (cig === 2) return "② ";
+      if (cig === 1) return "① ";
+      return "";
+    };
     const wrapper = document.createElement("div");
     if (!this.spcrisk) {
       wrapper.innerHTML = "Loading SPC Outlook...";
@@ -57,9 +63,9 @@ Module.register("MMM-SPCOutlook", {
         wrapper.innerHTML += dowToText(dow) + " (Day 1): <span style=\"color:#" + this.spcrisk.day1.color + "\">" + this.spcrisk.day1.text + "</span><br/>";
       if(this.spcrisk.day1.probRisk) {
         probRiskHTML = ""
-        if (this.spcrisk.day1.torRisk > 0) probRiskHTML += "<i class=\"wi wi-tornado\"></i>" + (this.spcrisk.day1.torSign ? "⚠ " : " ") + 100 * this.spcrisk.day1.torRisk + "% ";
-        if (this.spcrisk.day1.hailRisk > 0) probRiskHTML += "<i class=\"wi wi-meteor\"></i>" + (this.spcrisk.day1.hailSign ? "⚠ " : " ") + 100 * this.spcrisk.day1.hailRisk + "% ";
-        if (this.spcrisk.day1.windRisk > 0) probRiskHTML += (this.spcrisk.day1.windSign ? "⚠" : "") + "<i class=\"wi wi-strong-wind\"></i> " + 100 * this.spcrisk.day1.windRisk + "%";
+        if (this.spcrisk.day1.torRisk > 0) probRiskHTML += "<i class=\"wi wi-tornado\"></i>" + cigLabel(this.spcrisk.day1.torCig) + 100 * this.spcrisk.day1.torRisk + "% ";
+        if (this.spcrisk.day1.hailRisk > 0) probRiskHTML += "<i class=\"wi wi-meteor\"></i>" + cigLabel(this.spcrisk.day1.hailCig) + 100 * this.spcrisk.day1.hailRisk + "% ";
+        if (this.spcrisk.day1.windRisk > 0) probRiskHTML += cigLabel(this.spcrisk.day1.windCig) + "<i class=\"wi wi-strong-wind\"></i> " + 100 * this.spcrisk.day1.windRisk + "%";
         wrapper.innerHTML += probRiskHTML+"<br/>";
       }}
       
@@ -68,14 +74,14 @@ Module.register("MMM-SPCOutlook", {
         wrapper.innerHTML +=  dowToText(dow+1) + " (Day 2): <span style=\"color:#" + this.spcrisk.day2.color + "\">" + this.spcrisk.day2.text + "</span><br/>";
       if(this.spcrisk.day2.probRisk) {
         probRiskHTML = ""
-        if (this.spcrisk.day2.torRisk > 0) probRiskHTML += "<i class=\"wi wi-tornado\"></i> " + (this.spcrisk.day2.torSign ? "⚠" : "") + 100 * this.spcrisk.day2.torRisk + "% ";
-        if (this.spcrisk.day2.hailRisk > 0) probRiskHTML += "<i class=\"wi wi-meteor\"></i> " + (this.spcrisk.day2.hailSign ? "⚠" : "") + 100 * this.spcrisk.day2.hailRisk + "% ";
-        if (this.spcrisk.day2.windRisk > 0) probRiskHTML += "<i class=\"wi wi-strong-wind\"></i> " + (this.spcrisk.day2.windSign ? "⚠" : "") + 100 * this.spcrisk.day2.windRisk + "%";
+        if (this.spcrisk.day2.torRisk > 0) probRiskHTML += "<i class=\"wi wi-tornado\"></i>" + cigLabel(this.spcrisk.day2.torCig) + 100 * this.spcrisk.day2.torRisk + "% ";
+        if (this.spcrisk.day2.hailRisk > 0) probRiskHTML += "<i class=\"wi wi-meteor\"></i>" + cigLabel(this.spcrisk.day2.hailCig) + 100 * this.spcrisk.day2.hailRisk + "% ";
+        if (this.spcrisk.day2.windRisk > 0) probRiskHTML += cigLabel(this.spcrisk.day2.windCig) + "<i class=\"wi wi-strong-wind\"></i> " + 100 * this.spcrisk.day2.windRisk + "%";
         wrapper.innerHTML += probRiskHTML+"<br/>";
       }}
       if(this.spcrisk.day3.risk != "NONE") 
       {
-      wrapper.innerHTML += dowToText(dow+2) + " (Day 3): <span style=\"color:#" + this.spcrisk.day3.color + "\">" + this.spcrisk.day3.text + (this.spcrisk.day3.sign ? " ⚠" : "") +"</span>";
+      wrapper.innerHTML += dowToText(dow+2) + " (Day 3): <span style=\"color:#" + this.spcrisk.day3.color + "\">" + this.spcrisk.day3.text + cigLabel(this.spcrisk.day3.cig) + "</span>";
       // if(this.spcrisk.day3.probRisk && this.spcrisk.day3.sign) { 
       //   wrapper.innerHTML += "<br/>⚠<i class=\"wi wi-thunderstorm\"></i> " + 100 * this.spcrisk.day3.probRisk + "%";
       // }
