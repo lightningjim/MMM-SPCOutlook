@@ -1,4 +1,4 @@
-/gs:# Roadmap: MMM-SPCOutlook
+# Roadmap: MMM-SPCOutlook
 
 ## Overview
 
@@ -58,7 +58,11 @@ Plans:
   2. Point-in-polygon detection correctly determines whether the configured location falls within a Fire Weather risk zone
   3. Fire Weather risk level is visible on the MagicMirror display when the user's location is in a risk zone
   4. Fire Weather data does not appear when the user's location is outside any active Fire Weather polygon
-**Plans**: TBD
+**Plans**: 2 plans
+
+Plans:
+- [ ] 03-01-PLAN.md — Add fire weather fetch and point-in-polygon evaluation to node_helper.js; fireWeather in both return objects
+- [ ] 03-02-PLAN.md — Add fire weather display rows and extend no-risk guard in getDom(); human verification
 
 ### Phase 4: Performance
 **Goal**: Polygon math does not repeat unnecessarily within or between update cycles, reducing CPU load on the Raspberry Pi
@@ -89,6 +93,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 |-------|----------------|--------|-----------|
 | 1. Bug Fixes | 2/2 | Complete    | 2026-03-04 |
 | 2. CIG Tier Support | 2/2 | Complete   | 2026-03-05 |
-| 3. Fire Weather | 0/TBD | Not started | - |
+| 3. Fire Weather | 0/2 | Not started | - |
 | 4. Performance | 0/TBD | Not started | - |
 | 5. Code Quality | 0/TBD | Not started | - |
