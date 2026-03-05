@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: planning
-stopped_at: Completed 02-cig-tier-support-02-PLAN.md
-last_updated: "2026-03-05T01:31:36.026Z"
+stopped_at: Completed 03-fire-weather-01-PLAN.md
+last_updated: "2026-03-05T13:39:31.182Z"
 last_activity: 2026-03-04 — Roadmap created
 progress:
   total_phases: 5
   completed_phases: 2
-  total_plans: 4
-  completed_plans: 4
+  total_plans: 6
+  completed_plans: 5
   percent: 50
 ---
 
@@ -54,6 +54,7 @@ Progress: [█████░░░░░] 50%
 | Phase 01-bug-fixes P02 | 5 | 1 tasks | 1 files |
 | Phase 02-cig-tier-support P01 | 4 | 3 tasks | 1 files |
 | Phase 02-cig-tier-support P02 | 10 | 2 tasks | 1 files |
+| Phase 03-fire-weather P01 | 5 | 1 tasks | 1 files |
 
 ## Accumulated Context
 
@@ -70,6 +71,8 @@ Progress: [█████░░░░░] 50%
 - [Phase 02-cig-tier-support]: Days 4-8 SIGN logic intentionally unchanged — no CIG endpoints exist for those days
 - [Phase 02-cig-tier-support]: cigLabel() returns trailing space for non-zero tiers — consistent spacing without conditional logic at each call site
 - [Phase 02-cig-tier-support]: Day 3 CIG indicator placed after risk text (matching Days 1-2 append pattern)
+- [Phase 03-fire-weather]: Fire weather fetches placed unconditionally before if (!extended) check — both return paths need the data
+- [Phase 03-fire-weather]: ELEV/CRIT/EXTM integer tiers (1/2/3) mirror CIG tier encoding from Phase 2 for consistency
 
 ### Pending Todos
 
@@ -82,6 +85,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-05T01:31:36.024Z
-Stopped at: Completed 02-cig-tier-support-02-PLAN.md
+Last session: 2026-03-05T13:39:31.181Z
+Stopped at: Completed 03-fire-weather-01-PLAN.md
 Resume file: None
