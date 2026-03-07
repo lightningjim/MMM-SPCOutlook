@@ -71,7 +71,10 @@ Plans:
 **Success Criteria** (what must be TRUE):
   1. When the same GeoJSON data is received on consecutive update cycles, turf point-in-polygon is not re-run (cached result is used)
   2. Within a single update cycle, no GeoJSON dataset is evaluated by turf more than once for the same location
-**Plans**: TBD
+**Plans**: 1 plan
+
+Plans:
+- [ ] 04-01-PLAN.md — Add per-URL GeoJSON cache (ETag/hash), wire fetchGeoJsonCached into getSpcOutlook(), fix Days 4-8 single-pass extractPolygons and sigComparator bug; human verification
 
 ### Phase 5: Code Quality
 **Goal**: The codebase is clean, consistent, and free of debugging artifacts — ready for future maintenance
