@@ -270,6 +270,17 @@ module.exports = NodeHelper.create({
 
   async getSpcOutlook(lat, lon, extended) {
     try {
+      // Part A: Location change invalidation
+      const locationChanged = (lat !== this._cachedLat || lon !== this._cachedLon);
+      if (locationChanged) {
+        for (const [url, entry] of this._geoJsonCache) {
+          this._geoJsonCache.set(url, { ...entry, result: null, timestamp: 0 });
+        }
+        this._cachedLat = lat;
+        this._cachedLon = lon;
+        Log.info('MMM-SPCOutlook: location changed — cache results invalidated');
+      }
+
       const catComparator = {
         initial: 0,
         comparator: (best, val) => Math.max(best, val)
@@ -282,6 +293,9 @@ module.exports = NodeHelper.create({
         initial: 0,
         comparator: (best, val) => Math.max(best, val)
       };
+      // Part B: sigComparator — fixes latent ReferenceError in extended mode
+      const sigComparator = { initial: false, comparator: (best, val) => true };
+
       //Log.info("SPC-Outlook: I'M IN")
       //Log.info("SPC-Outlook: Day 4-8 extended - " + extended)
 
@@ -327,56 +341,112 @@ module.exports = NodeHelper.create({
 
       loc = turf.point([lon, lat]);
 
+      let anyStale = false;
+
       //Day 1
 
       //Day 1 Cat
-      geojson = await this.fetchGeoJson(day1CatURL);
-      var day1RiskPoly = this.extractPolygons(geojson, label => riskToValue[label] || 0, (label, val) => val > 0);
-      var day1RiskResult = this.evaluatePolygons(day1RiskPoly, loc, catComparator);
-      var day1Risk = day1RiskResult === 0 ? "NONE" : valueToRisk[day1RiskResult];
-      //testing Continious decay;
-      // var day1RiskCont = this.evaluatePolygonsContinuous(day1RiskPoly, loc, catComparator);
-      // console.log("SPC-Outlook: Test new risk Cont = " + day1RiskCont);
-      // //testing Weighted Average;
-      // var day1RiskWght = this.evaluatePolygonsContinuous(day1RiskPoly, loc, catComparator);
-      // console.log("SPC-Outlook: Test new risk Wghtd = " + day1RiskWght);
+      {
+        const fetchResult = await this.fetchGeoJsonCached(day1CatURL);
+        if (fetchResult.stale) anyStale = true;
+        var day1RiskResult;
+        if (fetchResult.data === null && fetchResult.cachedResult !== null) {
+          day1RiskResult = fetchResult.cachedResult;
+        } else if (fetchResult.data === null) {
+          day1RiskResult = 0;
+        } else {
+          const gj = fetchResult.data;
+          const day1RiskPoly = this.extractPolygons(gj, label => riskToValue[label] || 0, (label, val) => val > 0);
+          day1RiskResult = this.evaluatePolygons(day1RiskPoly, loc, catComparator);
+          this._geoJsonCache.set(day1CatURL, { mode: fetchResult.mode, etag: fetchResult.newEtag ?? null, hash: fetchResult.newHash ?? null, result: day1RiskResult, timestamp: Date.now() });
+        }
+        var day1Risk = day1RiskResult === 0 ? "NONE" : valueToRisk[day1RiskResult];
+      }
   
       // Day 1 Torn
-      geojson = await this.fetchGeoJson(day1TorURL);  
-      var day1TorRiskPoly = this.extractPolygons(geojson, label => label === "" ? 0 : parseFloat(label), (label, val) => val > 0);
-      var day1TorRisk = this.evaluatePolygons(day1TorRiskPoly, loc, percComparator)
+      var day1TorRisk;
+      {
+        const fetchResult = await this.fetchGeoJsonCached(day1TorURL);
+        if (fetchResult.stale) anyStale = true;
+        if (fetchResult.data === null && fetchResult.cachedResult !== null) {
+          day1TorRisk = fetchResult.cachedResult;
+        } else if (fetchResult.data === null) {
+          day1TorRisk = 0;
+        } else {
+          const gj = fetchResult.data;
+          const poly = this.extractPolygons(gj, label => label === "" ? 0 : parseFloat(label), (label, val) => val > 0);
+          day1TorRisk = this.evaluatePolygons(poly, loc, percComparator);
+          this._geoJsonCache.set(day1TorURL, { mode: fetchResult.mode, etag: fetchResult.newEtag ?? null, hash: fetchResult.newHash ?? null, result: day1TorRisk, timestamp: Date.now() });
+        }
+      }
       let day1TorCig = 0;
       if (day1TorRisk > 0) {
-        const cigGeojson = await this.fetchGeoJson(day1CigTorURL);
-        if (cigGeojson) {
-          const cigPolys = this.extractPolygons(cigGeojson, label => cigToTier[label] || 0, (label, val) => val > 0);
+        const fetchResult = await this.fetchGeoJsonCached(day1CigTorURL);
+        if (fetchResult.stale) anyStale = true;
+        if (fetchResult.data === null && fetchResult.cachedResult !== null) {
+          day1TorCig = fetchResult.cachedResult;
+        } else if (fetchResult.data !== null) {
+          const cigPolys = this.extractPolygons(fetchResult.data, label => cigToTier[label] || 0, (label, val) => val > 0);
           day1TorCig = this.evaluatePolygons(cigPolys, loc, cigComparator);
+          this._geoJsonCache.set(day1CigTorURL, { mode: fetchResult.mode, etag: fetchResult.newEtag ?? null, hash: fetchResult.newHash ?? null, result: day1TorCig, timestamp: Date.now() });
         }
       }
 
       // Day 1 Hail
-      geojson = await this.fetchGeoJson(day1HailURL);  
-      var day1HailRiskPoly = this.extractPolygons(geojson, label => label === "" ? 0 : parseFloat(label), (label, val) => val > 0);
-      var day1HailRisk = this.evaluatePolygons(day1HailRiskPoly, loc, percComparator)
+      var day1HailRisk;
+      {
+        const fetchResult = await this.fetchGeoJsonCached(day1HailURL);
+        if (fetchResult.stale) anyStale = true;
+        if (fetchResult.data === null && fetchResult.cachedResult !== null) {
+          day1HailRisk = fetchResult.cachedResult;
+        } else if (fetchResult.data === null) {
+          day1HailRisk = 0;
+        } else {
+          const gj = fetchResult.data;
+          const poly = this.extractPolygons(gj, label => label === "" ? 0 : parseFloat(label), (label, val) => val > 0);
+          day1HailRisk = this.evaluatePolygons(poly, loc, percComparator);
+          this._geoJsonCache.set(day1HailURL, { mode: fetchResult.mode, etag: fetchResult.newEtag ?? null, hash: fetchResult.newHash ?? null, result: day1HailRisk, timestamp: Date.now() });
+        }
+      }
       let day1HailCig = 0;
       if (day1HailRisk > 0) {
-        const cigGeojson = await this.fetchGeoJson(day1CigHailURL);
-        if (cigGeojson) {
-          const cigPolys = this.extractPolygons(cigGeojson, label => cigToTier[label] || 0, (label, val) => val > 0);
+        const fetchResult = await this.fetchGeoJsonCached(day1CigHailURL);
+        if (fetchResult.stale) anyStale = true;
+        if (fetchResult.data === null && fetchResult.cachedResult !== null) {
+          day1HailCig = fetchResult.cachedResult;
+        } else if (fetchResult.data !== null) {
+          const cigPolys = this.extractPolygons(fetchResult.data, label => cigToTier[label] || 0, (label, val) => val > 0);
           day1HailCig = this.evaluatePolygons(cigPolys, loc, cigComparator);
+          this._geoJsonCache.set(day1CigHailURL, { mode: fetchResult.mode, etag: fetchResult.newEtag ?? null, hash: fetchResult.newHash ?? null, result: day1HailCig, timestamp: Date.now() });
         }
       }
 
       // Day 1 Wind
-      geojson = await this.fetchGeoJson(day1WindURL);  
-      var day1WindRiskPoly = this.extractPolygons(geojson, label => label === "" ? 0 : parseFloat(label), (label, val) => val > 0);
-      var day1WindRisk = this.evaluatePolygons(day1WindRiskPoly, loc, percComparator)
+      var day1WindRisk;
+      {
+        const fetchResult = await this.fetchGeoJsonCached(day1WindURL);
+        if (fetchResult.stale) anyStale = true;
+        if (fetchResult.data === null && fetchResult.cachedResult !== null) {
+          day1WindRisk = fetchResult.cachedResult;
+        } else if (fetchResult.data === null) {
+          day1WindRisk = 0;
+        } else {
+          const gj = fetchResult.data;
+          const poly = this.extractPolygons(gj, label => label === "" ? 0 : parseFloat(label), (label, val) => val > 0);
+          day1WindRisk = this.evaluatePolygons(poly, loc, percComparator);
+          this._geoJsonCache.set(day1WindURL, { mode: fetchResult.mode, etag: fetchResult.newEtag ?? null, hash: fetchResult.newHash ?? null, result: day1WindRisk, timestamp: Date.now() });
+        }
+      }
       let day1WindCig = 0;
       if (day1WindRisk > 0) {
-        const cigGeojson = await this.fetchGeoJson(day1CigWindURL);
-        if (cigGeojson) {
-          const cigPolys = this.extractPolygons(cigGeojson, label => cigToTier[label] || 0, (label, val) => val > 0);
+        const fetchResult = await this.fetchGeoJsonCached(day1CigWindURL);
+        if (fetchResult.stale) anyStale = true;
+        if (fetchResult.data === null && fetchResult.cachedResult !== null) {
+          day1WindCig = fetchResult.cachedResult;
+        } else if (fetchResult.data !== null) {
+          const cigPolys = this.extractPolygons(fetchResult.data, label => cigToTier[label] || 0, (label, val) => val > 0);
           day1WindCig = this.evaluatePolygons(cigPolys, loc, cigComparator);
+          this._geoJsonCache.set(day1CigWindURL, { mode: fetchResult.mode, etag: fetchResult.newEtag ?? null, hash: fetchResult.newHash ?? null, result: day1WindCig, timestamp: Date.now() });
         }
       }
 
@@ -387,46 +457,107 @@ module.exports = NodeHelper.create({
       // Day 2
 
       //Day 2 Cat
-      geojson = await this.fetchGeoJson(day2CatURL);
-      var day2RiskPoly = this.extractPolygons(geojson, label => riskToValue[label] || 0, (label, val) => val > 0);
-      var day2RiskResult = this.evaluatePolygons(day2RiskPoly, loc, catComparator);
-      var day2Risk = day2RiskResult === 0 ? "NONE" : valueToRisk[day2RiskResult];
-  
+      {
+        const fetchResult = await this.fetchGeoJsonCached(day2CatURL);
+        if (fetchResult.stale) anyStale = true;
+        var day2RiskResult;
+        if (fetchResult.data === null && fetchResult.cachedResult !== null) {
+          day2RiskResult = fetchResult.cachedResult;
+        } else if (fetchResult.data === null) {
+          day2RiskResult = 0;
+        } else {
+          const gj = fetchResult.data;
+          const poly = this.extractPolygons(gj, label => riskToValue[label] || 0, (label, val) => val > 0);
+          day2RiskResult = this.evaluatePolygons(poly, loc, catComparator);
+          this._geoJsonCache.set(day2CatURL, { mode: fetchResult.mode, etag: fetchResult.newEtag ?? null, hash: fetchResult.newHash ?? null, result: day2RiskResult, timestamp: Date.now() });
+        }
+        var day2Risk = day2RiskResult === 0 ? "NONE" : valueToRisk[day2RiskResult];
+      }
+
       // Day 2 Torn
-      geojson = await this.fetchGeoJson(day2TorURL);  
-      var day2TorRiskPoly = this.extractPolygons(geojson, label => label === "" ? 0 : parseFloat(label), (label, val) => val > 0);
-      var day2TorRisk = this.evaluatePolygons(day2TorRiskPoly, loc, percComparator);
+      var day2TorRisk;
+      {
+        const fetchResult = await this.fetchGeoJsonCached(day2TorURL);
+        if (fetchResult.stale) anyStale = true;
+        if (fetchResult.data === null && fetchResult.cachedResult !== null) {
+          day2TorRisk = fetchResult.cachedResult;
+        } else if (fetchResult.data === null) {
+          day2TorRisk = 0;
+        } else {
+          const gj = fetchResult.data;
+          const poly = this.extractPolygons(gj, label => label === "" ? 0 : parseFloat(label), (label, val) => val > 0);
+          day2TorRisk = this.evaluatePolygons(poly, loc, percComparator);
+          this._geoJsonCache.set(day2TorURL, { mode: fetchResult.mode, etag: fetchResult.newEtag ?? null, hash: fetchResult.newHash ?? null, result: day2TorRisk, timestamp: Date.now() });
+        }
+      }
       let day2TorCig = 0;
       if (day2TorRisk > 0) {
-        const cigGeojson = await this.fetchGeoJson(day2CigTorURL);
-        if (cigGeojson) {
-          const cigPolys = this.extractPolygons(cigGeojson, label => cigToTier[label] || 0, (label, val) => val > 0);
+        const fetchResult = await this.fetchGeoJsonCached(day2CigTorURL);
+        if (fetchResult.stale) anyStale = true;
+        if (fetchResult.data === null && fetchResult.cachedResult !== null) {
+          day2TorCig = fetchResult.cachedResult;
+        } else if (fetchResult.data !== null) {
+          const cigPolys = this.extractPolygons(fetchResult.data, label => cigToTier[label] || 0, (label, val) => val > 0);
           day2TorCig = this.evaluatePolygons(cigPolys, loc, cigComparator);
+          this._geoJsonCache.set(day2CigTorURL, { mode: fetchResult.mode, etag: fetchResult.newEtag ?? null, hash: fetchResult.newHash ?? null, result: day2TorCig, timestamp: Date.now() });
         }
       }
 
       // Day 2 Hail
-      geojson = await this.fetchGeoJson(day2HailURL);  
-      var day2HailRiskPoly = this.extractPolygons(geojson, label => label === "" ? 0 : parseFloat(label), (label, val) => val > 0);
-      var day2HailRisk = this.evaluatePolygons(day2HailRiskPoly, loc, percComparator);
-      let day2HailCig = 0;
-      if (day2HailRisk > 0) {
-        const cigGeojson = await this.fetchGeoJson(day2CigHailURL);
-        if (cigGeojson) {
-          const cigPolys = this.extractPolygons(cigGeojson, label => cigToTier[label] || 0, (label, val) => val > 0);
-          day2HailCig = this.evaluatePolygons(cigPolys, loc, cigComparator);
+      var day2HailRisk;
+      {
+        const fetchResult = await this.fetchGeoJsonCached(day2HailURL);
+        if (fetchResult.stale) anyStale = true;
+        if (fetchResult.data === null && fetchResult.cachedResult !== null) {
+          day2HailRisk = fetchResult.cachedResult;
+        } else if (fetchResult.data === null) {
+          day2HailRisk = 0;
+        } else {
+          const gj = fetchResult.data;
+          const poly = this.extractPolygons(gj, label => label === "" ? 0 : parseFloat(label), (label, val) => val > 0);
+          day2HailRisk = this.evaluatePolygons(poly, loc, percComparator);
+          this._geoJsonCache.set(day2HailURL, { mode: fetchResult.mode, etag: fetchResult.newEtag ?? null, hash: fetchResult.newHash ?? null, result: day2HailRisk, timestamp: Date.now() });
         }
       }
+      let day2HailCig = 0;
+      if (day2HailRisk > 0) {
+        const fetchResult = await this.fetchGeoJsonCached(day2CigHailURL);
+        if (fetchResult.stale) anyStale = true;
+        if (fetchResult.data === null && fetchResult.cachedResult !== null) {
+          day2HailCig = fetchResult.cachedResult;
+        } else if (fetchResult.data !== null) {
+          const cigPolys = this.extractPolygons(fetchResult.data, label => cigToTier[label] || 0, (label, val) => val > 0);
+          day2HailCig = this.evaluatePolygons(cigPolys, loc, cigComparator);
+          this._geoJsonCache.set(day2CigHailURL, { mode: fetchResult.mode, etag: fetchResult.newEtag ?? null, hash: fetchResult.newHash ?? null, result: day2HailCig, timestamp: Date.now() });
+        }
+      }
+
       // Day 2 Wind
-      geojson = await this.fetchGeoJson(day2WindURL);  
-      var day2WindRiskPoly = this.extractPolygons(geojson, label => label === "" ? 0 : parseFloat(label), (label, val) => val > 0);
-      var day2WindRisk = this.evaluatePolygons(day2WindRiskPoly, loc, percComparator)
+      var day2WindRisk;
+      {
+        const fetchResult = await this.fetchGeoJsonCached(day2WindURL);
+        if (fetchResult.stale) anyStale = true;
+        if (fetchResult.data === null && fetchResult.cachedResult !== null) {
+          day2WindRisk = fetchResult.cachedResult;
+        } else if (fetchResult.data === null) {
+          day2WindRisk = 0;
+        } else {
+          const gj = fetchResult.data;
+          const poly = this.extractPolygons(gj, label => label === "" ? 0 : parseFloat(label), (label, val) => val > 0);
+          day2WindRisk = this.evaluatePolygons(poly, loc, percComparator);
+          this._geoJsonCache.set(day2WindURL, { mode: fetchResult.mode, etag: fetchResult.newEtag ?? null, hash: fetchResult.newHash ?? null, result: day2WindRisk, timestamp: Date.now() });
+        }
+      }
       let day2WindCig = 0;
       if (day2WindRisk > 0) {
-        const cigGeojson = await this.fetchGeoJson(day2CigWindURL);
-        if (cigGeojson) {
-          const cigPolys = this.extractPolygons(cigGeojson, label => cigToTier[label] || 0, (label, val) => val > 0);
+        const fetchResult = await this.fetchGeoJsonCached(day2CigWindURL);
+        if (fetchResult.stale) anyStale = true;
+        if (fetchResult.data === null && fetchResult.cachedResult !== null) {
+          day2WindCig = fetchResult.cachedResult;
+        } else if (fetchResult.data !== null) {
+          const cigPolys = this.extractPolygons(fetchResult.data, label => cigToTier[label] || 0, (label, val) => val > 0);
           day2WindCig = this.evaluatePolygons(cigPolys, loc, cigComparator);
+          this._geoJsonCache.set(day2CigWindURL, { mode: fetchResult.mode, etag: fetchResult.newEtag ?? null, hash: fetchResult.newHash ?? null, result: day2WindCig, timestamp: Date.now() });
         }
       }
 
@@ -436,21 +567,49 @@ module.exports = NodeHelper.create({
 
       //DAY 3
       //Day 3 Cat
+      {
+        const fetchResult = await this.fetchGeoJsonCached(day3CatURL);
+        if (fetchResult.stale) anyStale = true;
+        var day3RiskResult;
+        if (fetchResult.data === null && fetchResult.cachedResult !== null) {
+          day3RiskResult = fetchResult.cachedResult;
+        } else if (fetchResult.data === null) {
+          day3RiskResult = 0;
+        } else {
+          const gj = fetchResult.data;
+          const poly = this.extractPolygons(gj, label => riskToValue[label] || 0, (label, val) => val > 0);
+          day3RiskResult = this.evaluatePolygons(poly, loc, catComparator);
+          this._geoJsonCache.set(day3CatURL, { mode: fetchResult.mode, etag: fetchResult.newEtag ?? null, hash: fetchResult.newHash ?? null, result: day3RiskResult, timestamp: Date.now() });
+        }
+        var day3Risk = day3RiskResult === 0 ? "NONE" : valueToRisk[day3RiskResult];
+      }
 
-      geojson = await this.fetchGeoJson(day3CatURL);
-      var day3RiskPoly = this.extractPolygons(geojson, label => riskToValue[label] || 0, (label, val) => val > 0);
-      var day3RiskResult = this.evaluatePolygons(day3RiskPoly, loc, catComparator);
-      var day3Risk = day3RiskResult === 0 ? "NONE" : valueToRisk[day3RiskResult];
       // Day 3 Prob
-      geojson = await this.fetchGeoJson(day3ProbURL);  
-      var day3ProbRiskPoly = this.extractPolygons(geojson, label => label === "" ? 0 : parseFloat(label), (label, val) => val > 0);
-      var day3ProbRisk = this.evaluatePolygons(day3ProbRiskPoly, loc, percComparator);
+      var day3ProbRisk;
+      {
+        const fetchResult = await this.fetchGeoJsonCached(day3ProbURL);
+        if (fetchResult.stale) anyStale = true;
+        if (fetchResult.data === null && fetchResult.cachedResult !== null) {
+          day3ProbRisk = fetchResult.cachedResult;
+        } else if (fetchResult.data === null) {
+          day3ProbRisk = 0;
+        } else {
+          const gj = fetchResult.data;
+          const poly = this.extractPolygons(gj, label => label === "" ? 0 : parseFloat(label), (label, val) => val > 0);
+          day3ProbRisk = this.evaluatePolygons(poly, loc, percComparator);
+          this._geoJsonCache.set(day3ProbURL, { mode: fetchResult.mode, etag: fetchResult.newEtag ?? null, hash: fetchResult.newHash ?? null, result: day3ProbRisk, timestamp: Date.now() });
+        }
+      }
       let day3Cig = 0;
       if (day3ProbRisk > 0) {
-        const cigGeojson = await this.fetchGeoJson(day3CigUrl);
-        if (cigGeojson) {
-          const cigPolys = this.extractPolygons(cigGeojson, label => cigToTier[label] || 0, (label, val) => val > 0);
+        const fetchResult = await this.fetchGeoJsonCached(day3CigUrl);
+        if (fetchResult.stale) anyStale = true;
+        if (fetchResult.data === null && fetchResult.cachedResult !== null) {
+          day3Cig = fetchResult.cachedResult;
+        } else if (fetchResult.data !== null) {
+          const cigPolys = this.extractPolygons(fetchResult.data, label => cigToTier[label] || 0, (label, val) => val > 0);
           day3Cig = this.evaluatePolygons(cigPolys, loc, cigComparator);
+          this._geoJsonCache.set(day3CigUrl, { mode: fetchResult.mode, etag: fetchResult.newEtag ?? null, hash: fetchResult.newHash ?? null, result: day3Cig, timestamp: Date.now() });
         }
       }
 
@@ -465,33 +624,62 @@ module.exports = NodeHelper.create({
 
       // Fire Weather Day 1
       let day1FireRisk = 0;
-      const fw1WindRHgj = await this.fetchGeoJson(day1FwWindRHURL);
-      if (fw1WindRHgj) {
-        const polys = this.extractPolygons(fw1WindRHgj, label => fireRiskToValue[label] || 0, (label, val) => val > 0);
-        day1FireRisk = Math.max(day1FireRisk, this.evaluatePolygons(polys, loc, fireComparator));
+      {
+        const fetchResult = await this.fetchGeoJsonCached(day1FwWindRHURL);
+        if (fetchResult.stale) anyStale = true;
+        if (fetchResult.data === null && fetchResult.cachedResult !== null) {
+          day1FireRisk = Math.max(day1FireRisk, fetchResult.cachedResult);
+        } else if (fetchResult.data !== null) {
+          const polys = this.extractPolygons(fetchResult.data, label => fireRiskToValue[label] || 0, (label, val) => val > 0);
+          const val = this.evaluatePolygons(polys, loc, fireComparator);
+          day1FireRisk = Math.max(day1FireRisk, val);
+          this._geoJsonCache.set(day1FwWindRHURL, { mode: fetchResult.mode, etag: fetchResult.newEtag ?? null, hash: fetchResult.newHash ?? null, result: val, timestamp: Date.now() });
+        }
       }
-      const fw1DryTgj = await this.fetchGeoJson(day1FwDryTURL);
-      if (fw1DryTgj) {
-        const polys = this.extractPolygons(fw1DryTgj, label => fireRiskToValue[label] || 0, (label, val) => val > 0);
-        day1FireRisk = Math.max(day1FireRisk, this.evaluatePolygons(polys, loc, fireComparator));
+      {
+        const fetchResult = await this.fetchGeoJsonCached(day1FwDryTURL);
+        if (fetchResult.stale) anyStale = true;
+        if (fetchResult.data === null && fetchResult.cachedResult !== null) {
+          day1FireRisk = Math.max(day1FireRisk, fetchResult.cachedResult);
+        } else if (fetchResult.data !== null) {
+          const polys = this.extractPolygons(fetchResult.data, label => fireRiskToValue[label] || 0, (label, val) => val > 0);
+          const val = this.evaluatePolygons(polys, loc, fireComparator);
+          day1FireRisk = Math.max(day1FireRisk, val);
+          this._geoJsonCache.set(day1FwDryTURL, { mode: fetchResult.mode, etag: fetchResult.newEtag ?? null, hash: fetchResult.newHash ?? null, result: val, timestamp: Date.now() });
+        }
       }
 
       // Fire Weather Day 2
       let day2FireRisk = 0;
-      const fw2WindRHgj = await this.fetchGeoJson(day2FwWindRHURL);
-      if (fw2WindRHgj) {
-        const polys = this.extractPolygons(fw2WindRHgj, label => fireRiskToValue[label] || 0, (label, val) => val > 0);
-        day2FireRisk = Math.max(day2FireRisk, this.evaluatePolygons(polys, loc, fireComparator));
+      {
+        const fetchResult = await this.fetchGeoJsonCached(day2FwWindRHURL);
+        if (fetchResult.stale) anyStale = true;
+        if (fetchResult.data === null && fetchResult.cachedResult !== null) {
+          day2FireRisk = Math.max(day2FireRisk, fetchResult.cachedResult);
+        } else if (fetchResult.data !== null) {
+          const polys = this.extractPolygons(fetchResult.data, label => fireRiskToValue[label] || 0, (label, val) => val > 0);
+          const val = this.evaluatePolygons(polys, loc, fireComparator);
+          day2FireRisk = Math.max(day2FireRisk, val);
+          this._geoJsonCache.set(day2FwWindRHURL, { mode: fetchResult.mode, etag: fetchResult.newEtag ?? null, hash: fetchResult.newHash ?? null, result: val, timestamp: Date.now() });
+        }
       }
-      const fw2DryTgj = await this.fetchGeoJson(day2FwDryTURL);
-      if (fw2DryTgj) {
-        const polys = this.extractPolygons(fw2DryTgj, label => fireRiskToValue[label] || 0, (label, val) => val > 0);
-        day2FireRisk = Math.max(day2FireRisk, this.evaluatePolygons(polys, loc, fireComparator));
+      {
+        const fetchResult = await this.fetchGeoJsonCached(day2FwDryTURL);
+        if (fetchResult.stale) anyStale = true;
+        if (fetchResult.data === null && fetchResult.cachedResult !== null) {
+          day2FireRisk = Math.max(day2FireRisk, fetchResult.cachedResult);
+        } else if (fetchResult.data !== null) {
+          const polys = this.extractPolygons(fetchResult.data, label => fireRiskToValue[label] || 0, (label, val) => val > 0);
+          const val = this.evaluatePolygons(polys, loc, fireComparator);
+          day2FireRisk = Math.max(day2FireRisk, val);
+          this._geoJsonCache.set(day2FwDryTURL, { mode: fetchResult.mode, etag: fetchResult.newEtag ?? null, hash: fetchResult.newHash ?? null, result: val, timestamp: Date.now() });
+        }
       }
 
       if (!extended)
       {
         return {
+          ...(anyStale ? { _stale: true, _staleAsOf: Date.now() } : {}),
           day1: {
            "risk": day1Risk,
            "text": valueToFullRisk[day1Risk],
@@ -532,58 +720,113 @@ module.exports = NodeHelper.create({
         };
       }
 
-      //Day 5
-      geojson = await this.fetchGeoJson(day4URL);
-      var day4RiskPoly = this.extractPolygons(geojson, label => label === "" ? 0 : parseFloat(label), (label, val) => val > 0);
-      var day4ProbRisk = this.evaluatePolygons(day4RiskPoly, loc, percComparator);
-      day4Sign = false;
-      if(day4ProbRisk > 0){
-        day4ProbRiskPoly = this.extractPolygons(geojson, label => label, (label,val) => label === "SIGN");
-        day4Sign = this.evaluatePolygons(day4ProbRiskPoly, loc, sigComparator);
+      // Day 4 — PERF-02: single-pass extractPolygons for both risk and SIGN before evaluatePolygons
+      var day4ProbRisk, day4Sign;
+      {
+        const fetch4 = await this.fetchGeoJsonCached(day4URL);
+        if (fetch4.stale) anyStale = true;
+        if (fetch4.data === null && fetch4.cachedResult !== null) {
+          day4ProbRisk = fetch4.cachedResult.probRisk;
+          day4Sign = fetch4.cachedResult.sign;
+        } else if (fetch4.data === null) {
+          day4ProbRisk = 0;
+          day4Sign = false;
+        } else {
+          const gj = fetch4.data;
+          const day4RiskPoly = this.extractPolygons(gj, label => label === "" ? 0 : parseFloat(label), (label, val) => val > 0);
+          const day4SignPoly  = this.extractPolygons(gj, label => label, (label, val) => label === "SIGN");
+          day4ProbRisk = this.evaluatePolygons(day4RiskPoly, loc, percComparator);
+          day4Sign = day4ProbRisk > 0 ? this.evaluatePolygons(day4SignPoly, loc, sigComparator) : false;
+          this._geoJsonCache.set(day4URL, { mode: fetch4.mode, etag: fetch4.newEtag ?? null, hash: fetch4.newHash ?? null, result: { probRisk: day4ProbRisk, sign: day4Sign }, timestamp: Date.now() });
+        }
       }
       var day4Risk = this.percToRisk(day4ProbRisk, day4Sign);
 
-      //Day 5
-      geojson = await this.fetchGeoJson(day5URL);
-      var day5RiskPoly = this.extractPolygons(geojson, label => label === "" ? 0 : parseFloat(label), (label, val) => val > 0);
-      var day5ProbRisk = this.evaluatePolygons(day5RiskPoly, loc, percComparator);
-      day5Sign = false;
-      if(day5ProbRisk > 0){
-        day5ProbRiskPoly = this.extractPolygons(geojson, label => label, (label,val) => label === "SIGN");
-        day5Sign = this.evaluatePolygons(day5ProbRiskPoly, loc, sigComparator);
+      // Day 5
+      var day5ProbRisk, day5Sign;
+      {
+        const fetch5 = await this.fetchGeoJsonCached(day5URL);
+        if (fetch5.stale) anyStale = true;
+        if (fetch5.data === null && fetch5.cachedResult !== null) {
+          day5ProbRisk = fetch5.cachedResult.probRisk;
+          day5Sign = fetch5.cachedResult.sign;
+        } else if (fetch5.data === null) {
+          day5ProbRisk = 0;
+          day5Sign = false;
+        } else {
+          const gj = fetch5.data;
+          const day5RiskPoly = this.extractPolygons(gj, label => label === "" ? 0 : parseFloat(label), (label, val) => val > 0);
+          const day5SignPoly  = this.extractPolygons(gj, label => label, (label, val) => label === "SIGN");
+          day5ProbRisk = this.evaluatePolygons(day5RiskPoly, loc, percComparator);
+          day5Sign = day5ProbRisk > 0 ? this.evaluatePolygons(day5SignPoly, loc, sigComparator) : false;
+          this._geoJsonCache.set(day5URL, { mode: fetch5.mode, etag: fetch5.newEtag ?? null, hash: fetch5.newHash ?? null, result: { probRisk: day5ProbRisk, sign: day5Sign }, timestamp: Date.now() });
+        }
       }
       var day5Risk = this.percToRisk(day5ProbRisk, day5Sign);
 
-      //Day 6
-      geojson = await this.fetchGeoJson(day6URL);
-      var day6RiskPoly = this.extractPolygons(geojson, label => label === "" ? 0 : parseFloat(label), (label, val) => val > 0);
-      var day6ProbRisk = this.evaluatePolygons(day6RiskPoly, loc, percComparator);
-      day6Sign = false;
-      if(day6ProbRisk > 0){
-        day6ProbRiskPoly = this.extractPolygons(geojson, label => label, (label,val) => label === "SIGN");
-        day6Sign = this.evaluatePolygons(day6ProbRiskPoly, loc, sigComparator);
+      // Day 6
+      var day6ProbRisk, day6Sign;
+      {
+        const fetch6 = await this.fetchGeoJsonCached(day6URL);
+        if (fetch6.stale) anyStale = true;
+        if (fetch6.data === null && fetch6.cachedResult !== null) {
+          day6ProbRisk = fetch6.cachedResult.probRisk;
+          day6Sign = fetch6.cachedResult.sign;
+        } else if (fetch6.data === null) {
+          day6ProbRisk = 0;
+          day6Sign = false;
+        } else {
+          const gj = fetch6.data;
+          const day6RiskPoly = this.extractPolygons(gj, label => label === "" ? 0 : parseFloat(label), (label, val) => val > 0);
+          const day6SignPoly  = this.extractPolygons(gj, label => label, (label, val) => label === "SIGN");
+          day6ProbRisk = this.evaluatePolygons(day6RiskPoly, loc, percComparator);
+          day6Sign = day6ProbRisk > 0 ? this.evaluatePolygons(day6SignPoly, loc, sigComparator) : false;
+          this._geoJsonCache.set(day6URL, { mode: fetch6.mode, etag: fetch6.newEtag ?? null, hash: fetch6.newHash ?? null, result: { probRisk: day6ProbRisk, sign: day6Sign }, timestamp: Date.now() });
+        }
       }
       var day6Risk = this.percToRisk(day6ProbRisk, day6Sign);
 
-      //Day 7
-      geojson = await this.fetchGeoJson(day7URL);
-      var day7RiskPoly = this.extractPolygons(geojson, label => label === "" ? 0 : parseFloat(label), (label, val) => val > 0);
-      var day7ProbRisk = this.evaluatePolygons(day7RiskPoly, loc, percComparator);
-      day7Sign = false;
-      if(day7ProbRisk > 0){
-        day7ProbRiskPoly = this.extractPolygons(geojson, label => label, (label,val) => label === "SIGN");
-        day7Sign = this.evaluatePolygons(day7ProbRiskPoly, loc, sigComparator);
+      // Day 7
+      var day7ProbRisk, day7Sign;
+      {
+        const fetch7 = await this.fetchGeoJsonCached(day7URL);
+        if (fetch7.stale) anyStale = true;
+        if (fetch7.data === null && fetch7.cachedResult !== null) {
+          day7ProbRisk = fetch7.cachedResult.probRisk;
+          day7Sign = fetch7.cachedResult.sign;
+        } else if (fetch7.data === null) {
+          day7ProbRisk = 0;
+          day7Sign = false;
+        } else {
+          const gj = fetch7.data;
+          const day7RiskPoly = this.extractPolygons(gj, label => label === "" ? 0 : parseFloat(label), (label, val) => val > 0);
+          const day7SignPoly  = this.extractPolygons(gj, label => label, (label, val) => label === "SIGN");
+          day7ProbRisk = this.evaluatePolygons(day7RiskPoly, loc, percComparator);
+          day7Sign = day7ProbRisk > 0 ? this.evaluatePolygons(day7SignPoly, loc, sigComparator) : false;
+          this._geoJsonCache.set(day7URL, { mode: fetch7.mode, etag: fetch7.newEtag ?? null, hash: fetch7.newHash ?? null, result: { probRisk: day7ProbRisk, sign: day7Sign }, timestamp: Date.now() });
+        }
       }
       var day7Risk = this.percToRisk(day7ProbRisk, day7Sign);
 
-      //Day 8
-      geojson = await this.fetchGeoJson(day8URL);
-      var day8RiskPoly = this.extractPolygons(geojson, label => label === "" ? 0 : parseFloat(label), (label, val) => val > 0);
-      var day8ProbRisk = this.evaluatePolygons(day8RiskPoly, loc, percComparator);
-      day8Sign = false;
-      if(day8ProbRisk > 0){
-        day8ProbRiskPoly = this.extractPolygons(geojson, label => label, (label,val) => label === "SIGN");
-        day8Sign = this.evaluatePolygons(day8ProbRiskPoly, loc, sigComparator);
+      // Day 8
+      var day8ProbRisk, day8Sign;
+      {
+        const fetch8 = await this.fetchGeoJsonCached(day8URL);
+        if (fetch8.stale) anyStale = true;
+        if (fetch8.data === null && fetch8.cachedResult !== null) {
+          day8ProbRisk = fetch8.cachedResult.probRisk;
+          day8Sign = fetch8.cachedResult.sign;
+        } else if (fetch8.data === null) {
+          day8ProbRisk = 0;
+          day8Sign = false;
+        } else {
+          const gj = fetch8.data;
+          const day8RiskPoly = this.extractPolygons(gj, label => label === "" ? 0 : parseFloat(label), (label, val) => val > 0);
+          const day8SignPoly  = this.extractPolygons(gj, label => label, (label, val) => label === "SIGN");
+          day8ProbRisk = this.evaluatePolygons(day8RiskPoly, loc, percComparator);
+          day8Sign = day8ProbRisk > 0 ? this.evaluatePolygons(day8SignPoly, loc, sigComparator) : false;
+          this._geoJsonCache.set(day8URL, { mode: fetch8.mode, etag: fetch8.newEtag ?? null, hash: fetch8.newHash ?? null, result: { probRisk: day8ProbRisk, sign: day8Sign }, timestamp: Date.now() });
+        }
       }
       var day8Risk = this.percToRisk(day8ProbRisk, day8Sign);
 
@@ -591,6 +834,7 @@ module.exports = NodeHelper.create({
       if(day4ProbRisk > 0 || day5ProbRisk > 0 || day6ProbRisk > 0 || day7ProbRisk > 0 || day8ProbRisk > 0) day48Risk = true;
 
       return {
+        ...(anyStale ? { _stale: true, _staleAsOf: Date.now() } : {}),
         "day48Risk": day48Risk,
           day1: {
            "risk": day1Risk,
