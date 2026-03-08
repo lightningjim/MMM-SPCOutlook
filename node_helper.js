@@ -28,9 +28,7 @@ module.exports = NodeHelper.create({
   // Called when the front-end (MMM-SPCOutlook.js) sends a socket notification
   socketNotificationReceived: async function(notification, payload) {
     if (notification === "GET_SPC_DATA") {
-      //Log.info("SPC Outlook: GET_SPC_DATA GET")
       const { lat, lon, extended } = payload;
-      //Log.info("SPC-Outlook - intermediate payload" + lat + " " + lon + " " + extended); 
       const md = await this.getMesoscaleDiscussion(lat, lon);
       const outlook = await this.getSpcOutlook(lat, lon, extended);
       // Send the results back to your front-end module
@@ -54,16 +52,13 @@ module.exports = NodeHelper.create({
     const ZIPper = new ZIP(buffer);
     const entry = ZIPper.getEntry(filename);
     if(!entry) throw new Error('KMZ downloaded has no KML');
-    //Log.info("SPC-Outlook: " + ZIPper.readFile(entry))
     return ZIPper.readFile(entry).toString();
   },
 
   parseNetworkLinks(kmlText) {
     const doc = new DOMParser().parseFromString(kmlText, "text/xml");
-    //Log.info("SPC-Outlook: Parsed DOM" + doc);
     const nodes = select("//k:NetworkLink/k:Link/k:href/text()", doc);
     const MDS = nodes.map(n => n.nodeValue.trim());
-    //Log.info("SPC‑Outlook: Nodes –", JSON.stringify(MDS));
     return MDS;
   },
 
@@ -83,7 +78,6 @@ module.exports = NodeHelper.create({
    */
   extractPolygons(geojson, toValue, includesFeat){
     const polygons = [];
-    //Log.info(geojson);
     geojson.features.forEach(f =>{
       const label = f.properties.LABEL || "";
       const value = toValue(label);
@@ -194,11 +188,8 @@ module.exports = NodeHelper.create({
   async getMesoscaleDiscussion(lat,lon){
     const ActiveURL = "https://www.spc.noaa.gov/products/md/ActiveMD.kmz"
     const ActiveKMZ = await this.fetchBinBuffer(ActiveURL);
-    //Log.info("SPC-Outlook: KMZ = " + ActiveKMZ);
     const ActiveKML = this.extractKmlFromKmz(ActiveKMZ, "ActiveMD.kml");
-    //Log.info("SPC-Outlook: KML = " + ActiveKML);
     const MDURLs = this.parseNetworkLinks(ActiveKML);
-    //Log.info("SPC-Outlook: Total MDs #" + MDURLs)
     if(MDURLs.length == 0) return false;
     const MDArray = [];
     for(const MDURL of MDURLs){
@@ -206,7 +197,6 @@ module.exports = NodeHelper.create({
       const MDKML = this.extractKmlFromKmz(MDKMZ, this.kmzToKmlfilename(MDURL));
       const MDgj = this.kmlToGeoJson(MDKML);
       const MDApplies = this.checkInPolygon(MDgj, lat, lon);
-      console.log("SPC-Outlook MD Test:" + MDgj.features[0].properties.name + " | " + MDApplies);
       if(MDApplies) MDArray.push(MDgj.features[0].properties.name);
     }
     Log.info("SPC-Outlook MDArray: " + MDArray);
@@ -217,7 +207,6 @@ module.exports = NodeHelper.create({
   
   //Day3+ % => risk
   percToRisk(pct, isSig){
-    //Log.info(`SPC-Outlook: ${pct} | ${isSig}`)
     if (pct == 0.45) return isSig ? "MDT" : "ENH";
     if (pct == 0.30) return "ENH";
     if (pct == 0.15) return "SLGT";
@@ -411,9 +400,6 @@ module.exports = NodeHelper.create({
       };
       // Part B: sigComparator — fixes latent ReferenceError in extended mode
       const sigComparator = { initial: false, comparator: (best, val) => true };
-
-      //Log.info("SPC-Outlook: I'M IN")
-      //Log.info("SPC-Outlook: Day 4-8 extended - " + extended)
 
       // The Python script has “risk_to_value” and “value_to_risk” logic:
       const riskToValue = {
@@ -884,7 +870,7 @@ module.exports = NodeHelper.create({
       };
 
     } catch (err) {
-      console.error("Error fetching or parsing SPC data", err);
+      Log.error("Error fetching or parsing SPC data", err);
       return { error: err.toString() };
     }
   },
@@ -931,7 +917,6 @@ module.exports = NodeHelper.create({
 //         }
 //       }
 //     }
-//     //Log.info("SPC outlook Debug: result = " + highestValue + "|" + valueToRisk[highestValue])
 //     return highestValue === 0 ? "NONE" : valueToRisk[highestValue];
 //   },
 
@@ -958,7 +943,6 @@ module.exports = NodeHelper.create({
 //         }
 //       }
 //     }
-//     //Log.info("SPC outlook Debug: result = " + highestValue)
 //     return highestValue
 //   },
 
