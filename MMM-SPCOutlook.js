@@ -9,7 +9,7 @@ Module.register("MMM-SPCOutlook", {
   start: function() {
     // Request data once the module starts
     Log.info(`Starting module: ${this.name}`);
-    console.log("SPC-Outlook: GET_SPC_DATA - " + this.config.lat + "," + this.config.lon + "," + this.config.extended);
+    Log.info("SPC-Outlook: GET_SPC_DATA - " + this.config.lat + "," + this.config.lon + "," + this.config.extended);
     this.sendSocketNotification("GET_SPC_DATA", { lat: this.config.lat, lon: this.config.lon, extended: this.config.extended });
     // Set an interval to update every hour (3600000 milliseconds)
     setInterval(() => {this.sendSocketNotification("GET_SPC_DATA", { lat: this.config.lat, lon: this.config.lon, extended: this.config.extended });}, this.config.updateInterval * 60000);
@@ -18,7 +18,7 @@ Module.register("MMM-SPCOutlook", {
   socketNotificationReceived: function(notification, payload) {
     if (notification === "SPC_DATA_RESULT") {
       // Store the results in a variable for display
-      console.log("SPC Outlook: SPC_DATA_RESULT Received - " + JSON.stringify(payload));
+      Log.info("SPC Outlook: SPC_DATA_RESULT Received - " + JSON.stringify(payload));
       this.spcrisk = payload[0];
       this.mds = payload[1];
       this.updateDom();
@@ -32,7 +32,7 @@ Module.register("MMM-SPCOutlook", {
   },
 
   getDom: function() {
-    dowToText = (day) => {
+    const dowToText = (day) => {
       const weekday = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
       if (day >= 7) day -= 7;
       return weekday[day];
@@ -58,7 +58,7 @@ Module.register("MMM-SPCOutlook", {
     ) {
       wrapper.innerHTML = "No Severe Weather Risk"
     } else {
-      dow = new Date().getDay();
+      const dow = new Date().getDay();
       wrapper.innerHTML = "";
       if(this.mds) {
         for(const MD of this.mds){
@@ -69,7 +69,7 @@ Module.register("MMM-SPCOutlook", {
       {
         wrapper.innerHTML += dowToText(dow) + " (Day 1): <span style=\"color:#" + this.spcrisk.day1.color + "\">" + this.spcrisk.day1.text + "</span><br/>";
       if(this.spcrisk.day1.probRisk) {
-        probRiskHTML = ""
+        let probRiskHTML = ""
         if (this.spcrisk.day1.torRisk > 0) probRiskHTML += "<i class=\"wi wi-tornado\"></i>" + cigLabel(this.spcrisk.day1.torCig) + 100 * this.spcrisk.day1.torRisk + "% ";
         if (this.spcrisk.day1.hailRisk > 0) probRiskHTML += "<i class=\"wi wi-meteor\"></i>" + cigLabel(this.spcrisk.day1.hailCig) + 100 * this.spcrisk.day1.hailRisk + "% ";
         if (this.spcrisk.day1.windRisk > 0) probRiskHTML += cigLabel(this.spcrisk.day1.windCig) + "<i class=\"wi wi-strong-wind\"></i> " + 100 * this.spcrisk.day1.windRisk + "%";
@@ -80,7 +80,7 @@ Module.register("MMM-SPCOutlook", {
       {
         wrapper.innerHTML +=  dowToText(dow+1) + " (Day 2): <span style=\"color:#" + this.spcrisk.day2.color + "\">" + this.spcrisk.day2.text + "</span><br/>";
       if(this.spcrisk.day2.probRisk) {
-        probRiskHTML = ""
+        let probRiskHTML = ""
         if (this.spcrisk.day2.torRisk > 0) probRiskHTML += "<i class=\"wi wi-tornado\"></i>" + cigLabel(this.spcrisk.day2.torCig) + 100 * this.spcrisk.day2.torRisk + "% ";
         if (this.spcrisk.day2.hailRisk > 0) probRiskHTML += "<i class=\"wi wi-meteor\"></i>" + cigLabel(this.spcrisk.day2.hailCig) + 100 * this.spcrisk.day2.hailRisk + "% ";
         if (this.spcrisk.day2.windRisk > 0) probRiskHTML += cigLabel(this.spcrisk.day2.windCig) + "<i class=\"wi wi-strong-wind\"></i> " + 100 * this.spcrisk.day2.windRisk + "%";
@@ -89,9 +89,6 @@ Module.register("MMM-SPCOutlook", {
       if(this.spcrisk.day3.risk != "NONE") 
       {
       wrapper.innerHTML += dowToText(dow+2) + " (Day 3): <span style=\"color:#" + this.spcrisk.day3.color + "\">" + this.spcrisk.day3.text + cigLabel(this.spcrisk.day3.cig) + "</span>";
-      // if(this.spcrisk.day3.probRisk && this.spcrisk.day3.sign) { 
-      //   wrapper.innerHTML += "<br/>⚠<i class=\"wi wi-thunderstorm\"></i> " + 100 * this.spcrisk.day3.probRisk + "%";
-      // }
       wrapper.innerHTML += "<br/>";
       }
       if(this.config.extended)
