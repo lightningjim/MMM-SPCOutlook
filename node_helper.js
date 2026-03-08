@@ -192,7 +192,7 @@ module.exports = NodeHelper.create({
    * @returns array of MD name strings that apply to the location, or false if none are active
    */
   async getMesoscaleDiscussion(lat,lon){
-    var ActiveURL = "https://www.spc.noaa.gov/products/md/ActiveMD.kmz"
+    const ActiveURL = "https://www.spc.noaa.gov/products/md/ActiveMD.kmz"
     const ActiveKMZ = await this.fetchBinBuffer(ActiveURL);
     //Log.info("SPC-Outlook: KMZ = " + ActiveKMZ);
     const ActiveKML = this.extractKmlFromKmz(ActiveKMZ, "ActiveMD.kml");
@@ -200,7 +200,7 @@ module.exports = NodeHelper.create({
     const MDURLs = this.parseNetworkLinks(ActiveKML);
     //Log.info("SPC-Outlook: Total MDs #" + MDURLs)
     if(MDURLs.length == 0) return false;
-    MDArray = [];
+    const MDArray = [];
     for(const MDURL of MDURLs){
       const MDKMZ = await this.fetchBinBuffer(MDURL);
       const MDKML = this.extractKmlFromKmz(MDKMZ, this.kmzToKmlfilename(MDURL));
@@ -427,15 +427,15 @@ module.exports = NodeHelper.create({
       }; // https://www.spc.noaa.gov/new/css/SPCmain.css
       // Then repeat for day2, day3, etc.
 
-      day1CatURL = "https://www.spc.noaa.gov/products/outlook/day1otlk_cat.lyr.geojson"
-      day1TorURL = "https://www.spc.noaa.gov/products/outlook/day1otlk_torn.lyr.geojson";
-      day1HailURL = "https://www.spc.noaa.gov/products/outlook/day1otlk_hail.lyr.geojson";
-      day1WindURL = "https://www.spc.noaa.gov/products/outlook/day1otlk_wind.lyr.geojson";
+      const day1CatURL = "https://www.spc.noaa.gov/products/outlook/day1otlk_cat.lyr.geojson"
+      const day1TorURL = "https://www.spc.noaa.gov/products/outlook/day1otlk_torn.lyr.geojson";
+      const day1HailURL = "https://www.spc.noaa.gov/products/outlook/day1otlk_hail.lyr.geojson";
+      const day1WindURL = "https://www.spc.noaa.gov/products/outlook/day1otlk_wind.lyr.geojson";
 
-      day2CatURL = "https://www.spc.noaa.gov/products/outlook/day2otlk_cat.lyr.geojson"
-      day2TorURL = "https://www.spc.noaa.gov/products/outlook/day2otlk_torn.lyr.geojson";
-      day2HailURL = "https://www.spc.noaa.gov/products/outlook/day2otlk_hail.lyr.geojson";
-      day2WindURL = "https://www.spc.noaa.gov/products/outlook/day2otlk_wind.lyr.geojson";
+      const day2CatURL = "https://www.spc.noaa.gov/products/outlook/day2otlk_cat.lyr.geojson"
+      const day2TorURL = "https://www.spc.noaa.gov/products/outlook/day2otlk_torn.lyr.geojson";
+      const day2HailURL = "https://www.spc.noaa.gov/products/outlook/day2otlk_hail.lyr.geojson";
+      const day2WindURL = "https://www.spc.noaa.gov/products/outlook/day2otlk_wind.lyr.geojson";
 
       const day1CigTorURL  = "https://www.spc.noaa.gov/products/outlook/day1otlk_cigtorn.lyr.geojson";
       const day1CigHailURL = "https://www.spc.noaa.gov/products/outlook/day1otlk_cighail.lyr.geojson";
@@ -445,27 +445,28 @@ module.exports = NodeHelper.create({
       const day2CigWindURL = "https://www.spc.noaa.gov/products/outlook/day2otlk_cigwind.lyr.geojson";
       const day3CigUrl     = "https://www.spc.noaa.gov/products/outlook/day3otlk_cigprob.lyr.geojson";
 
-      day3CatURL = "https://www.spc.noaa.gov/products/outlook/day3otlk_cat.lyr.geojson";
-      day3ProbURL = "https://www.spc.noaa.gov/products/outlook/day3otlk_prob.lyr.geojson";
+      const day3CatURL = "https://www.spc.noaa.gov/products/outlook/day3otlk_cat.lyr.geojson";
+      const day3ProbURL = "https://www.spc.noaa.gov/products/outlook/day3otlk_prob.lyr.geojson";
 
-      day4URL = "https://www.spc.noaa.gov/products/exper/day4-8/day4prob.lyr.geojson";
-      day5URL = "https://www.spc.noaa.gov/products/exper/day4-8/day5prob.lyr.geojson";
-      day6URL = "https://www.spc.noaa.gov/products/exper/day4-8/day6prob.lyr.geojson";
-      day7URL = "https://www.spc.noaa.gov/products/exper/day4-8/day7prob.lyr.geojson";
-      day8URL = "https://www.spc.noaa.gov/products/exper/day4-8/day8prob.lyr.geojson";
+      const day4URL = "https://www.spc.noaa.gov/products/exper/day4-8/day4prob.lyr.geojson";
+      const day5URL = "https://www.spc.noaa.gov/products/exper/day4-8/day5prob.lyr.geojson";
+      const day6URL = "https://www.spc.noaa.gov/products/exper/day4-8/day6prob.lyr.geojson";
+      const day7URL = "https://www.spc.noaa.gov/products/exper/day4-8/day7prob.lyr.geojson";
+      const day8URL = "https://www.spc.noaa.gov/products/exper/day4-8/day8prob.lyr.geojson";
 
 
-      loc = turf.point([lon, lat]);
+      const loc = turf.point([lon, lat]);
 
       let anyStale = false;
 
       //Day 1
 
       //Day 1 Cat
+      let day1RiskResult;
+      let day1Risk;
       {
         const fetchResult = await this.fetchGeoJsonCached(day1CatURL);
         if (fetchResult.stale) anyStale = true;
-        var day1RiskResult;
         if (fetchResult.data === null && fetchResult.cachedResult !== null) {
           day1RiskResult = fetchResult.cachedResult;
         } else if (fetchResult.data === null) {
@@ -476,7 +477,7 @@ module.exports = NodeHelper.create({
           day1RiskResult = this.evaluatePolygons(day1RiskPoly, loc, catComparator);
           this._geoJsonCache.set(day1CatURL, { mode: fetchResult.mode, etag: fetchResult.newEtag ?? null, hash: fetchResult.newHash ?? null, result: day1RiskResult, timestamp: Date.now() });
         }
-        var day1Risk = day1RiskResult === 0 ? "NONE" : valueToRisk[day1RiskResult];
+        day1Risk = day1RiskResult === 0 ? "NONE" : valueToRisk[day1RiskResult];
       }
   
       // Day 1 Torn
@@ -495,16 +496,16 @@ module.exports = NodeHelper.create({
       if (s1Wind) anyStale = true;
 
       // If Day 1 Risk at all
-      var day1ProbRisk = false; 
-      if (day1TorRisk > 0 || day1HailRisk > 0 || day1WindRisk > 0) day1ProbRisk = true;
+      const day1ProbRisk = day1TorRisk > 0 || day1HailRisk > 0 || day1WindRisk > 0;
 
       // Day 2
 
       //Day 2 Cat
+      let day2RiskResult;
+      let day2Risk;
       {
         const fetchResult = await this.fetchGeoJsonCached(day2CatURL);
         if (fetchResult.stale) anyStale = true;
-        var day2RiskResult;
         if (fetchResult.data === null && fetchResult.cachedResult !== null) {
           day2RiskResult = fetchResult.cachedResult;
         } else if (fetchResult.data === null) {
@@ -515,7 +516,7 @@ module.exports = NodeHelper.create({
           day2RiskResult = this.evaluatePolygons(poly, loc, catComparator);
           this._geoJsonCache.set(day2CatURL, { mode: fetchResult.mode, etag: fetchResult.newEtag ?? null, hash: fetchResult.newHash ?? null, result: day2RiskResult, timestamp: Date.now() });
         }
-        var day2Risk = day2RiskResult === 0 ? "NONE" : valueToRisk[day2RiskResult];
+        day2Risk = day2RiskResult === 0 ? "NONE" : valueToRisk[day2RiskResult];
       }
 
       // Day 2 Torn
@@ -534,15 +535,15 @@ module.exports = NodeHelper.create({
       if (s2Wind) anyStale = true;
 
       // If Day 2 Risk at all
-      var day2ProbRisk = false; 
-      if (day2TorRisk > 0 || day2HailRisk > 0 || day2WindRisk > 0) day2ProbRisk = true;
+      const day2ProbRisk = day2TorRisk > 0 || day2HailRisk > 0 || day2WindRisk > 0;
 
       //DAY 3
       //Day 3 Cat
+      let day3RiskResult;
+      let day3Risk;
       {
         const fetchResult = await this.fetchGeoJsonCached(day3CatURL);
         if (fetchResult.stale) anyStale = true;
-        var day3RiskResult;
         if (fetchResult.data === null && fetchResult.cachedResult !== null) {
           day3RiskResult = fetchResult.cachedResult;
         } else if (fetchResult.data === null) {
@@ -553,11 +554,11 @@ module.exports = NodeHelper.create({
           day3RiskResult = this.evaluatePolygons(poly, loc, catComparator);
           this._geoJsonCache.set(day3CatURL, { mode: fetchResult.mode, etag: fetchResult.newEtag ?? null, hash: fetchResult.newHash ?? null, result: day3RiskResult, timestamp: Date.now() });
         }
-        var day3Risk = day3RiskResult === 0 ? "NONE" : valueToRisk[day3RiskResult];
+        day3Risk = day3RiskResult === 0 ? "NONE" : valueToRisk[day3RiskResult];
       }
 
       // Day 3 Prob
-      var day3ProbRisk;
+      let day3ProbRisk;
       {
         const fetchResult = await this.fetchGeoJsonCached(day3ProbURL);
         if (fetchResult.stale) anyStale = true;
@@ -693,7 +694,7 @@ module.exports = NodeHelper.create({
       }
 
       // Day 4 — PERF-02: single-pass extractPolygons for both risk and SIGN before evaluatePolygons
-      var day4ProbRisk, day4Sign;
+      let day4ProbRisk, day4Sign;
       {
         const fetch4 = await this.fetchGeoJsonCached(day4URL);
         if (fetch4.stale) anyStale = true;
@@ -712,10 +713,10 @@ module.exports = NodeHelper.create({
           this._geoJsonCache.set(day4URL, { mode: fetch4.mode, etag: fetch4.newEtag ?? null, hash: fetch4.newHash ?? null, result: { probRisk: day4ProbRisk, sign: day4Sign }, timestamp: Date.now() });
         }
       }
-      var day4Risk = this.percToRisk(day4ProbRisk, day4Sign);
+      const day4Risk = this.percToRisk(day4ProbRisk, day4Sign);
 
       // Day 5
-      var day5ProbRisk, day5Sign;
+      let day5ProbRisk, day5Sign;
       {
         const fetch5 = await this.fetchGeoJsonCached(day5URL);
         if (fetch5.stale) anyStale = true;
@@ -734,10 +735,10 @@ module.exports = NodeHelper.create({
           this._geoJsonCache.set(day5URL, { mode: fetch5.mode, etag: fetch5.newEtag ?? null, hash: fetch5.newHash ?? null, result: { probRisk: day5ProbRisk, sign: day5Sign }, timestamp: Date.now() });
         }
       }
-      var day5Risk = this.percToRisk(day5ProbRisk, day5Sign);
+      const day5Risk = this.percToRisk(day5ProbRisk, day5Sign);
 
       // Day 6
-      var day6ProbRisk, day6Sign;
+      let day6ProbRisk, day6Sign;
       {
         const fetch6 = await this.fetchGeoJsonCached(day6URL);
         if (fetch6.stale) anyStale = true;
@@ -756,10 +757,10 @@ module.exports = NodeHelper.create({
           this._geoJsonCache.set(day6URL, { mode: fetch6.mode, etag: fetch6.newEtag ?? null, hash: fetch6.newHash ?? null, result: { probRisk: day6ProbRisk, sign: day6Sign }, timestamp: Date.now() });
         }
       }
-      var day6Risk = this.percToRisk(day6ProbRisk, day6Sign);
+      const day6Risk = this.percToRisk(day6ProbRisk, day6Sign);
 
       // Day 7
-      var day7ProbRisk, day7Sign;
+      let day7ProbRisk, day7Sign;
       {
         const fetch7 = await this.fetchGeoJsonCached(day7URL);
         if (fetch7.stale) anyStale = true;
@@ -778,10 +779,10 @@ module.exports = NodeHelper.create({
           this._geoJsonCache.set(day7URL, { mode: fetch7.mode, etag: fetch7.newEtag ?? null, hash: fetch7.newHash ?? null, result: { probRisk: day7ProbRisk, sign: day7Sign }, timestamp: Date.now() });
         }
       }
-      var day7Risk = this.percToRisk(day7ProbRisk, day7Sign);
+      const day7Risk = this.percToRisk(day7ProbRisk, day7Sign);
 
       // Day 8
-      var day8ProbRisk, day8Sign;
+      let day8ProbRisk, day8Sign;
       {
         const fetch8 = await this.fetchGeoJsonCached(day8URL);
         if (fetch8.stale) anyStale = true;
@@ -800,9 +801,9 @@ module.exports = NodeHelper.create({
           this._geoJsonCache.set(day8URL, { mode: fetch8.mode, etag: fetch8.newEtag ?? null, hash: fetch8.newHash ?? null, result: { probRisk: day8ProbRisk, sign: day8Sign }, timestamp: Date.now() });
         }
       }
-      var day8Risk = this.percToRisk(day8ProbRisk, day8Sign);
+      const day8Risk = this.percToRisk(day8ProbRisk, day8Sign);
 
-      day48Risk = false;
+      let day48Risk = false;
       if(day4ProbRisk > 0 || day5ProbRisk > 0 || day6ProbRisk > 0 || day7ProbRisk > 0 || day8ProbRisk > 0) day48Risk = true;
 
       return {
