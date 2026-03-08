@@ -2,6 +2,7 @@ const NodeHelper = require("node_helper");
 const fetch = (...args) => import('node-fetch').then(({ default: f }) => f(...args));
 const turf = require("@turf/turf"); // or another geometry librarykmz-
 const Log = require("logger");
+const crypto = require("crypto");
 const ZIP = require("adm-zip");
 const { DOMParser } = require("@xmldom/xmldom");
 const KMLtoGJ = require("@tmcw/togeojson");
@@ -19,6 +20,9 @@ const valueToRisk = {
 module.exports = NodeHelper.create({
   start: function() {
     Log.info("Starting node_helper for MMM-SPCOutlook...");
+    this._geoJsonCache = new Map();  // keyed by URL string
+    this._cachedLat = null;
+    this._cachedLon = null;
   },
 
   // Called when the front-end (MMM-SPCOutlook.js) sends a socket notification
@@ -194,6 +198,73 @@ module.exports = NodeHelper.create({
     } catch (err) {
       Log.error("MMM-SPCOutlook fetchGeoJson error:", err);
       return null;
+    }
+  },
+
+  _isWithinStaleWindow(timestamp) {
+    const intervalMs = (this.config?.updateInterval ?? 60) * 60 * 1000;
+    return (Date.now() - timestamp) < intervalMs;
+  },
+
+  async fetchGeoJsonCached(url) {
+    const entry = this._geoJsonCache.get(url);
+
+    const headers = {};
+    if (entry && entry.mode === 'etag' && entry.etag) {
+      headers['If-None-Match'] = entry.etag;
+    }
+
+    let res;
+    try {
+      res = await fetch(url, { headers });
+    } catch (err) {
+      // Network error
+      if (entry && this._isWithinStaleWindow(entry.timestamp)) {
+        Log.info('MMM-SPCOutlook: stale fallback for ' + url);
+        return { data: null, cachedResult: entry.result, stale: true };
+      }
+      return { data: null, cachedResult: null, stale: false };
+    }
+
+    // 304 Not Modified — ETag cache hit (no body, must check before res.text())
+    if (res.status === 304) {
+      Log.info('MMM-SPCOutlook: cache hit (ETag) for ' + url);
+      return { data: null, cachedResult: entry.result, stale: false };
+    }
+
+    // Non-ok HTTP response (not 304)
+    if (!res.ok) {
+      if (entry && this._isWithinStaleWindow(entry.timestamp)) {
+        Log.info('MMM-SPCOutlook: stale fallback for ' + url);
+        return { data: null, cachedResult: entry.result, stale: true };
+      }
+      return { data: null, cachedResult: null, stale: false };
+    }
+
+    // HTTP 200 — read raw text
+    const rawText = await res.text();
+    const newEtag = res.headers.get('etag');
+
+    if (newEtag) {
+      // ETag mode — skip hash computation
+      // If same ETag as cached, it's a hit (server didn't send 304, but ETag matches)
+      if (entry && entry.mode === 'etag' && entry.etag === newEtag) {
+        Log.info('MMM-SPCOutlook: cache hit (ETag) for ' + url);
+        return { data: null, cachedResult: entry.result, stale: false };
+      }
+      // Cache miss — parse and return new data
+      const data = JSON.parse(rawText);
+      return { data, rawText, newEtag, newHash: null, mode: 'etag' };
+    } else {
+      // Hash mode — compute SHA256 of raw text
+      const newHash = crypto.createHash('sha256').update(rawText).digest('hex');
+      if (entry && entry.mode === 'hash' && entry.hash === newHash) {
+        Log.info('MMM-SPCOutlook: cache hit (hash) for ' + url);
+        return { data: null, cachedResult: entry.result, stale: false };
+      }
+      // Cache miss — parse and return new data
+      const data = JSON.parse(rawText);
+      return { data, rawText, newEtag: null, newHash, mode: 'hash' };
     }
   },
 
