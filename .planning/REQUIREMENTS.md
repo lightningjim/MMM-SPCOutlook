@@ -27,8 +27,8 @@ Requirements for this refactor/rewrite milestone.
 
 ### Performance
 
-- [ ] **PERF-01**: Polygon math results are cached; turf is not re-run when underlying GeoJSON data hasn't changed
-- [ ] **PERF-02**: No redundant turf point-in-polygon calls within a single update cycle
+- [x] **PERF-01**: Polygon math results are cached; turf is not re-run when underlying GeoJSON data hasn't changed
+- [x] **PERF-02**: No redundant turf point-in-polygon calls within a single update cycle
 
 ### Code Quality
 
@@ -73,8 +73,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 | FIRE-01 | Phase 3 | Complete |
 | FIRE-02 | Phase 3 | Complete |
 | FIRE-03 | Phase 3 | Complete |
-| PERF-01 | Phase 4 | Pending |
-| PERF-02 | Phase 4 | Pending |
+| PERF-01 | Phase 4 | Complete |
+| PERF-02 | Phase 4 | Complete |
 | QUAL-01 | Phase 5 | Pending |
 | QUAL-02 | Phase 5 | Pending |
 | QUAL-03 | Phase 5 | Pending |

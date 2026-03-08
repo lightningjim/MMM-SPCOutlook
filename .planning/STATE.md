@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: planning
-stopped_at: Phase 4 context gathered
-last_updated: "2026-03-07T22:59:12.119Z"
+stopped_at: "Checkpoint: 04-01 Task 3 human-verify — awaiting user confirmation of cache hits in logs"
+last_updated: "2026-03-08T00:06:57.259Z"
 last_activity: 2026-03-04 — Roadmap created
 progress:
   total_phases: 5
-  completed_phases: 3
-  total_plans: 6
-  completed_plans: 6
+  completed_phases: 4
+  total_plans: 7
+  completed_plans: 7
   percent: 50
 ---
 
@@ -56,6 +56,7 @@ Progress: [█████░░░░░] 50%
 | Phase 02-cig-tier-support P02 | 10 | 2 tasks | 1 files |
 | Phase 03-fire-weather P01 | 5 | 1 tasks | 1 files |
 | Phase 03-fire-weather P02 | 5 | 2 tasks | 1 files |
+| Phase 04-performance P01 | 5 | 2 tasks | 1 files |
 
 ## Accumulated Context
 
@@ -75,6 +76,9 @@ Progress: [█████░░░░░] 50%
 - [Phase 03-fire-weather]: Fire weather fetches placed unconditionally before if (!extended) check — both return paths need the data
 - [Phase 03-fire-weather]: ELEV/CRIT/EXTM integer tiers (1/2/3) mirror CIG tier encoding from Phase 2 for consistency
 - [Phase 03-fire-weather]: fireRiskToColor defined as local const in getDom() alongside cigLabel for consistent placement
+- [Phase 04-performance]: ETag-first with SHA256-hash fallback: if server sends ETags, skip hash computation; hash raw text body otherwise
+- [Phase 04-performance]: Days 4-8 cache { probRisk, sign } objects; Days 1-3 cache scalar turf outputs — same Map, different value shapes per URL
+- [Phase 04-performance]: sigComparator: { initial: false, comparator: () => true } — any SIGN polygon match returns true (fixes latent ReferenceError)
 
 ### Pending Todos
 
@@ -87,6 +91,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-07T22:59:12.116Z
-Stopped at: Phase 4 context gathered
-Resume file: .planning/phases/04-performance/04-CONTEXT.md
+Last session: 2026-03-08T00:06:57.257Z
+Stopped at: Checkpoint: 04-01 Task 3 human-verify — awaiting user confirmation of cache hits in logs
+Resume file: None
