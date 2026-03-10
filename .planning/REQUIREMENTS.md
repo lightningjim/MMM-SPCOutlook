@@ -32,7 +32,7 @@ Requirements for this refactor/rewrite milestone.
 
 ### Code Quality
 
-- [ ] **QUAL-01**: Repeated Day 1/Day 2 Tornado/Hail/Wind fetch-and-process logic extracted into shared reusable function
+- [x] **QUAL-01**: Repeated Day 1/Day 2 Tornado/Hail/Wind fetch-and-process logic extracted into shared reusable function
 - [x] **QUAL-02**: All variable declarations use `const` or `let`; no implicit globals or `var`
 - [x] **QUAL-03**: Dead/commented-out code blocks removed from `node_helper.js`
 - [x] **QUAL-04**: Debug `console.log` calls removed from production code paths; errors use `Log.error`
@@ -75,7 +75,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | FIRE-03 | Phase 3 | Complete |
 | PERF-01 | Phase 4 | Complete |
 | PERF-02 | Phase 4 | Complete |
-| QUAL-01 | Phase 5 | Pending |
+| QUAL-01 | Phase 5 | Complete |
 | QUAL-02 | Phase 5 | Complete |
 | QUAL-03 | Phase 5 | Complete |
 | QUAL-04 | Phase 5 | Complete |
