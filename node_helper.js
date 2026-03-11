@@ -101,81 +101,11 @@ module.exports = NodeHelper.create({
   evaluatePolygons(items, loc, comparator){
     let best = comparator.initial;
     items.forEach(({label, value, poly}) => {
-      result = turf.booleanPointInPolygon(loc, poly);
+      const result = turf.booleanPointInPolygon(loc, poly);
       if(result){
         best = comparator.comparator(best, value);
       }
     });
-    return best;
-  },
-
-  /**
-   * Evaluate polygon items with exponential distance-weighted blending near higher-risk zones.
-   * @param items - array of { label, value, poly } from extractPolygons
-   * @param loc - turf point representing the query location
-   * @param comparator - object with { initial, comparator(best, value) } shape
-   * @param transitionDistance - miles over which weighting decays (default 30)
-   * @returns blended numeric risk value accounting for proximity to higher-risk polygons
-   */
-  evaluatePolygonsWeighted(items, loc, comparator, transitionDistance = 30){
-    let best = comparator.initial;
-    let minDist = Infinity;
-    let higherRisk = null;
-    // First get polygon-based risk
-    items.forEach(({value, poly}) => {
-      if(result){
-        best = comparator.comparator(best, value);
-      }
-    });
-    const lamba = Math.log(100) / transitionDistance;
-
-    let num = best;
-    let den = 1;
-
-    items.forEach(({value, poly}) => {
-      if (value >= best) {
-        const d = turf.pointToPolygonDistance(loc, poly, { units: "miles"});
-        if (d <= transitionDistance) {
-          const w = Math.exp(-lambda * d);
-          num += value * w;
-          den += w;
-        }
-      }; 
-    });
-    if (den === 0) return 0;
-    return num / den;
-  },
-
-  /**
-   * Evaluate polygon items with continuous exponential decay toward the nearest higher-risk zone.
-   * @param items - array of { label, value, poly } from extractPolygons
-   * @param loc - turf point representing the query location
-   * @param comparator - object with { initial, comparator(best, value) } shape
-   * @param transitionDistance - miles within which decay blending is applied (default 30)
-   * @returns numeric risk value blended with proximity perturbation toward the next risk level
-   */
-  evaluatePolygonsContinuous(items, loc, comparator, transitionDistance = 30){
-    let best = comparator.initial;
-    let minDist = Infinity;
-    let higherRisk = null;
-    // First get polygon-based risk
-    items.forEach(({label, value, poly}) => {
-      if (turf.booleanPointInPolygon(loc, poly)) best = comparator.comparator(best, value);
-      if (value > best){
-        minDistTest = turf.pointToPolygonDistance(loc, poly, {units: "miles"});
-        if(minDistTest < transitionDistance) {
-          minDist = minDistTest;
-          higherRisk = value;
-        }
-      }
-    });
-
-    // Now use continous decay to calcuate how close to next highest risk
-    if(higherRisk && minDist < transitionDistance) {
-      const lambda = Math.log(100) / transitionDistance;
-      const pertibation = (higherRisk - best) * Math.exp(-lambda * minDist);
-      return best + pertibation;
-    }
     return best;
   },
 
@@ -893,76 +823,4 @@ module.exports = NodeHelper.create({
     return false;
   },
 
-//   checkDayCat(geojson, lat, lon, riskToValue, valueToRisk) {
-//     let highestValue = 0;
-//     const pt = turf.point([lon, lat]);
-
-//     for (const feature of geojson.features) {
-//       if (!feature.geometry) continue;
-
-//       // For polygons vs multipolygons:
-//       const geomType = feature.geometry.type;
-//       const label = feature.properties.LABEL; // e.g., "SLGT", "ENH", etc.
-//       const labelValue = riskToValue[label] || 0;
-
-//       if (geomType === "Polygon") {
-//         const poly = turf.polygon(feature.geometry.coordinates);
-//         if (turf.booleanPointInPolygon(pt, poly) && labelValue > highestValue) {
-//           highestValue = labelValue;
-//         }
-//       } else if (geomType === "MultiPolygon") {
-//         const multiPoly = turf.multiPolygon(feature.geometry.coordinates);
-//         if (turf.booleanPointInPolygon(pt, multiPoly) && labelValue > highestValue) {
-//           highestValue = labelValue;
-//         }
-//       }
-//     }
-//     return highestValue === 0 ? "NONE" : valueToRisk[highestValue];
-//   },
-
-//   checkDayPerc(geojson, lat, lon) {
-//     let highestValue = 0;
-//     const pt = turf.point([lon, lat]);
-
-//     for (const feature of geojson.features) {
-//       if (!feature.geometry) continue;
-
-//       // For polygons vs multipolygons:
-//       const geomType = feature.geometry.type;
-//       const labelValue = feature.properties.LABEL;
-
-//       if (geomType === "Polygon") {
-//         const poly = turf.polygon(feature.geometry.coordinates);
-//         if (turf.booleanPointInPolygon(pt, poly) && labelValue > highestValue && labelValue != "SIGN") {
-//           highestValue = labelValue;
-//         }
-//       } else if (geomType === "MultiPolygon") {
-//         const multiPoly = turf.multiPolygon(feature.geometry.coordinates);
-//         if (turf.booleanPointInPolygon(pt, multiPoly) && labelValue > highestValue && labelValue != "SIGN") {
-//           highestValue = labelValue;
-//         }
-//       }
-//     }
-//     return highestValue
-//   },
-
-//   checkDaySign(geojson, lat, lon) {
-//   const pt = turf.point([lon, lat]);
-//   for (const feature of geojson.features) {
-//     if (!feature.geometry) continue;
-//     // Only process features that are flagged as SIG
-//     if (feature.properties.LABEL === "SIGN") {
-//       let polygon;
-//       if (feature.geometry.type === "Polygon") {
-//         polygon = turf.polygon(feature.geometry.coordinates);
-//       } else if (feature.geometry.type === "MultiPolygon") {
-//         polygon = turf.multiPolygon(feature.geometry.coordinates);
-//       }
-//       if (turf.booleanPointInPolygon(pt, polygon)) {
-//         return true;
-//       }
-//     }
-//   }
-//   return false;
-// }
 });
