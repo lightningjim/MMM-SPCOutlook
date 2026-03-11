@@ -102,7 +102,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 | 4. Performance | 1/1 | Complete   | 2026-03-08 |
 | 5. Code Quality | 4/4 | Complete   | 2026-03-09 |
 | 6. Verify Phase 2 | 1/1 | Complete   | 2026-03-11 |
-| 7. Fix QUAL-02/QUAL-03 Residuals | 0/TBD | Pending | — |
+| 7. Fix QUAL-02/QUAL-03 Residuals | 0/1 | Pending | — |
 
 ### Phase 6: Verify Phase 2
 **Goal:** Formally verify Phase 2 (CIG Tier Support) against its success criteria and close SPC-01/SPC-02; fix wind CIG label cosmetic inconsistency
@@ -127,4 +127,7 @@ Plans:
   2. Lines 896–967 commented-out blocks for checkDayCat/checkDayPerc/checkDaySign are removed
   3. evaluatePolygonsWeighted and evaluatePolygonsContinuous dead methods are removed
   4. No remaining implicit globals or var declarations in node_helper.js
-**Plans**: TBD
+**Plans**: 1 plan
+
+Plans:
+- [ ] 07-01-PLAN.md — Fix implicit global at line 104; remove evaluatePolygonsWeighted, evaluatePolygonsContinuous, and checkDayCat/checkDayPerc/checkDaySign commented-out blocks; run QUAL verification greps
