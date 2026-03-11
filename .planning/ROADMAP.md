@@ -101,7 +101,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 | 3. Fire Weather | 2/2 | Complete   | 2026-03-05 |
 | 4. Performance | 1/1 | Complete   | 2026-03-08 |
 | 5. Code Quality | 4/4 | Complete   | 2026-03-09 |
-| 6. Verify Phase 2 | 0/TBD | Pending | — |
+| 6. Verify Phase 2 | 0/1 | Pending | — |
 | 7. Fix QUAL-02/QUAL-03 Residuals | 0/TBD | Pending | — |
 
 ### Phase 6: Verify Phase 2
@@ -112,7 +112,10 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 **Success Criteria** (what must be TRUE):
   1. 02-VERIFICATION.md exists and confirms SPC-01 and SPC-02 satisfied against Phase 2 success criteria
   2. Wind CIG label placement is consistent with tor/hail CIG label placement in MMM-SPCOutlook.js
-**Plans**: TBD
+**Plans**: 1 plan
+
+Plans:
+- [ ] 06-01-PLAN.md — Fix wind CIG label on MMM-SPCOutlook.js lines 75/86; author 02-VERIFICATION.md with file:line evidence closing SPC-01/SPC-02
 
 ### Phase 7: Fix QUAL-02/QUAL-03 Residuals
 **Goal:** Eliminate the remaining code quality defects discovered post-Phase-5 — implicit global in production call path and dead/commented-out code blocks
