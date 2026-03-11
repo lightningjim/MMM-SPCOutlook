@@ -72,7 +72,7 @@ Module.register("MMM-SPCOutlook", {
         let probRiskHTML = ""
         if (this.spcrisk.day1.torRisk > 0) probRiskHTML += "<i class=\"wi wi-tornado\"></i>" + cigLabel(this.spcrisk.day1.torCig) + 100 * this.spcrisk.day1.torRisk + "% ";
         if (this.spcrisk.day1.hailRisk > 0) probRiskHTML += "<i class=\"wi wi-meteor\"></i>" + cigLabel(this.spcrisk.day1.hailCig) + 100 * this.spcrisk.day1.hailRisk + "% ";
-        if (this.spcrisk.day1.windRisk > 0) probRiskHTML += cigLabel(this.spcrisk.day1.windCig) + "<i class=\"wi wi-strong-wind\"></i> " + 100 * this.spcrisk.day1.windRisk + "%";
+        if (this.spcrisk.day1.windRisk > 0) probRiskHTML += "<i class=\"wi wi-strong-wind\"></i>" + cigLabel(this.spcrisk.day1.windCig) + 100 * this.spcrisk.day1.windRisk + "% ";
         wrapper.innerHTML += probRiskHTML+"<br/>";
       }}
       
@@ -83,7 +83,7 @@ Module.register("MMM-SPCOutlook", {
         let probRiskHTML = ""
         if (this.spcrisk.day2.torRisk > 0) probRiskHTML += "<i class=\"wi wi-tornado\"></i>" + cigLabel(this.spcrisk.day2.torCig) + 100 * this.spcrisk.day2.torRisk + "% ";
         if (this.spcrisk.day2.hailRisk > 0) probRiskHTML += "<i class=\"wi wi-meteor\"></i>" + cigLabel(this.spcrisk.day2.hailCig) + 100 * this.spcrisk.day2.hailRisk + "% ";
-        if (this.spcrisk.day2.windRisk > 0) probRiskHTML += cigLabel(this.spcrisk.day2.windCig) + "<i class=\"wi wi-strong-wind\"></i> " + 100 * this.spcrisk.day2.windRisk + "%";
+        if (this.spcrisk.day2.windRisk > 0) probRiskHTML += "<i class=\"wi wi-strong-wind\"></i>" + cigLabel(this.spcrisk.day2.windCig) + 100 * this.spcrisk.day2.windRisk + "% ";
         wrapper.innerHTML += probRiskHTML+"<br/>";
       }}
       if(this.spcrisk.day3.risk != "NONE") 
