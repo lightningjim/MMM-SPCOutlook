@@ -16,8 +16,8 @@ Requirements for this refactor/rewrite milestone.
 
 ### SPC API Updates
 
-- [ ] **SPC-01**: SIGN risk supports CIG1/CIG2/CIG3 tiered severity levels (replaces previous boolean SIGN)
-- [ ] **SPC-02**: Module display renders CIG1/CIG2/CIG3 SIGN tiers visually (distinct from each other)
+- [x] **SPC-01**: SIGN risk supports CIG1/CIG2/CIG3 tiered severity levels (replaces previous boolean SIGN)
+- [x] **SPC-02**: Module display renders CIG1/CIG2/CIG3 SIGN tiers visually (distinct from each other)
 
 ### Fire Weather
 
@@ -68,8 +68,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 | BUG-02 | Phase 1 | Complete |
 | BUG-03 | Phase 1 | Complete |
 | BUG-04 | Phase 1 | Complete |
-| SPC-01 | Phase 6 | Pending |
-| SPC-02 | Phase 6 | Pending |
+| SPC-01 | Phase 6 | Complete |
+| SPC-02 | Phase 6 | Complete |
 | FIRE-01 | Phase 3 | Complete |
 | FIRE-02 | Phase 3 | Complete |
 | FIRE-03 | Phase 3 | Complete |
