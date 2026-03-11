@@ -17,6 +17,8 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 3: Fire Weather** - Add end-to-end fire weather fetch, detection, and display (completed 2026-03-05)
 - [x] **Phase 4: Performance** - Cache polygon math results to reduce RPi CPU load (completed 2026-03-08)
 - [x] **Phase 5: Code Quality** - Clean up the codebase after all features and fixes are stable (completed 2026-03-09)
+- [ ] **Phase 6: Verify Phase 2** - Create Phase 2 VERIFICATION.md and fix wind CIG label cosmetic inconsistency to formally close SPC-01/SPC-02
+- [ ] **Phase 7: Fix QUAL-02/QUAL-03 Residuals** - Fix implicit global in evaluatePolygons() and remove all dead/commented-out code blocks
 
 ## Phase Details
 
@@ -90,7 +92,7 @@ Plans:
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
+Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
@@ -99,3 +101,27 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 | 3. Fire Weather | 2/2 | Complete   | 2026-03-05 |
 | 4. Performance | 1/1 | Complete   | 2026-03-08 |
 | 5. Code Quality | 4/4 | Complete   | 2026-03-09 |
+| 6. Verify Phase 2 | 0/TBD | Pending | — |
+| 7. Fix QUAL-02/QUAL-03 Residuals | 0/TBD | Pending | — |
+
+### Phase 6: Verify Phase 2
+**Goal:** Formally verify Phase 2 (CIG Tier Support) against its success criteria and close SPC-01/SPC-02; fix wind CIG label cosmetic inconsistency
+**Depends on:** Phase 2
+**Requirements:** SPC-01, SPC-02
+**Gap Closure:** Closes gaps from audit — Phase 2 VERIFICATION.md missing (BLOCKER); wind CIG label placement cosmetic inconsistency (INTEG-04)
+**Success Criteria** (what must be TRUE):
+  1. 02-VERIFICATION.md exists and confirms SPC-01 and SPC-02 satisfied against Phase 2 success criteria
+  2. Wind CIG label placement is consistent with tor/hail CIG label placement in MMM-SPCOutlook.js
+**Plans**: TBD
+
+### Phase 7: Fix QUAL-02/QUAL-03 Residuals
+**Goal:** Eliminate the remaining code quality defects discovered post-Phase-5 — implicit global in production call path and dead/commented-out code blocks
+**Depends on:** Phase 5
+**Requirements:** QUAL-02, QUAL-03
+**Gap Closure:** Closes gaps from audit — implicit global `result` in evaluatePolygons() (INTEG-01/QUAL-02 BLOCKER); commented-out function bodies checkDayCat/checkDayPerc/checkDaySign (INTEG-02/QUAL-03 BLOCKER); dead orphaned methods evaluatePolygonsWeighted and evaluatePolygonsContinuous (INTEG-03/QUAL-03)
+**Success Criteria** (what must be TRUE):
+  1. `node_helper.js` line 104 uses `const result =` (no implicit global)
+  2. Lines 896–967 commented-out blocks for checkDayCat/checkDayPerc/checkDaySign are removed
+  3. evaluatePolygonsWeighted and evaluatePolygonsContinuous dead methods are removed
+  4. No remaining implicit globals or var declarations in node_helper.js
+**Plans**: TBD

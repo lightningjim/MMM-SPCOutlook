@@ -16,8 +16,8 @@ Requirements for this refactor/rewrite milestone.
 
 ### SPC API Updates
 
-- [x] **SPC-01**: SIGN risk supports CIG1/CIG2/CIG3 tiered severity levels (replaces previous boolean SIGN)
-- [x] **SPC-02**: Module display renders CIG1/CIG2/CIG3 SIGN tiers visually (distinct from each other)
+- [ ] **SPC-01**: SIGN risk supports CIG1/CIG2/CIG3 tiered severity levels (replaces previous boolean SIGN)
+- [ ] **SPC-02**: Module display renders CIG1/CIG2/CIG3 SIGN tiers visually (distinct from each other)
 
 ### Fire Weather
 
@@ -33,8 +33,8 @@ Requirements for this refactor/rewrite milestone.
 ### Code Quality
 
 - [x] **QUAL-01**: Repeated Day 1/Day 2 Tornado/Hail/Wind fetch-and-process logic extracted into shared reusable function
-- [x] **QUAL-02**: All variable declarations use `const` or `let`; no implicit globals or `var`
-- [x] **QUAL-03**: Dead/commented-out code blocks removed from `node_helper.js`
+- [ ] **QUAL-02**: All variable declarations use `const` or `let`; no implicit globals or `var`
+- [ ] **QUAL-03**: Dead/commented-out code blocks removed from `node_helper.js`
 - [x] **QUAL-04**: Debug `console.log` calls removed from production code paths; errors use `Log.error`
 
 ## v2 Requirements
@@ -68,22 +68,23 @@ Which phases cover which requirements. Updated during roadmap creation.
 | BUG-02 | Phase 1 | Complete |
 | BUG-03 | Phase 1 | Complete |
 | BUG-04 | Phase 1 | Complete |
-| SPC-01 | Phase 2 | Complete |
-| SPC-02 | Phase 2 | Complete |
+| SPC-01 | Phase 6 | Pending |
+| SPC-02 | Phase 6 | Pending |
 | FIRE-01 | Phase 3 | Complete |
 | FIRE-02 | Phase 3 | Complete |
 | FIRE-03 | Phase 3 | Complete |
 | PERF-01 | Phase 4 | Complete |
 | PERF-02 | Phase 4 | Complete |
 | QUAL-01 | Phase 5 | Complete |
-| QUAL-02 | Phase 5 | Complete |
-| QUAL-03 | Phase 5 | Complete |
+| QUAL-02 | Phase 7 | Pending |
+| QUAL-03 | Phase 7 | Pending |
 | QUAL-04 | Phase 5 | Complete |
 
 **Coverage:**
 - v1 requirements: 15 total
 - Mapped to phases: 15
 - Unmapped: 0
+- Pending (gap closure): 4 (SPC-01, SPC-02, QUAL-02, QUAL-03)
 
 ---
 *Requirements defined: 2026-03-04*
