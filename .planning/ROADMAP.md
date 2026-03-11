@@ -18,7 +18,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 4: Performance** - Cache polygon math results to reduce RPi CPU load (completed 2026-03-08)
 - [x] **Phase 5: Code Quality** - Clean up the codebase after all features and fixes are stable (completed 2026-03-09)
 - [x] **Phase 6: Verify Phase 2** - Create Phase 2 VERIFICATION.md and fix wind CIG label cosmetic inconsistency to formally close SPC-01/SPC-02 (completed 2026-03-11)
-- [ ] **Phase 7: Fix QUAL-02/QUAL-03 Residuals** - Fix implicit global in evaluatePolygons() and remove all dead/commented-out code blocks
+- [x] **Phase 7: Fix QUAL-02/QUAL-03 Residuals** - Fix implicit global in evaluatePolygons() and remove all dead/commented-out code blocks (completed 2026-03-11)
 
 ## Phase Details
 
@@ -102,7 +102,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 | 4. Performance | 1/1 | Complete   | 2026-03-08 |
 | 5. Code Quality | 4/4 | Complete   | 2026-03-09 |
 | 6. Verify Phase 2 | 1/1 | Complete   | 2026-03-11 |
-| 7. Fix QUAL-02/QUAL-03 Residuals | 0/1 | Pending | — |
+| 7. Fix QUAL-02/QUAL-03 Residuals | 1/1 | Complete   | 2026-03-11 |
 
 ### Phase 6: Verify Phase 2
 **Goal:** Formally verify Phase 2 (CIG Tier Support) against its success criteria and close SPC-01/SPC-02; fix wind CIG label cosmetic inconsistency
