@@ -2,7 +2,7 @@
 
 ## What This Is
 
-A MagicMirror² module that uses geospatial math (turf.js) to determine whether the user's configured location falls within any active SPC (Storm Prediction Center) Convective Outlook risk zone, Fire Weather Risk area, or Mesoscale Discussion. It fetches live GeoJSON/KMZ data from NOAA SPC endpoints, runs point-in-polygon analysis on the backend, and renders risk levels with weather icons on the MagicMirror display. Designed to run on a Raspberry Pi-based MagicMirror.
+A MagicMirror² module that uses geospatial math (turf.js) to determine whether the user's configured location falls within any active SPC (Storm Prediction Center) Convective Outlook risk zone, Fire Weather Risk area, or Mesoscale Discussion. It fetches live GeoJSON/KMZ data from NOAA SPC endpoints, runs point-in-polygon analysis on the backend, and renders risk levels with weather icons on the MagicMirror display. Runs on a Raspberry Pi-based MagicMirror. Shipped v1.0 with all known bugs fixed, CIG tier support, fire weather display, and GeoJSON caching.
 
 ## Core Value
 
@@ -19,35 +19,40 @@ Accurately and efficiently tell the user if they're in a weather risk zone right
 - ✓ Mesoscale Discussion detection via ActiveMD.kmz — existing
 - ✓ Fire Weather Risk detection — existing
 - ✓ MagicMirror socket notification architecture (GET_SPC_DATA / SPC_DATA_RESULT) — existing
+- ✓ SIGN detection fix (double-arrow syntax, BUG-01) — v1.0
+- ✓ Day 8 return object fix (BUG-02) — v1.0
+- ✓ day48Risk OR condition fix (BUG-03) — v1.0
+- ✓ checkInPolygon full-iteration fix (BUG-04) — v1.0
+- ✓ CIG1/CIG2/CIG3 tier support with ①②③ visual indicators (SPC-01, SPC-02) — v1.0
+- ✓ Fire Weather Outlook fetch, detection, and display (FIRE-01, FIRE-02, FIRE-03) — v1.0
+- ✓ GeoJSON caching with ETag/SHA256 — no redundant turf calls (PERF-01, PERF-02) — v1.0
+- ✓ fetchAndEvaluateHazard DRY refactor; zero var/console/dead code (QUAL-01–04) — v1.0
 
 ### Active
 
-- [ ] Update SIGN handling to support new SPC CIG1/CIG2/CIG3 tiered severity system
-- [ ] Fix Day 8 returning Day 7 risk values (wrong variable `day7Risk` used)
-- [ ] Fix Day 4–8 `day48Risk` always evaluating to false (checks day4 five times instead of days 4–8)
-- [ ] Fix SIGN double-arrow syntax bug (`label => label => label`) breaking Tornado/Hail/Wind SIGN detection
-- [ ] Fix Mesoscale Discussion returning only first match; should collect all overlapping MDs
-- [ ] Reduce polygon math overhead for Raspberry Pi (cache results, avoid redundant turf calls)
-- [ ] Refactor repeated Day 1/Day 2 fetch/process logic into shared function (DRY)
-- [ ] Clean up variable declarations (replace `var` and implicit globals with `const`/`let`)
-- [ ] Remove dead/commented-out code and excessive debug `console.log` calls
-- [ ] Update frontend display to show CIG1/CIG2/CIG3 SIGN tiers appropriately
+_(None — v1.0 closed all known bugs and planned features)_
 
 ### Out of Scope
 
-- Mobile app or web interface — this is a MagicMirror display module only
+- Mobile app or web interface — MagicMirror display module only
 - Push notifications or alerts — display only
 - Historical outlook data — live/current data only
 - Non-SPC weather data sources — SPC products only
+- Stale data UI indicator — `_stale`/`_staleAsOf` backend fields exist; frontend never surfaces them (v2 candidate)
+- Automated test framework — no test infrastructure; not added in this pass
 
 ## Context
 
-- Module runs in MagicMirror² framework on a Raspberry Pi, making CPU/memory efficiency important
-- Backend processing in `node_helper.js`: fetches GeoJSON/KMZ, parses KML, runs turf point-in-polygon, evaluates risk
-- Frontend rendering in `MMM-SPCOutlook.js`: displays results via MagicMirror DOM API
-- SPC recently changed SIGN (significant) risk representation from a boolean to tiered CIG1/CIG2/CIG3 levels
-- Known bugs identified via codebase analysis: Day 8 data errors, broken SIGN detection, incomplete MD matching
-- turf.js v7.2.0 handles all spatial math; KMZ files (Mesoscale Discussions) require unzip + KML→GeoJSON conversion
+**Shipped v1.0 — 2026-03-12**
+- 942 LOC total: `node_helper.js` (825 lines), `MMM-SPCOutlook.js` (117 lines)
+- Tech stack: MagicMirror² framework, Node.js, turf.js v7.2.0, KMZ/KML parsing for MDs
+- 7 phases executed via GSD workflow over 8 days (2026-03-04 → 2026-03-12)
+- All 15 v1 requirements satisfied; 4 prior integration defects resolved post-audit
+
+**Known tech debt (v2 candidates):**
+- `_stale`/`_staleAsOf` backend fields not consumed in display (no user-facing stale indicator)
+- Nyquist validation tests only written for Phase 2; 6/7 phases have draft VALIDATION.md
+- Human runtime verification pending for Phases 4 and 5 (statically verified; require live module)
 
 ## Constraints
 
@@ -60,9 +65,16 @@ Accurately and efficiently tell the user if they're in a weather risk zone right
 
 | Decision | Rationale | Outcome |
 |----------|-----------|---------|
-| Use turf.js for polygon math | Industry standard, already integrated, accurate | — Pending review for RPi perf |
+| Use turf.js for polygon math | Industry standard, already integrated, accurate | ✓ Good |
 | Process in node_helper (backend) | Keeps heavy math off the browser/render thread | ✓ Good |
-| Cache polygon math results | Avoid re-running turf on every update cycle if data hasn't changed | — Pending |
+| Cache polygon math results per URL | Avoid re-running turf on every update cycle if data hasn't changed | ✓ Good — ETag/SHA256 dual strategy |
+| CIG tiers as integers (0/1/2/3) | Consistent with fire weather tier encoding; cigLabel() handles display | ✓ Good |
+| Each CIG hazard has its own endpoint | cigtorn/cighail/cigwind are separate GeoJSON files from SPC | ✓ Good |
+| Fire weather fetch unconditionally before extended branch | Both return paths need fireWeather object | ✓ Good |
+| ETag-first, SHA256-hash fallback | If server sends ETags, skip hash CPU cost; otherwise hash raw text body | ✓ Good |
+| fetchAndEvaluateHazard shared function | 6 identical Day1/Day2 tor/hail/wind blocks → single helper with CIG passthrough | ✓ Good |
+| probRiskHTML block-local let (not hoisted) | Each if-block gets its own scoped variable — no risk of cross-contamination | ✓ Good |
+| Wind CIG label: icon-first (icon → cigLabel → %) | Consistent with tor/hail structural pattern throughout getDom() | ✓ Good |
 
 ---
-*Last updated: 2026-03-04 after initialization*
+*Last updated: 2026-03-12 after v1.0 milestone*
