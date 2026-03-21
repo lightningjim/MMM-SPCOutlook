@@ -650,7 +650,19 @@ module.exports = NodeHelper.create({
             day1Risk: day1FireRisk,
             day1Text: fireValueToFull[day1FireRisk],
             day2Risk: day2FireRisk,
-            day2Text: fireValueToFull[day2FireRisk]
+            day2Text: fireValueToFull[day2FireRisk],
+            day3Risk: 0,
+            day3Text: "None",
+            day4Risk: 0,
+            day4Text: "None",
+            day5Risk: 0,
+            day5Text: "None",
+            day6Risk: 0,
+            day6Text: "None",
+            day7Risk: 0,
+            day7Text: "None",
+            day8Risk: 0,
+            day8Text: "None"
           }
         };
       }
@@ -841,7 +853,19 @@ module.exports = NodeHelper.create({
           day1Risk: day1FireRisk,
           day1Text: fireValueToFull[day1FireRisk],
           day2Risk: day2FireRisk,
-          day2Text: fireValueToFull[day2FireRisk]
+          day2Text: fireValueToFull[day2FireRisk],
+          day3Risk: day3FireRisk,
+          day3Text: fireValueToFull[day3FireRisk],
+          day4Risk: day4FireRisk,
+          day4Text: fireValueToFull[day4FireRisk],
+          day5Risk: day5FireRisk,
+          day5Text: fireValueToFull[day5FireRisk],
+          day6Risk: day6FireRisk,
+          day6Text: fireValueToFull[day6FireRisk],
+          day7Risk: day7FireRisk,
+          day7Text: fireValueToFull[day7FireRisk],
+          day8Risk: day8FireRisk,
+          day8Text: fireValueToFull[day8FireRisk]
         }
       };
 
