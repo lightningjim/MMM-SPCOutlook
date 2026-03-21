@@ -32,11 +32,12 @@ Accurately and efficiently tell the user if they're in a weather risk zone right
 
 <!-- v1.1 Phase 8 complete -->
 - ✓ Day 3–8 fire weather endpoint URLs confirmed live (all 12 HTTP 200); DN-based parsing strategy documented (FWXT-05) — Phase 8
+<!-- v1.1 Phase 9 complete -->
+- ✓ `getSpcOutlook()` fetches Day 3–8 fire weather via `fetchGeoJsonCached`, evaluates via DN-based parsing, populates `day3Risk`–`day8Risk` + `day3Text`–`day8Text` in both return paths (FWXT-01, FWXT-02, FWXT-04) — Phase 9
 
 ### Active
 
 <!-- v1.1 Fire Wx Outlook Expansion -->
-- [ ] Fetch Day 3–8 fire weather (DryT + WindRH) from SPC GeoJSON endpoints when `extended: true`
 - [ ] Run point-in-polygon detection for each extended fire weather day
 - [ ] Display per-day fire weather rows for Days 3–8, shown only when risk > 0 for user's location
 
