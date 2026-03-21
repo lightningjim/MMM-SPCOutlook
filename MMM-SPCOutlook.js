@@ -1,4 +1,4 @@
-Module.register("MMM-SPCOutlook", {
+ Module.register("MMM-SPCOutlook", {
   defaults: {
     lat: 35.22,    // e.g. Norman OK
     lon: -97.44,
@@ -54,7 +54,15 @@ Module.register("MMM-SPCOutlook", {
       this.spcrisk.day2.risk == "NONE" &&
       this.spcrisk.day3.risk == "NONE" &&
       !( this.config.extended && this.spcrisk.day48Risk ) &&
-      !(this.spcrisk.fireWeather && (this.spcrisk.fireWeather.day1Risk > 0 || this.spcrisk.fireWeather.day2Risk > 0))
+      !(this.spcrisk.fireWeather && (this.spcrisk.fireWeather.day1Risk > 0 || this.spcrisk.fireWeather.day2Risk > 0)) &&
+      !(this.config.extended && this.spcrisk.fireWeather && (
+        this.spcrisk.fireWeather.day3Risk > 0 ||
+        this.spcrisk.fireWeather.day4Risk > 0 ||
+        this.spcrisk.fireWeather.day5Risk > 0 ||
+        this.spcrisk.fireWeather.day6Risk > 0 ||
+        this.spcrisk.fireWeather.day7Risk > 0 ||
+        this.spcrisk.fireWeather.day8Risk > 0
+      ))
     ) {
       wrapper.innerHTML = "No Severe Weather Risk"
     } else {
