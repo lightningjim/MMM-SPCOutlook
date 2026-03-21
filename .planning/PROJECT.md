@@ -35,11 +35,10 @@ Accurately and efficiently tell the user if they're in a weather risk zone right
 <!-- v1.1 Phase 9 complete -->
 - ✓ `getSpcOutlook()` fetches Day 3–8 fire weather via `fetchGeoJsonCached`, evaluates via DN-based parsing, populates `day3Risk`–`day8Risk` + `day3Text`–`day8Text` in both return paths (FWXT-01, FWXT-02, FWXT-04) — Phase 9
 
-### Active
+### Validated
 
-<!-- v1.1 Fire Wx Outlook Expansion -->
-- [ ] Run point-in-polygon detection for each extended fire weather day
-- [ ] Display per-day fire weather rows for Days 3–8, shown only when risk > 0 for user's location
+<!-- v1.1 Phase 10 complete -->
+- ✓ Display per-day fire weather rows for Days 3–8, shown only when that day's risk > 0; no-risk guard extended to include Day 3–8 checks (FWXT-03) — Phase 10
 
 ### Out of Scope
 
@@ -51,6 +50,8 @@ Accurately and efficiently tell the user if they're in a weather risk zone right
 - Automated test framework — no test infrastructure; not added in this pass
 
 ## Context
+
+**Shipped v1.1 — 2026-03-21** — Fire Wx Outlook Expansion complete (Phases 8–10); Day 3–8 fire weather backend + display fully wired.
 
 **Shipped v1.0 — 2026-03-12**
 - 942 LOC total: `node_helper.js` (825 lines), `MMM-SPCOutlook.js` (117 lines)
