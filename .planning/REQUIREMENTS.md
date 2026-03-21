@@ -32,11 +32,11 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
+| FWXT-05 | Phase 8 | Pending |
 | FWXT-01 | Phase 9 | Pending |
 | FWXT-02 | Phase 9 | Pending |
-| FWXT-03 | Phase 10 | Pending |
 | FWXT-04 | Phase 9 | Pending |
-| FWXT-05 | Phase 8 | Pending |
+| FWXT-03 | Phase 10 | Pending |
 
 **Coverage:**
 - v1.1 requirements: 5 total
@@ -45,4 +45,4 @@
 
 ---
 *Requirements defined: 2026-03-21*
-*Last updated: 2026-03-21 after initial definition*
+*Last updated: 2026-03-21 — traceability updated after roadmap creation*
