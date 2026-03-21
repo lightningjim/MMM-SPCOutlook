@@ -68,7 +68,7 @@ Plans:
   4. With `extended: false`, no Day 3–8 rows appear regardless of data
 **Plans**: 1 plan
 Plans:
-- [ ] 10-01-PLAN.md — [To be planned]
+- [ ] 10-01-PLAN.md — Render Day 3-8 fire weather rows and extend no-risk guard
 
 ## Progress
 
