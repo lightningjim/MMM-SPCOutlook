@@ -80,7 +80,7 @@ module.exports = NodeHelper.create({
     const polygons = [];
     geojson.features.forEach(f =>{
       const label = f.properties.LABEL || "";
-      const value = toValue(label);
+      const value = toValue(label, f);
       if (!includesFeat(label, value)) return;
 
       let poly;
@@ -510,6 +510,8 @@ module.exports = NodeHelper.create({
       const fireRiskToValue = { ELEV: 1, CRIT: 2, EXTM: 3 };
       const fireValueToFull = { 0: "None", 1: "Elevated", 2: "Critical", 3: "Extremely Critical" };
       const fireComparator  = { initial: 0, comparator: (best, val) => Math.max(best, val) };
+      // Day 3-8 fire weather (extended) — "exper" path, "cat" suffix per Phase 8 verification
+      const dnToFireValue = { 5: 1, 8: 2, 10: 3 };
 
       // Fire Weather Day 1
       let day1FireRisk = 0;
@@ -563,6 +565,50 @@ module.exports = NodeHelper.create({
           day2FireRisk = Math.max(day2FireRisk, val);
           this._geoJsonCache.set(day2FwDryTURL, { mode: fetchResult.mode, etag: fetchResult.newEtag ?? null, hash: fetchResult.newHash ?? null, result: val, timestamp: Date.now() });
         }
+      }
+
+      // Fire Weather Days 3-8 (extended only)
+      let day3FireRisk = 0, day4FireRisk = 0, day5FireRisk = 0,
+          day6FireRisk = 0, day7FireRisk = 0, day8FireRisk = 0;
+      if (extended) {
+        const dayFireRisks = [null, null, null]; // placeholders for index alignment (0,1,2 unused)
+        for (let d = 3; d <= 8; d++) {
+          let dayRisk = 0;
+          const windRHUrl = `https://www.spc.noaa.gov/products/exper/fire_wx/day${d}fw_windrhcat.lyr.geojson`;
+          const dryTUrl = `https://www.spc.noaa.gov/products/exper/fire_wx/day${d}fw_drytcat.lyr.geojson`;
+
+          {
+            const fetchResult = await this.fetchGeoJsonCached(windRHUrl);
+            if (fetchResult.stale) anyStale = true;
+            if (fetchResult.data === null && fetchResult.cachedResult !== null) {
+              dayRisk = Math.max(dayRisk, fetchResult.cachedResult);
+            } else if (fetchResult.data !== null) {
+              const polys = this.extractPolygons(fetchResult.data, (label, f) => dnToFireValue[f.properties.DN] || 0, (label, val) => val > 0);
+              const val = this.evaluatePolygons(polys, loc, fireComparator);
+              dayRisk = Math.max(dayRisk, val);
+              this._geoJsonCache.set(windRHUrl, { mode: fetchResult.mode, etag: fetchResult.newEtag ?? null, hash: fetchResult.newHash ?? null, result: val, timestamp: Date.now() });
+            }
+          }
+          {
+            const fetchResult = await this.fetchGeoJsonCached(dryTUrl);
+            if (fetchResult.stale) anyStale = true;
+            if (fetchResult.data === null && fetchResult.cachedResult !== null) {
+              dayRisk = Math.max(dayRisk, fetchResult.cachedResult);
+            } else if (fetchResult.data !== null) {
+              const polys = this.extractPolygons(fetchResult.data, (label, f) => dnToFireValue[f.properties.DN] || 0, (label, val) => val > 0);
+              const val = this.evaluatePolygons(polys, loc, fireComparator);
+              dayRisk = Math.max(dayRisk, val);
+              this._geoJsonCache.set(dryTUrl, { mode: fetchResult.mode, etag: fetchResult.newEtag ?? null, hash: fetchResult.newHash ?? null, result: val, timestamp: Date.now() });
+            }
+          }
+          dayFireRisks.push(dayRisk);
+        }
+        day3FireRisk = dayFireRisks[3];
+        day4FireRisk = dayFireRisks[4];
+        day5FireRisk = dayFireRisks[5];
+        day6FireRisk = dayFireRisks[6];
+        day7FireRisk = dayFireRisks[7];
+        day8FireRisk = dayFireRisks[8];
       }
 
       if (!extended)
