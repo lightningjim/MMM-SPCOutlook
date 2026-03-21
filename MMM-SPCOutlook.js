@@ -118,6 +118,15 @@
             fireRiskToColor[this.spcrisk.fireWeather.day2Risk] + "\">" +
             this.spcrisk.fireWeather.day2Text + "</span><br/>";
         }
+        if (this.config.extended) {
+          for (let d = 3; d <= 8; d++) {
+            if (this.spcrisk.fireWeather["day" + d + "Risk"] > 0) {
+              wrapper.innerHTML += "Fire Wx (Day " + d + "): <span style=\"color:#" +
+                fireRiskToColor[this.spcrisk.fireWeather["day" + d + "Risk"]] + "\">" +
+                this.spcrisk.fireWeather["day" + d + "Text"] + "</span><br/>";
+            }
+          }
+        }
       }
     }
     return wrapper;
