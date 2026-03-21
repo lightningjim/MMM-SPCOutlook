@@ -28,6 +28,11 @@ Accurately and efficiently tell the user if they're in a weather risk zone right
 - ✓ GeoJSON caching with ETag/SHA256 — no redundant turf calls (PERF-01, PERF-02) — v1.0
 - ✓ fetchAndEvaluateHazard DRY refactor; zero var/console/dead code (QUAL-01–04) — v1.0
 
+### Validated
+
+<!-- v1.1 Phase 8 complete -->
+- ✓ Day 3–8 fire weather endpoint URLs confirmed live (all 12 HTTP 200); DN-based parsing strategy documented (FWXT-05) — Phase 8
+
 ### Active
 
 <!-- v1.1 Fire Wx Outlook Expansion -->
