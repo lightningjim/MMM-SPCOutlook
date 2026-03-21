@@ -52,8 +52,48 @@
 
 ---
 
+## Milestone: v1.1 — Fire Wx Outlook Expansion
+
+**Shipped:** 2026-03-21
+**Phases:** 3 | **Plans:** 3 | **Duration:** 1 day
+
+### What Was Built
+
+- All 12 Day 3–8 SPC fire weather GeoJSON endpoints confirmed live; DN-based parsing strategy documented (LABEL encodes day ID, DN encodes risk level)
+- `getSpcOutlook()` extended with fetch loop for Day 3–8 WindRH + DryT endpoints, populating `day3Risk`–`day8Risk` in both extended and non-extended return paths
+- `getDom()` extended with per-day conditional rows via `for (let d = 3; d <= 8; d++)` loop; no-risk guard updated to cover all 8 fire weather days
+
+### What Worked
+
+- **Phase 8 URL verification before coding** was essential — the GeoJSON schema was non-obvious (DN encodes risk, not LABEL) and would have caused a silent data bug if discovered mid-implementation.
+- **3-phase decomposition** (verify → backend → display) kept each phase's scope small and reviewable. Phase 9 had no UI concerns; Phase 10 had no fetch concerns.
+- **Reusing existing patterns** (`fetchGeoJsonCached`, `fireRiskToColor`, `fireWeather` object shape) made v1.1 a pure extension — no structural changes, no regressions.
+
+### What Was Inefficient
+
+- **Human runtime verification not possible in off-season** — Phase 10 shipped with `human_needed` on the visual rendering check. Structural verification passed but live testing requires active fire weather polygons in the user's region.
+- **Skipped research for Phase 10** — reasonable call given it was pure display code, but the discuss-phase context captured all necessary decisions upfront. The discuss-phase investment in Phase 9 paid for itself.
+
+### Patterns Established
+
+- **Verify schema before implementing** — URL verification as a standalone phase (not a task in Phase 9) surfaced the DN-vs-LABEL schema surprise before any code was written. This is a reusable pattern for any phase that consumes a new external API or data format.
+- **discuss-phase locks decisions that would otherwise be re-litigated** — Phase 10 CONTEXT.md had 6 locked decisions (label format, color reuse, loop vs explicit, placement). None were revisited during execution.
+
+### Key Lessons
+
+1. **External API schema inspection is a phase, not a task.** Embedding URL verification inside the backend phase would have delayed the schema discovery. A dedicated phase with its own verification artifact is worth the overhead.
+2. **Off-season features need synthetic test paths.** Day 3–8 fire weather rows are only visible when a polygon covers the user's location during active fire weather season. Static verification confirmed the code; live testing requires timing or a fixture.
+
+### Cost Observations
+
+- Model mix: Sonnet 4.6 (executor + verifier + plan-checker); Opus 4.6 (planner)
+- Notable: v1.1 executed faster than any v1.0 phase — 3 phases in 1 day vs. 8 days for 7 phases. Smaller scope + prior codebase familiarity from v1.0 context.
+
+---
+
 ## Cross-Milestone Trends
 
 | Milestone | Phases | Plans | Unplanned Gaps | Nyquist Compliant |
 |-----------|--------|-------|----------------|-------------------|
 | v1.0 | 7 (5 planned + 2 gap-closure) | 13 | 2 (Ph6, Ph7) | 1/7 |
+| v1.1 | 3 (all planned) | 3 | 0 | 0/3 |
