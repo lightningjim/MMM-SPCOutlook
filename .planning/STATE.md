@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Fire Wx Outlook Expansion
 status: unknown
-stopped_at: Completed 08-01-PLAN.md — Phase 8 URL verification gate satisfied; Phase 9 ready
-last_updated: "2026-03-21T21:30:27.361Z"
+stopped_at: Completed 09-01-PLAN.md — Day 3-8 fire weather backend complete; Phase 10 display ready
+last_updated: "2026-03-21T22:01:56.401Z"
 progress:
   total_phases: 3
-  completed_phases: 1
-  total_plans: 1
-  completed_plans: 1
+  completed_phases: 2
+  total_plans: 2
+  completed_plans: 2
 ---
 
 # Project State
@@ -19,12 +19,12 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-21)
 
 **Core value:** Accurately and efficiently tell the user if they're in a weather risk zone right now — no false negatives, no unnecessary CPU burn on the RPi.
-**Current focus:** Phase 09 — extended-fire-weather (next)
+**Current focus:** Phase 10 — display-implementation
 
 ## Current Position
 
-Phase: 9
-Plan: Not started
+Phase: 09 (backend-implementation) — COMPLETE
+Phase: 10 (display-implementation) — NEXT
 
 ## Performance Metrics
 
@@ -46,6 +46,12 @@ See `.planning/PROJECT.md` — all key decisions from v1.0 recorded there.
 - Parse Day 3-8 fire weather via `f.properties.DN` not `LABEL` — LABEL is day identifier ("D3"/"D6"), not risk level; use `dnToFireValue = { 5:1, 8:2, 10:3 }`
 - Extend `extractPolygons` `toValue(label)` → `toValue(label, feature)` — one-line backward-compatible change; all Day 1-2 callers unaffected
 
+**Phase 09 decisions:**
+
+- Sequential Day 3-8 fire weather fetches (12 total) in loop — DRY, matches Day 1-2 pattern, avoids RPi network spike
+- Index-aligned dayFireRisks array: slots 0-2 are null placeholders; dayFireRisks[3..8] map to loop results
+- Non-extended path returns hardcoded zeros for day3-8 — no undefined reads possible
+
 ### Pending Todos
 
 None.
@@ -56,6 +62,6 @@ None — Phase 8 blocker resolved: all 12 Day 3-8 URLs confirmed HTTP 200. Phase
 
 ## Session Continuity
 
-Last session: 2026-03-21
-Stopped at: Completed 08-01-PLAN.md — Phase 8 URL verification gate satisfied; Phase 9 ready
+Last session: 2026-03-21T22:01:56.399Z
+Stopped at: Completed 09-01-PLAN.md — Day 3-8 fire weather backend complete; Phase 10 display ready
 Resume file: None

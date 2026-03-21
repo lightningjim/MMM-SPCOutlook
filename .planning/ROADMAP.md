@@ -27,7 +27,7 @@ Full details: `.planning/milestones/v1.0-ROADMAP.md`
 **Milestone Goal:** Extend fire weather coverage to Days 3–8 using SPC DryT/WindRH GeoJSON endpoints, gated behind `extended` flag, with per-day display only when risk is present.
 
 - [x] **Phase 8: URL Verification** — Confirm Day 3–8 fire weather endpoint URLs exist and document schema (completed 2026-03-21)
-- [ ] **Phase 9: Backend Implementation** — Fetch and evaluate extended fire weather; populate return object
+- [x] **Phase 9: Backend Implementation** — Fetch and evaluate extended fire weather; populate return object (completed 2026-03-21)
 - [ ] **Phase 10: Display Implementation** — Render per-day fire weather rows for Days 3–8 in getDom
 
 ## Phase Details
@@ -55,7 +55,7 @@ Plans:
   4. A location known to be in a Day 3 or Day 4 fire weather risk area returns a non-zero risk value
 **Plans**: 1 plan
 Plans:
-- [ ] 09-01-PLAN.md — Extend extractPolygons, fetch/evaluate Day 3-8 fire weather, populate both return paths
+- [x] 09-01-PLAN.md — Extend extractPolygons, fetch/evaluate Day 3-8 fire weather, populate both return paths
 
 ### Phase 10: Display Implementation
 **Goal**: MagicMirror display renders per-day fire weather rows for Days 3–8, shown only when that day's risk is greater than zero
@@ -82,5 +82,5 @@ Plans:
 | 6. Verify Phase 2 | v1.0 | 1/1 | Complete | 2026-03-11 |
 | 7. Fix QUAL-02/QUAL-03 Residuals | v1.0 | 1/1 | Complete | 2026-03-11 |
 | 8. URL Verification | v1.1 | 1/1 | Complete   | 2026-03-21 |
-| 9. Backend Implementation | v1.1 | 0/1 | Not started | - |
+| 9. Backend Implementation | v1.1 | 1/1 | Complete   | 2026-03-21 |
 | 10. Display Implementation | v1.1 | 0/? | Not started | - |
