@@ -40,7 +40,9 @@ Full details: `.planning/milestones/v1.0-ROADMAP.md`
   1. All 12 Day 3–8 endpoint URLs (WindRH + DryT, days 3–8) have been checked and return HTTP 200, or a fallback URL strategy is documented
   2. At least one live Day 3–8 GeoJSON file has been inspected and `properties.LABEL` values confirmed as categorical (ELEV/CRIT/EXTM)
   3. Endpoint URL findings are documented in a verification artifact before any Phase 9 code is written
-**Plans**: TBD
+**Plans**: 1 plan
+Plans:
+- [ ] 08-01-PLAN.md — Verify endpoints live, inspect schema, write findings artifact
 
 ### Phase 9: Backend Implementation
 **Goal**: `getSpcOutlook()` populates `day3Risk`–`day8Risk` fields in the fireWeather return object when `extended: true`, with zeros in the non-extended return path
@@ -51,7 +53,9 @@ Full details: `.planning/milestones/v1.0-ROADMAP.md`
   2. When `extended: false`, the socket result object contains `day3Risk` through `day8Risk` fields all equal to 0 (no undefined reads)
   3. Each Day 3–8 fire weather fetch uses `fetchGeoJsonCached` — no uncached HTTP calls
   4. A location known to be in a Day 3 or Day 4 fire weather risk area returns a non-zero risk value
-**Plans**: TBD
+**Plans**: 1 plan
+Plans:
+- [ ] 08-01-PLAN.md — Verify endpoints live, inspect schema, write findings artifact
 
 ### Phase 10: Display Implementation
 **Goal**: MagicMirror display renders per-day fire weather rows for Days 3–8, shown only when that day's risk is greater than zero
@@ -62,7 +66,9 @@ Full details: `.planning/milestones/v1.0-ROADMAP.md`
   2. With `extended: true` and zero risk for all Days 3–8, no extended fire weather rows appear
   3. The no-risk guard (`day1Risk > 0 || day2Risk > 0`) is extended to include Day 3–8 risks so a user with only extended fire weather risk does not see "No Severe Weather Risk"
   4. With `extended: false`, no Day 3–8 rows appear regardless of data
-**Plans**: TBD
+**Plans**: 1 plan
+Plans:
+- [ ] 08-01-PLAN.md — Verify endpoints live, inspect schema, write findings artifact
 
 ## Progress
 
@@ -75,6 +81,6 @@ Full details: `.planning/milestones/v1.0-ROADMAP.md`
 | 5. Code Quality | v1.0 | 4/4 | Complete | 2026-03-09 |
 | 6. Verify Phase 2 | v1.0 | 1/1 | Complete | 2026-03-11 |
 | 7. Fix QUAL-02/QUAL-03 Residuals | v1.0 | 1/1 | Complete | 2026-03-11 |
-| 8. URL Verification | v1.1 | 0/? | Not started | - |
+| 8. URL Verification | v1.1 | 0/1 | Planned | - |
 | 9. Backend Implementation | v1.1 | 0/? | Not started | - |
 | 10. Display Implementation | v1.1 | 0/? | Not started | - |
