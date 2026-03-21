@@ -55,7 +55,7 @@ Plans:
   4. A location known to be in a Day 3 or Day 4 fire weather risk area returns a non-zero risk value
 **Plans**: 1 plan
 Plans:
-- [ ] 08-01-PLAN.md — Verify endpoints live, inspect schema, write findings artifact
+- [ ] 09-01-PLAN.md — Extend extractPolygons, fetch/evaluate Day 3-8 fire weather, populate both return paths
 
 ### Phase 10: Display Implementation
 **Goal**: MagicMirror display renders per-day fire weather rows for Days 3–8, shown only when that day's risk is greater than zero
@@ -68,7 +68,7 @@ Plans:
   4. With `extended: false`, no Day 3–8 rows appear regardless of data
 **Plans**: 1 plan
 Plans:
-- [ ] 08-01-PLAN.md — Verify endpoints live, inspect schema, write findings artifact
+- [ ] 10-01-PLAN.md — [To be planned]
 
 ## Progress
 
@@ -82,5 +82,5 @@ Plans:
 | 6. Verify Phase 2 | v1.0 | 1/1 | Complete | 2026-03-11 |
 | 7. Fix QUAL-02/QUAL-03 Residuals | v1.0 | 1/1 | Complete | 2026-03-11 |
 | 8. URL Verification | v1.1 | 1/1 | Complete   | 2026-03-21 |
-| 9. Backend Implementation | v1.1 | 0/? | Not started | - |
+| 9. Backend Implementation | v1.1 | 0/1 | Not started | - |
 | 10. Display Implementation | v1.1 | 0/? | Not started | - |
