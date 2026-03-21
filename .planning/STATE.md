@@ -2,9 +2,9 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Fire Wx Outlook Expansion
-status: ready_for_verification
-stopped_at: Completed 08-01-PLAN.md — Phase 8 URL verification gate satisfied
-last_updated: "2026-03-21T21:28:13.931Z"
+status: unknown
+stopped_at: Completed 08-01-PLAN.md — Phase 8 URL verification gate satisfied; Phase 9 ready
+last_updated: "2026-03-21T21:30:27.361Z"
 progress:
   total_phases: 3
   completed_phases: 1
@@ -23,8 +23,8 @@ See: .planning/PROJECT.md (updated 2026-03-21)
 
 ## Current Position
 
-Phase: 08 (url-verification) — COMPLETE [████████████] 100%
-Plan: 1 of 1 — DONE
+Phase: 9
+Plan: Not started
 
 ## Performance Metrics
 
@@ -42,6 +42,7 @@ Plan: 1 of 1 — DONE
 See `.planning/PROJECT.md` — all key decisions from v1.0 recorded there.
 
 **Phase 08 decisions:**
+
 - Parse Day 3-8 fire weather via `f.properties.DN` not `LABEL` — LABEL is day identifier ("D3"/"D6"), not risk level; use `dnToFireValue = { 5:1, 8:2, 10:3 }`
 - Extend `extractPolygons` `toValue(label)` → `toValue(label, feature)` — one-line backward-compatible change; all Day 1-2 callers unaffected
 
