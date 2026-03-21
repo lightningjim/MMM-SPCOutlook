@@ -30,7 +30,10 @@ Accurately and efficiently tell the user if they're in a weather risk zone right
 
 ### Active
 
-_(None — v1.0 closed all known bugs and planned features)_
+<!-- v1.1 Fire Wx Outlook Expansion -->
+- [ ] Fetch Day 3–8 fire weather (DryT + WindRH) from SPC GeoJSON endpoints when `extended: true`
+- [ ] Run point-in-polygon detection for each extended fire weather day
+- [ ] Display per-day fire weather rows for Days 3–8, shown only when risk > 0 for user's location
 
 ### Out of Scope
 
@@ -76,5 +79,31 @@ _(None — v1.0 closed all known bugs and planned features)_
 | probRiskHTML block-local let (not hoisted) | Each if-block gets its own scoped variable — no risk of cross-contamination | ✓ Good |
 | Wind CIG label: icon-first (icon → cigLabel → %) | Consistent with tor/hail structural pattern throughout getDom() | ✓ Good |
 
+## Current Milestone: v1.1 Fire Wx Outlook Expansion
+
+**Goal:** Extend fire weather coverage to Days 3–8 using SPC DryT/WindRH GeoJSON endpoints, gated behind `extended` flag, with per-day display only when risk is present.
+
+**Target features:**
+- Day 3–8 fire weather fetch (DryT + WindRH per day, when `extended: true`)
+- Point-in-polygon detection for each extended fire day
+- Per-day display rows shown only when risk > 0 for user's location
+
+## Evolution
+
+This document evolves at phase transitions and milestone boundaries.
+
+**After each phase transition** (via `/gsd:transition`):
+1. Requirements invalidated? → Move to Out of Scope with reason
+2. Requirements validated? → Move to Validated with phase reference
+3. New requirements emerged? → Add to Active
+4. Decisions to log? → Add to Key Decisions
+5. "What This Is" still accurate? → Update if drifted
+
+**After each milestone** (via `/gsd:complete-milestone`):
+1. Full review of all sections
+2. Core Value check — still the right priority?
+3. Audit Out of Scope — reasons still valid?
+4. Update Context with current state
+
 ---
-*Last updated: 2026-03-12 after v1.0 milestone*
+*Last updated: 2026-03-21 after v1.1 milestone start*
