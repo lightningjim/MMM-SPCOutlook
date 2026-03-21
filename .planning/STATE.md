@@ -2,16 +2,14 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Fire Wx Outlook Expansion
-status: ready_to_plan
-stopped_at: roadmap created
-last_updated: "2026-03-21T00:00:00Z"
-last_activity: 2026-03-21 — Roadmap created for v1.1 (Phases 8–10)
+status: ready_for_verification
+stopped_at: Completed 08-01-PLAN.md — Phase 8 URL verification gate satisfied
+last_updated: "2026-03-21T21:28:13.931Z"
 progress:
   total_phases: 3
-  completed_phases: 0
-  total_plans: 0
-  completed_plans: 0
-  percent: 0
+  completed_phases: 1
+  total_plans: 1
+  completed_plans: 1
 ---
 
 # Project State
@@ -21,20 +19,17 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-21)
 
 **Core value:** Accurately and efficiently tell the user if they're in a weather risk zone right now — no false negatives, no unnecessary CPU burn on the RPi.
-**Current focus:** Phase 8 — URL Verification (ready to plan)
+**Current focus:** Phase 09 — extended-fire-weather (next)
 
 ## Current Position
 
-Phase: 8 of 10 (URL Verification)
-Plan: —
-Status: Ready to plan
-Last activity: 2026-03-21 — Roadmap created for v1.1 (Phases 8–10)
-
-Progress: [░░░░░░░░░░] 0%
+Phase: 08 (url-verification) — COMPLETE [████████████] 100%
+Plan: 1 of 1 — DONE
 
 ## Performance Metrics
 
 **Velocity (v1.0 baseline):**
+
 - Total plans completed: 13
 - v1.0 phases: 7, plans: 13
 
@@ -46,16 +41,20 @@ Progress: [░░░░░░░░░░] 0%
 
 See `.planning/PROJECT.md` — all key decisions from v1.0 recorded there.
 
+**Phase 08 decisions:**
+- Parse Day 3-8 fire weather via `f.properties.DN` not `LABEL` — LABEL is day identifier ("D3"/"D6"), not risk level; use `dnToFireValue = { 5:1, 8:2, 10:3 }`
+- Extend `extractPolygons` `toValue(label)` → `toValue(label, feature)` — one-line backward-compatible change; all Day 1-2 callers unaffected
+
 ### Pending Todos
 
 None.
 
 ### Blockers/Concerns
 
-- Phase 8 (URL Verification): Day 3–8 GeoJSON endpoint URLs are inferred, not confirmed live. Phase 9 is blocked until Phase 8 resolves this. If URLs return 404, fallback is NOAA MapServer REST API.
+None — Phase 8 blocker resolved: all 12 Day 3-8 URLs confirmed HTTP 200. Phase 9 unblocked.
 
 ## Session Continuity
 
 Last session: 2026-03-21
-Stopped at: Roadmap created — Phase 8 ready to plan
+Stopped at: Completed 08-01-PLAN.md — Phase 8 URL verification gate satisfied; Phase 9 ready
 Resume file: None

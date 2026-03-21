@@ -26,7 +26,7 @@ Full details: `.planning/milestones/v1.0-ROADMAP.md`
 
 **Milestone Goal:** Extend fire weather coverage to Days 3–8 using SPC DryT/WindRH GeoJSON endpoints, gated behind `extended` flag, with per-day display only when risk is present.
 
-- [ ] **Phase 8: URL Verification** — Confirm Day 3–8 fire weather endpoint URLs exist and document schema
+- [x] **Phase 8: URL Verification** — Confirm Day 3–8 fire weather endpoint URLs exist and document schema (completed 2026-03-21)
 - [ ] **Phase 9: Backend Implementation** — Fetch and evaluate extended fire weather; populate return object
 - [ ] **Phase 10: Display Implementation** — Render per-day fire weather rows for Days 3–8 in getDom
 
@@ -42,7 +42,7 @@ Full details: `.planning/milestones/v1.0-ROADMAP.md`
   3. Endpoint URL findings are documented in a verification artifact before any Phase 9 code is written
 **Plans**: 1 plan
 Plans:
-- [ ] 08-01-PLAN.md — Verify endpoints live, inspect schema, write findings artifact
+- [x] 08-01-PLAN.md — Verify endpoints live, inspect schema, write findings artifact
 
 ### Phase 9: Backend Implementation
 **Goal**: `getSpcOutlook()` populates `day3Risk`–`day8Risk` fields in the fireWeather return object when `extended: true`, with zeros in the non-extended return path
@@ -81,6 +81,6 @@ Plans:
 | 5. Code Quality | v1.0 | 4/4 | Complete | 2026-03-09 |
 | 6. Verify Phase 2 | v1.0 | 1/1 | Complete | 2026-03-11 |
 | 7. Fix QUAL-02/QUAL-03 Residuals | v1.0 | 1/1 | Complete | 2026-03-11 |
-| 8. URL Verification | v1.1 | 0/1 | Planned | - |
+| 8. URL Verification | v1.1 | 1/1 | Complete   | 2026-03-21 |
 | 9. Backend Implementation | v1.1 | 0/? | Not started | - |
 | 10. Display Implementation | v1.1 | 0/? | Not started | - |

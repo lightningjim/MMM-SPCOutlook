@@ -11,7 +11,7 @@
 - [ ] **FWXT-02**: Point-in-polygon detection determines risk level for each Day 3–8 fire weather day
 - [ ] **FWXT-03**: Display renders per-day fire weather rows for Days 3–8, shown only when day's risk > 0
 - [ ] **FWXT-04**: Day 3–8 fire risk values present in both return object paths (non-extended gets zeros, extended gets live values)
-- [ ] **FWXT-05**: Live endpoint URL verification performed and documented before fetch code is written
+- [x] **FWXT-05**: Live endpoint URL verification performed and documented before fetch code is written
 
 ## Future Requirements
 
@@ -32,7 +32,7 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| FWXT-05 | Phase 8 | Pending |
+| FWXT-05 | Phase 8 | Complete |
 | FWXT-01 | Phase 9 | Pending |
 | FWXT-02 | Phase 9 | Pending |
 | FWXT-04 | Phase 9 | Pending |
