@@ -33,7 +33,21 @@ Accurately and efficiently tell the user if they're in a weather risk zone right
 
 ### Active
 
-(None — v1.1 complete. See `/gsd:new-milestone` to define next milestone.)
+**Milestone v1.2 — QoL Enhancements**
+
+- Stale data indicator — surface backend `_stale`/`_staleAsOf` fields in display
+- Proximity-weighted risk awareness (config-toggleable, default off)
+  - Scope: Convective Day 1–3 categorical, CIG tiers (cigtorn/cighail/cigwind)
+  - Display: Adjacent-tier badge (e.g. `EHN → MDT 0.75` inside risk; `0.6 (near SLGT)` outside)
+  - Implementation: turf.js `pointToLineDistance`-based weighting; falloff function TBD via research
+
+## Current Milestone: v1.2 QoL Enhancements
+
+**Goal:** Make the at-a-glance display more informative — surface data freshness and adjacent-tier risk proximity.
+
+**Target features:**
+- Stale data indicator (consumes existing `_stale`/`_staleAsOf` backend fields)
+- Proximity-weighted risk awareness for Convective Day 1–3 + CIG tiers, opt-in via config, with adjacent-tier badge display
 
 ### Out of Scope
 
@@ -95,4 +109,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-03-21 after v1.1 milestone*
+*Last updated: 2026-04-25 — v1.2 milestone started*
