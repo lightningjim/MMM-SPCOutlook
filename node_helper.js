@@ -23,12 +23,22 @@ module.exports = NodeHelper.create({
     this._geoJsonCache = new Map();  // keyed by URL string
     this._cachedLat = null;
     this._cachedLon = null;
+    this._updateInterval = 60;
   },
 
   // Called when the front-end (MMM-SPCOutlook.js) sends a socket notification
   socketNotificationReceived: async function(notification, payload) {
     if (notification === "GET_SPC_DATA") {
-      const { lat, lon, extended } = payload;
+      const { lat, lon, extended, updateInterval } = payload;
+      if (updateInterval === undefined) {
+        if (!this._loggedIntervalFallback) {
+          Log.info("MMM-SPCOutlook: GET_SPC_DATA missing updateInterval, defaulting to 60 minutes");
+          this._loggedIntervalFallback = true;
+        }
+        this._updateInterval = 60;
+      } else {
+        this._updateInterval = updateInterval;
+      }
       const md = await this.getMesoscaleDiscussion(lat, lon);
       const outlook = await this.getSpcOutlook(lat, lon, extended);
       // Send the results back to your front-end module
@@ -156,8 +166,8 @@ module.exports = NodeHelper.create({
     }
   },
 
-  _isWithinStaleWindow(timestamp) {
-    const intervalMs = (this.config?.updateInterval ?? 60) * 60 * 1000;
+  _isWithinStaleWindow(timestamp, intervalMinutes) {
+    const intervalMs = (intervalMinutes ?? 60) * 60 * 1000;
     return (Date.now() - timestamp) < intervalMs;
   },
 
@@ -179,7 +189,7 @@ module.exports = NodeHelper.create({
       res = await fetch(url, { headers });
     } catch (err) {
       // Network error
-      if (entry && this._isWithinStaleWindow(entry.timestamp)) {
+      if (entry && this._isWithinStaleWindow(entry.timestamp, this._updateInterval)) {
         Log.info('MMM-SPCOutlook: stale fallback for ' + url);
         return { data: null, cachedResult: entry.result, stale: true };
       }
@@ -194,7 +204,7 @@ module.exports = NodeHelper.create({
 
     // Non-ok HTTP response (not 304)
     if (!res.ok) {
-      if (entry && this._isWithinStaleWindow(entry.timestamp)) {
+      if (entry && this._isWithinStaleWindow(entry.timestamp, this._updateInterval)) {
         Log.info('MMM-SPCOutlook: stale fallback for ' + url);
         return { data: null, cachedResult: entry.result, stale: true };
       }
