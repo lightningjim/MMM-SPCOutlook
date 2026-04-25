@@ -2,9 +2,10 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: QoL Enhancements
-status: roadmap_complete
-stopped_at: Roadmap created — ready to plan Phase 11
-last_updated: "2026-04-25T00:00:00.000Z"
+status: completed
+stopped_at: Phase 11 context gathered
+last_updated: "2026-04-25T17:16:36.682Z"
+last_activity: 2026-04-25 — Roadmap created (3 phases, 14 requirements mapped)
 progress:
   total_phases: 3
   completed_phases: 0
@@ -63,6 +64,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-04-25T00:00:00.000Z
-Stopped at: Roadmap created for v1.2 — ready to plan Phase 11
-Resume file: `.planning/ROADMAP.md`
+Last session: --stopped-at
+Stopped at: Phase 11 context gathered
+Resume file: --resume-file
