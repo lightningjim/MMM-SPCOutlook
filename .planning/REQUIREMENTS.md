@@ -12,8 +12,8 @@ Predecessor milestones: v1.0 (Refactor & Feature Update, shipped 2026-03-12), v1
 
 - [x] **STALE-01
 **: `node_helper`'s `_isWithinStaleWindow` reads the user-configured `updateInterval` (threaded through `GET_SPC_DATA` socket payload) instead of silently defaulting to 60 minutes
-- [ ] **STALE-02**: Display surfaces a compact warning indicator at top of the module wrapper when backend reports `_stale === true`
-- [ ] **STALE-03**: Stale indicator includes a relative last-fresh-fetch time (e.g. "12 minutes ago") sourced from `_staleAsOf` via the MagicMirror²-vendored `moment` global
+- [x] **STALE-02**: Display surfaces a compact warning indicator at top of the module wrapper when backend reports `_stale === true`
+- [x] **STALE-03**: Stale indicator includes a relative last-fresh-fetch time (e.g. "12 minutes ago") sourced from `_staleAsOf` via the MagicMirror²-vendored `moment` global
 
 ### Proximity Backend (PROX)
 

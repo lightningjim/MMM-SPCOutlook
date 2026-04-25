@@ -36,7 +36,7 @@ Full details: `.planning/milestones/v1.1-ROADMAP.md`
 
 ### v1.2 QoL Enhancements (Phases 11–13) — IN PROGRESS
 
-- [ ] **Phase 11: Stale Data Indicator** — Fix latent stale-window bug and surface a freshness warning in the display
+- [x] **Phase 11: Stale Data Indicator** — Fix latent stale-window bug and surface a freshness warning in the display (completed 2026-04-25)
 - [ ] **Phase 12: Proximity Backend Foundation** — Compute and emit per-day proximity-weighted risk subtree from `node_helper`
 - [ ] **Phase 13: Proximity Frontend Render** — Render inside/outside-tier and CIG proximity badges, gated on the new config flag
 
@@ -53,7 +53,7 @@ Full details: `.planning/milestones/v1.1-ROADMAP.md`
   4. When the backend reports `_stale === false` (or omits it), no stale indicator is rendered.
 **Plans**: 2 plans
 - [x] 11-01-PLAN.md — Backend interval threading bug fix (STALE-01)
-- [ ] 11-02-PLAN.md — Frontend payload + stale indicator render (STALE-02, STALE-03)
+- [x] 11-02-PLAN.md — Frontend payload + stale indicator render (STALE-02, STALE-03)
 **UI hint**: yes
 
 ### Phase 12: Proximity Backend Foundation
@@ -99,6 +99,6 @@ Full details: `.planning/milestones/v1.1-ROADMAP.md`
 | 8. URL Verification | v1.1 | 1/1 | Complete | 2026-03-21 |
 | 9. Backend Implementation | v1.1 | 1/1 | Complete | 2026-03-21 |
 | 10. Display Implementation | v1.1 | 1/1 | Complete | 2026-03-21 |
-| 11. Stale Data Indicator | v1.2 | 1/2 | In progress | — |
+| 11. Stale Data Indicator | v1.2 | 2/2 | Complete | 2026-04-25 |
 | 12. Proximity Backend Foundation | v1.2 | 0/0 | Not started | — |
 | 13. Proximity Frontend Render | v1.2 | 0/0 | Not started | — |
