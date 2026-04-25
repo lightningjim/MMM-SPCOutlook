@@ -52,21 +52,19 @@ Predecessor milestones: v1.0 (Refactor & Feature Update, shipped 2026-03-12), v1
 
 ## Traceability
 
-To be filled by roadmapper. Each REQ-ID will be mapped to exactly one phase.
-
 | REQ-ID | Phase |
 |--------|-------|
-| STALE-01 | — |
-| STALE-02 | — |
-| STALE-03 | — |
-| PROX-01 | — |
-| PROX-02 | — |
-| PROX-03 | — |
-| PROX-04 | — |
-| PROX-05 | — |
-| PROX-06 | — |
-| PROXUI-01 | — |
-| PROXUI-02 | — |
-| PROXUI-03 | — |
-| PROXUI-04 | — |
-| PROXUI-05 | — |
+| STALE-01 | Phase 11 |
+| STALE-02 | Phase 11 |
+| STALE-03 | Phase 11 |
+| PROX-01 | Phase 12 |
+| PROX-02 | Phase 12 |
+| PROX-03 | Phase 12 |
+| PROX-04 | Phase 12 |
+| PROX-05 | Phase 12 |
+| PROX-06 | Phase 12 |
+| PROXUI-01 | Phase 13 |
+| PROXUI-02 | Phase 13 |
+| PROXUI-03 | Phase 13 |
+| PROXUI-04 | Phase 13 |
+| PROXUI-05 | Phase 13 |
