@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: QoL Enhancements
-status: completed
-stopped_at: Phase 11 context gathered
-last_updated: "2026-04-25T17:29:05.038Z"
-last_activity: 2026-04-25 — Roadmap created (3 phases, 14 requirements mapped)
+status: executing
+stopped_at: Completed 11-01-PLAN.md
+last_updated: "2026-04-25T17:32:46.107Z"
+last_activity: 2026-04-25 -- Plan 11-01 complete
 progress:
   total_phases: 3
   completed_phases: 0
   total_plans: 2
-  completed_plans: 0
-  percent: 0
+  completed_plans: 1
+  percent: 50
 ---
 
 # Project State
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-25)
 
 **Core value:** Accurately and efficiently tell the user if they're in a weather risk zone right now — no false negatives, no unnecessary CPU burn on the RPi.
-**Current focus:** Milestone v1.2 — QoL Enhancements (Phase 11: Stale Data Indicator)
+**Current focus:** Phase 11 — Stale Data Indicator
 
 ## Current Position
 
-Phase: 11 — Stale Data Indicator
-Plan: Not started
-Status: Roadmap complete; ready for `/gsd-plan-phase 11`
-Last activity: 2026-04-25 — Roadmap created (3 phases, 14 requirements mapped)
+Phase: 11 (Stale Data Indicator) — EXECUTING
+Plan: 2 of 2 (11-02 next)
+Status: Executing Phase 11 — Plan 11-01 complete
+Last activity: 2026-04-25 -- Plan 11-01 complete
 
 ## Performance Metrics
 
@@ -38,7 +38,11 @@ Last activity: 2026-04-25 — Roadmap created (3 phases, 14 requirements mapped)
 - v1.0: 7 phases, 13 plans
 - v1.1: 3 phases, 3 plans
 
-*v1.2 metrics will accumulate here.*
+**v1.2 plan metrics:**
+
+| Plan | Duration | Tasks | Files |
+|------|----------|-------|-------|
+| 11-01 | 5min | 1 | 1 |
 
 ## Accumulated Context
 
@@ -55,6 +59,13 @@ See `.planning/PROJECT.md` — all key decisions from v1.0 and v1.1 recorded the
 | CIG folded into Phase 13 (not split) | Same render primitive as categorical; splitting doubles ceremony with no risk reduction |
 | Linear falloff, 40 km cutoff | Matches SPC's documented neighborhood radius for probabilistic→categorical conversion |
 
+**v1.2 execution decisions:**
+
+| Decision | Plan | Rationale |
+|----------|------|-----------|
+| Threaded `updateInterval` via `GET_SPC_DATA` payload + persisted on `this._updateInterval` | 11-01 | Backend has no `this.config`; threading via payload is the minimal correct fix (D-01..D-03) |
+| One-shot fallback log via `_loggedIntervalFallback` flag | 11-01 | Avoids log flooding when a misconfigured caller repeatedly omits the field (T-11-02 mitigation) |
+
 ### Pending Todos
 
 None.
@@ -65,8 +76,8 @@ None.
 
 ## Session Continuity
 
-Last session: --stopped-at
-Stopped at: Phase 11 context gathered
-Resume file: --resume-file
+Last session: 2026-04-25T17:32:46.102Z
+Stopped at: Completed 11-01-PLAN.md
+Resume file: None
 
 **Planned Phase:** 11 (Stale Data Indicator) — 2 plans — 2026-04-25T17:29:05.034Z

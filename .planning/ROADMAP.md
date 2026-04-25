@@ -52,7 +52,7 @@ Full details: `.planning/milestones/v1.1-ROADMAP.md`
   3. The stale indicator displays a relative last-fresh-fetch time (e.g. "12 minutes ago") sourced from `_staleAsOf`.
   4. When the backend reports `_stale === false` (or omits it), no stale indicator is rendered.
 **Plans**: 2 plans
-- [ ] 11-01-PLAN.md — Backend interval threading bug fix (STALE-01)
+- [x] 11-01-PLAN.md — Backend interval threading bug fix (STALE-01)
 - [ ] 11-02-PLAN.md — Frontend payload + stale indicator render (STALE-02, STALE-03)
 **UI hint**: yes
 
@@ -99,6 +99,6 @@ Full details: `.planning/milestones/v1.1-ROADMAP.md`
 | 8. URL Verification | v1.1 | 1/1 | Complete | 2026-03-21 |
 | 9. Backend Implementation | v1.1 | 1/1 | Complete | 2026-03-21 |
 | 10. Display Implementation | v1.1 | 1/1 | Complete | 2026-03-21 |
-| 11. Stale Data Indicator | v1.2 | 0/2 | Not started | — |
+| 11. Stale Data Indicator | v1.2 | 1/2 | In progress | — |
 | 12. Proximity Backend Foundation | v1.2 | 0/0 | Not started | — |
 | 13. Proximity Frontend Render | v1.2 | 0/0 | Not started | — |
