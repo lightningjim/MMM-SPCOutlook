@@ -68,6 +68,19 @@
     } else {
       const dow = new Date().getDay();
       wrapper.innerHTML = "";
+      if (this.spcrisk._stale) {
+        let staleSuffix = "";
+        const asOf = this.spcrisk._staleAsOf;
+        if (typeof asOf === "number" && isFinite(asOf)) {
+          const delta = Date.now() - asOf;
+          if (delta < 0) {
+            staleSuffix = " — just now";
+          } else {
+            staleSuffix = " — " + moment(asOf).fromNow();
+          }
+        }
+        wrapper.innerHTML += "<span style=\"color:#FFCC00\">⚠ Stale" + staleSuffix + "</span><br/>";
+      }
       if(this.mds) {
         for(const MD of this.mds){
           wrapper.innerHTML += "<span style=\"color: #0059E0\">" + MD + " in effect.</span><br/>"
