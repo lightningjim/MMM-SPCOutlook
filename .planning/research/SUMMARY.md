@@ -1,160 +1,161 @@
 # Project Research Summary
 
-**Project:** MMM-SPCOutlook v1.1 — Fire Wx Outlook Expansion
-**Domain:** MagicMirror² module — NOAA SPC GeoJSON data integration
-**Researched:** 2026-03-21
-**Confidence:** MEDIUM (blocked by one unverified external dependency)
+**Project:** MMM-SPCOutlook
+**Milestone:** v1.2 — QoL Enhancements (stale data UI + proximity-weighted risk)
+**Domain:** MagicMirror² weather risk module — Node backend (turf.js geometry) + browser frontend over socket notifications
+**Researched:** 2026-04-25
+**Confidence:** HIGH
 
 ## Executive Summary
 
-The v1.1 milestone extends the existing Day 1–2 fire weather coverage to Days 3–8 using the SPC's experimental extended fire weather outlook product. This is a low-complexity additive feature — no new dependencies, no new infrastructure, no schema changes. The entire implementation is: 12 URL constants, 12 fetch blocks wired to existing helpers, 6 new return object fields, one getDom loop, and a guard update. Every piece of processing infrastructure needed already exists in v1.0 (`fetchGeoJsonCached`, `extractPolygons`, `evaluatePolygons`, `fireRiskToValue`, `fireComparator`).
+v1.2 ships two opt-in display improvements over the existing v1.1 backend: (1) a **stale data indicator** that surfaces the already-emitted `_stale`/`_staleAsOf` payload fields in the frontend, and (2) **proximity-weighted risk awareness** — when the configured location is inside a Convective Day 1–3 categorical or CIG tier, render a badge showing distance-weighted nearness to the next-higher tier (e.g. `ENH → MDT 0.75`); when outside all tiers, show a `0.6 (near MRGL)` form. Backend computes proximity via turf's `pointToLineDistance` against polygon-derived LineStrings; frontend stays a pure renderer.
 
-The recommended approach is backend-first: verify the 12 endpoint URLs live before writing any code, then wire fetch blocks inside the existing `extended` branch, extend the `fireWeather` return object with `day3Risk`–`day8Risk` fields, and add the display loop in getDom. The extended fire weather product is categorical (ELEV/CRIT/EXTM), identical to Days 1–2 — not probabilistic, which keeps parsing trivial.
+**No new dependencies are required.** `@turf/turf ^7.2.0` (resolves to 7.3.4 in the lockfile) already exposes `polygonToLine`, `flatten`, `pointToLineDistance`, `booleanPointInPolygon`, and `distance`. `moment` is already vendored as a frontend global by MagicMirror² and is suitable for relative-time formatting on the stale indicator.
 
-The primary risk is that the Day 3–8 GeoJSON endpoint URLs are inferred, not confirmed live. If `https://www.spc.noaa.gov/products/exper/fire_wx/day3fw_windrh.lyr.geojson` does not exist, the entire implementation strategy needs to pivot to the NOAA MapServer REST API as an alternative data source. All implementation must be blocked on URL verification. Secondary risks — no-risk guard omission and the two-return-path fireWeather shape mismatch — are well-understood correctness bugs that are easy to prevent if caught at code-writing time.
-
----
+The dominant risks are silent data-shape and unit bugs, not architectural ones. Critical mitigations: (a) **fix the latent `_isWithinStaleWindow` bug** (it reads `this.config?.updateInterval` on `node_helper`, which never has a `config` — silently defaults to 60 regardless of user setting) **as a prerequisite to the stale phase**; (b) `pointToLineDistance` cannot consume MultiPolygon directly — wrap with `flatten` + `polygonToLine` + per-ring `Math.min`; (c) keep `[lon, lat]` coordinate order on every new turf call site; (d) suppress proximity badge when already inside the higher tier or when no higher tier polygon was issued for the day.
 
 ## Key Findings
 
 ### Recommended Stack
 
-No changes to the dependency tree. The v1.0 stack handles everything. See `.planning/research/STACK.md` for full details.
+No additions. Backend math stays in `node_helper.js` using the already-imported `@turf/turf` umbrella package; frontend formats relative times using the framework-vendored `moment` global. Optionally declare `moment` in `peerDependencies` for documentation only — no install. See **STACK.md** for the rejected-alternatives table (d3-geo, date-fns, per-function turf submodules — all unnecessary).
 
-**Core technologies:**
-- `@turf/turf` 7.2.0: point-in-polygon evaluation — already handles extended fire weather polygons, no change
-- `fetchGeoJsonCached()`: ETag/SHA256 caching — applies to all 12 new endpoints unchanged
-- `extractPolygons()` + `fireRiskToValue`: LABEL → integer risk mapping — already handles ELEV/CRIT/EXTM, no change
-- MagicMirror² socket API (`GET_SPC_DATA` / `SPC_DATA_RESULT`): already implemented, no change
+**Core technologies (already present):**
+- `@turf/turf` ^7.2.0 (resolved 7.3.4): polygon → line conversion, point-to-line distance — already integrated; no version bump
+- `moment` (MM² runtime global): relative-time strings on stale indicator — framework convention; no install
+- MagicMirror² socket notifications (`GET_SPC_DATA` / `SPC_DATA_RESULT`): existing transport for both new payload fields
 
 ### Expected Features
 
-See `.planning/research/FEATURES.md` for full details.
+See **FEATURES.md**.
 
-**Must have (table stakes):**
-- Fetch Days 3–8 fire weather (WindRH + DryT per day) when `extended: true`
-- Point-in-polygon evaluation per extended fire day
-- `day3Risk`–`day8Risk` fields in the `fireWeather` return object
-- Per-day display rows in getDom, shown only when risk > 0
-- No-risk guard updated to include extended fire weather days
-- All extended fetches gated behind `extended: true`
+**Must have (table stakes for v1.2):**
+- Stale indicator visible on display, gated on existing `_stale === true`
+- `proximityWeighting: false` config flag (default off — zero regression for existing installs)
+- Proximity computation for Day 1, Day 2, Day 3 categorical when enabled
+- Proximity computation for Day 1/2 CIG tiers per hazard (tor/hail/wind) and Day 3 cigprob when enabled
+- Inside-risk badge format: `CURR → NEXT W.W`
+- Outside-risk badge format: `W.W (near TIER)`
+- Linear falloff with **40 km cutoff**
+- Suppress badge when no higher tier exists or weight ≤ noise threshold
 
-**Should have (differentiators):**
-- Day-of-week prefix on fire weather row labels ("Thu (Day 3): ...") — `dowToText()` already handles this, very low cost
+**Should have (low-cost wins):**
+- Tooltip on stale icon with relative last-fresh-fetch time
+- Color the proximity badge by next-tier color (reuse existing color map)
+- Round weight to 1 decimal
 
 **Defer (v2+):**
-- Stale data indicator — already deferred per PROJECT.md
-- Separate DryT vs WindRH rows — display clutter, no user value
-- Independent `extendedFireWeather` config flag — over-engineering
-- CIG-tier equivalents for fire weather — no such SPC product exists
+- Per-row staleness (requires backend refactor of stale aggregation)
+- Proximity for Fire Weather and Day 4–8
+- Configurable `proximityMaxKm` / `proximityMinWeight` user knobs
+- Trend / predictive proximity (needs payload history)
+
+### Falloff Function — Recommendation
+
+**Linear, 40 km cutoff:** `weight(d_km) = max(0, 1 - d_km / 40)`.
+
+**Reconciliation note:** FEATURES.md recommends 40 km (matches SPC's documented neighborhood radius of ~25 mi / 40 km used to derive categorical from probabilistic outlooks). ARCHITECTURE.md mentioned `falloffKm = 50` as a "starting constant" but flagged it as an open Phase B design question. **Use 40 km** — it has explicit domain justification (SPC's own probabilistic-to-categorical conversion radius); 50 km does not. Expose as `PROXIMITY_MAX_KM = 40` constant in `node_helper.js`, with `PROXIMITY_UNITS = 'kilometers'` and `PROXIMITY_METHOD = 'geodesic'` siblings.
 
 ### Architecture Approach
 
-The integration inserts inside the existing `extended` branch after the Day 4–8 convective block, extending the fireWeather return object shape. Both return paths (extended and non-extended) must carry the same `fireWeather` key shape, with Days 3–8 fields defaulting to 0 in the non-extended path. See `.planning/research/ARCHITECTURE.md` for full code patterns.
+See **ARCHITECTURE.md**.
 
-**Major components affected:**
-1. `node_helper.js` — URL constants: 12 new strings (day3–8, WindRH + DryT)
-2. `node_helper.js` — fetch blocks: 12 new `fetchGeoJsonCached` calls inside extended branch; extend fireWeather return
-3. `MMM-SPCOutlook.js` — getDom: `for (let d = 3; d <= 8; d++)` loop for fire weather rows; no-risk guard OR-extension
+Compute proximity **backend-side** in `node_helper.js`, cache results inside the existing `_geoJsonCache` entries (alongside the scalar `result`), gate everything behind a single module-level `proximityWeighting` boolean threaded from frontend to backend via the existing `GET_SPC_DATA` payload. Frontend reads a new `proximity` subtree on each `dayN` object and renders badges conditionally. Existing scalar fields stay untouched — additive shape only, zero breakage for current readers.
+
+**Major components:**
+1. **`computeProximity(items, loc, currentValue, comparator)` (NEW helper in `node_helper.js`)** — given a tier-bearing polygon set + current best value, finds nearest higher-tier polygon boundary and returns `{ weighted, neighborTier, neighborTierName, distanceKm, direction }` or `null`.
+2. **`fetchAndEvaluateHazard` (MODIFIED)** — return shape extended with `proximity`; threading `proximityWeighting` flag through 6 Day1/Day2 call sites plus the inlined Day 3 cat/cig blocks.
+3. **`_geoJsonCache` entry shape (MODIFIED, additive)** — entries store `{ value, proximity }` when proximity computed; reads must accept both old scalar and new object form.
+4. **Frontend `getDom()` (MODIFIED)** — prepend stale indicator when `_stale`; append proximity badges inline via two small helpers.
 
 ### Critical Pitfalls
 
-1. **Day 3–8 GeoJSON URLs may not exist** — The `day3fw_windrh.lyr.geojson` naming is inferred from Day 1–2 pattern. No indexed source confirms these files exist at `/products/exper/fire_wx/`. Verify all 12 URLs with HTTP 200 check before writing any fetch code. Fallback: NOAA MapServer REST API.
+See **PITFALLS.md** for full list.
 
-2. **Extended fire weather schema may not be categorical** — If Day 3–8 GeoJSON files exist but use probabilistic labels (numeric) instead of ELEV/CRIT/EXTM strings, the existing `fireRiskToValue` mapper silently returns 0 for everything. Inspect `properties.LABEL` on a live file before writing the label mapper.
-
-3. **No-risk guard omission** — The existing `getDom()` guard only checks `day1Risk > 0 || day2Risk > 0`. Not updating it means a user with only Day 5 fire weather risk sees "No Severe Weather Risk." Update the guard in the same commit as adding display rows.
-
-4. **Two return paths, one fireWeather shape** — `getSpcOutlook()` has two `return` blocks. Extended fire weather fields added to the extended return only will cause `undefined` reads in getDom for non-extended users. Add `day3Risk`–`day8Risk` as 0 to the non-extended return block.
-
-5. **12 sequential fetches on cold start** — All 12 URLs may miss cache simultaneously at the 2200 UTC SPC issuance. Cold-start cycle time should be measured post-deployment. If > 60s total, consider `Promise.all` for the extended fire weather block.
-
----
+1. **Latent `_isWithinStaleWindow` config bug — PREREQ for stale phase.** `this.config?.updateInterval ?? 60` silently falls back to 60 because `this.config` is never set on `node_helper`. Stale window is therefore wrong for any user with a non-default `updateInterval`. Fix by threading `updateInterval` through the `GET_SPC_DATA` payload and storing on `this._updateIntervalMin`. **Do not surface stale UI on top of this bug** — it would mislead users at non-default intervals.
+2. **`pointToLineDistance` does not accept MultiPolygon.** Wrap with `turf.flatten` → per-Polygon `turf.polygonToLine` → handle both LineString and MultiLineString returns → `Math.min` across rings. Cache the flattened-line representation on the cache entry.
+3. **Don't compute distance when already inside the higher tier.** Reuse the `booleanPointInPolygon` result already produced by `evaluatePolygons`; if inside the higher tier, set `weight = 1.0` and skip distance math.
+4. **Coordinate order is `[lon, lat]` everywhere in this codebase.** Pass already-constructed `loc` turf points into the new helper; never rebuild from raw lat/lon at new call sites.
+5. **Graceful degrade when no higher tier polygon exists for the day.** Helper returns `null`; render guard suppresses the badge. Always the case inside HIGH; common on quiet days.
+6. **Day 3 is inlined, not under `fetchAndEvaluateHazard`.** Coverage checklist: Day1/2 tor+hail+wind+CIG×3 + Day3 cat+cig = 14 surfaces. Easy to ship Day 1–2 with proximity and silently miss Day 3.
 
 ## Implications for Roadmap
 
-### Phase 1: URL and Schema Verification
-**Rationale:** The entire feature depends on whether the inferred URLs exist and what schema they use. This must be resolved before any implementation work. Spending time writing fetch code against unverified URLs is the single highest-risk action for this milestone.
-**Delivers:** Confirmed endpoint URLs (or fallback strategy) and confirmed GeoJSON schema for extended fire weather
-**Addresses:** Pitfalls 1 and 2 (endpoint existence, schema mismatch)
-**Research flag:** YES — live HTTP checks required; outcome determines implementation path
+### Phase 1: Stale Indicator (with prereq bugfix)
+**Rationale:** Independent of proximity work; fixes a latent backend bug; ships visible user value first; de-risks the rest of v1.2 (if proximity slips, stale still ships).
+**Delivers:**
+- Pre-req: fix `_isWithinStaleWindow` to read `updateInterval` from socket payload.
+- Frontend renders compact `⚠ Cached data — last updated <relative>` indicator at top of wrapper when `this.spcrisk._stale === true`.
+- Optional: emit per-day `_stale` flags in payload (additive; foundation for future per-row UX).
 
-### Phase 2: Backend Implementation
-**Rationale:** URL constants and fetch blocks are mechanical once endpoints are confirmed. Return object extension is trivial and follows established v1.0 naming conventions.
-**Delivers:** `day3Risk`–`day8Risk` / `day3Text`–`day8Text` populated in the `getSpcOutlook()` return object when `extended: true`
-**Uses:** Confirmed URLs from Phase 1; existing `fetchGeoJsonCached`, `extractPolygons`, `evaluatePolygons`, `fireRiskToValue`, `fireComparator`
-**Avoids:** Two-return-path shape mismatch (Pitfall 4) — add fields as 0 to non-extended return in same commit
-**Research flag:** NO — standard pattern, well-documented in ARCHITECTURE.md
+### Phase 2: Proximity Backend Foundation
+**Rationale:** Frontend cannot render what backend does not emit. Validates the math in isolation via payload logging before any UI is wired.
+**Delivers:**
+- New `computeProximity(items, loc, currentValue, comparator)` helper with linear-40km falloff.
+- `proximityWeighting` flag threaded from `GET_SPC_DATA` payload through `getSpcOutlook` → `fetchAndEvaluateHazard` → Day 3 inlined blocks.
+- `_geoJsonCache` entries extended additively to `{ value, proximity }` with backwards-compatible read helper.
+- Per-`dayN` `proximity` subtree (`{ cat, torCig, hailCig, windCig, cig }`) emitted only when flag is on and meaningful.
+- Cached flattened-line representation per polygon item.
 
-### Phase 3: Display Implementation
-**Rationale:** Frontend work depends on backend fields existing. getDom loop and guard update are independent of each other but both depend on the Phase 2 return object shape.
-**Delivers:** Rendered fire weather rows for Days 3–8 in the module display; corrected no-risk guard
-**Implements:** getDom loop (`for d = 3..8`) + no-risk guard OR extension
-**Avoids:** No-risk guard omission (Pitfall 5) — update guard in same commit as display rows
-**Research flag:** NO — display pattern identical to Day 1–2, getDom changes are low risk
-
-### Phase 4: Validation
-**Rationale:** Performance and display edge cases need explicit observation before release.
-**Delivers:** Confirmed correct behavior for no-risk, partial-risk, and all-risk scenarios; cold-start cycle time baseline on RPi
-**Addresses:** Pitfalls 3 (cold-start performance) and 7 (all-6-days display overflow)
-**Research flag:** NO — standard validation, checklist-driven
+### Phase 3: Proximity Frontend Render (Categorical + CIG)
+**Rationale:** Wires the now-existing data into the display. Single phase covers categorical and CIG because rendering pattern is the same primitive applied at different injection points in `getDom()`.
+**Delivers:**
+- `defaults.proximityWeighting = false` and inclusion in `start()`'s socket payload.
+- Inside-risk badges (`CURR → NEXT W.W`) appended after existing risk text on Day 1/2/3 categorical rows.
+- Outside-risk badges (`W.W (near TIER)`) when current is NONE but a tier polygon is within 40 km.
+- Per-hazard CIG badges (Day 1/2 torCig/hailCig/windCig; Day 3 cig) alongside existing `cigLabel` output.
+- Display rounding to 1 decimal; suppress when weight < noise threshold.
 
 ### Phase Ordering Rationale
 
-- Phase 1 (verification) must precede all implementation — endpoint existence is a binary gate
-- Phases 2 and 3 are sequentially dependent (backend before frontend) but each is a single sitting's work
-- Phase 4 is post-implementation and should run on target hardware (RPi)
-- No features are deferred across phases — the scope is small enough for linear execution
+- **Phase 1 first:** independent, ships value standalone, fixes a latent bug, smallest blast radius.
+- **Phase 2 before Phase 3** is mandatory — frontend has nothing to render without the data shape.
+- **CIG folded into Phase 3** rather than a fourth phase: same render primitive, same data shape; adding it separately doubles ceremony without reducing risk. Split into Phase 4 only if Phase 3 estimate balloons during planning.
 
 ### Research Flags
 
-Phases needing research during planning:
-- **Phase 1 (URL verification):** Live HTTP checks against SPC experimental endpoints; outcome may require a pivot to NOAA MapServer REST API with different fetch/parse strategy
+Phases likely needing deeper research during planning: **None.** All four research files converge on a complete, internally consistent picture grounded in the actual codebase.
 
-Phases with standard patterns (skip research-phase):
-- **Phase 2 (backend):** Direct application of established v1.0 fetch/parse/return pattern
-- **Phase 3 (display):** Direct extension of existing getDom fire weather block
-- **Phase 4 (validation):** Standard test/observe checklist
-
----
+Phases with standard patterns (skip research-phase): **Phase 1, Phase 2, Phase 3** — all directly buildable from the existing four research files plus this synthesis.
 
 ## Confidence Assessment
 
 | Area | Confidence | Notes |
 |------|------------|-------|
-| Stack | HIGH | No changes — all technology confirmed live in v1.0 |
-| Features | HIGH | Scope is tightly defined; Day 1–2 pattern is the template |
-| Architecture | HIGH | Integration points confirmed from direct code read; insertion location unambiguous |
-| Pitfalls | HIGH | Critical pitfalls derived from live code inspection and prior phase research |
-| Endpoint URLs | LOW | The one genuine unknown — filename convention inferred, not network-verified |
-| GeoJSON schema | MEDIUM | Categorical ELEV/CRIT/EXTM confirmed from NOAA PDD and MapServer metadata; live file not inspected |
+| Stack | HIGH | Direct require() verification of all 7 target turf functions; lockfile inspection confirms 7.3.4; `moment` global confirmed via MM² docs |
+| Features | HIGH (tier system, turf API) / MEDIUM (specific falloff function — reconciled to 40 km here) | SPC tier system grounded in NOAA docs |
+| Architecture | HIGH | Full source read of `node_helper.js` and `MMM-SPCOutlook.js`; specific line numbers cited for every touch point |
+| Pitfalls | HIGH (codebase-grounded) / MEDIUM (turf workaround patterns) | All 10 critical pitfalls reference specific lines in existing source |
 
-**Overall confidence:** MEDIUM — everything except the endpoint URLs is HIGH confidence. The LOW-confidence gap is well-scoped and has a defined resolution strategy.
+**Overall confidence:** HIGH
 
 ### Gaps to Address
 
-- **Day 3–8 endpoint URL existence:** Verify `https://www.spc.noaa.gov/products/exper/fire_wx/day3fw_windrh.lyr.geojson` (and day4–8) return HTTP 200 before implementation. If 404: try `day3fw_cat.lyr.geojson` variant; if that fails, pivot to NOAA MapServer REST query pattern.
-- **GeoJSON LABEL values on extended product:** Confirm that live Day 3–8 files use ELEV/CRIT/EXTM strings (not numeric probabilities). Inspect `properties.LABEL` on at least one live feature before writing the label mapper.
-- **Empty FeatureCollection handling:** Confirm `extractPolygons()` returns 0 gracefully when SPC issues no areas for a given day (expected yes — same null geometry path as existing code, but worth logging on first run).
-
----
+- **Falloff function constant** — use 40 km per FEATURES.md / SPC neighborhood radius. ARCHITECTURE.md's offhand `falloffKm = 50` should be ignored. Document the constant inline with rationale.
+- **Outside-all-tiers polygon selection** — when computing "near MRGL" for a NONE point, use min distance across all MRGL polygons (only consider MRGL unless absent for that day).
+- **Cap weighted value** — should `weighted` cross into the next tier integer? Spec implies no. Cap at `nextTier - 0.01` in the helper.
+- **CIG cross-hazard ordering** — CIG ladders are ordinal *within* a hazard, not across hazards. Helper signature must reflect this (per-hazard call).
+- **No automated test framework** — out of scope per PROJECT.md. Validation strategy: pre-implementation spike with known interior/boundary/exterior points; coverage checklist (14 surfaces) before declaring Phase 3 done.
 
 ## Sources
 
 ### Primary (HIGH confidence)
-- Live SPC Day 1–2 endpoints confirmed 2026-03-05: `day1fw_windrh.lyr.geojson`, `day2fw_windrh.lyr.geojson`
-- `node_helper.js` v1.0 — direct code inspection: fire weather fetch blocks, caching pattern, return structure
-- `MMM-SPCOutlook.js` v1.0 — direct code inspection: `fireRiskToColor`, getDom fire weather block, no-risk guard
-- `.planning/milestones/v1.0-phases/03-fire-weather/03-RESEARCH.md` — v1 research flagging Day 3–8 URL divergence
+- Codebase: `node_helper.js` (lines 79–110, 159–162, 241–290, 309–317, 374, 617, 784, 879) and `MMM-SPCOutlook.js` (lines 2, 13, 18, 52, 70, 76–99)
+- `node_modules/@turf/turf/package.json` — resolved 7.3.4 confirmed
+- https://www.spc.noaa.gov/misc/SPC_probotlk_info.html — 40 km neighborhood radius
+- https://www.spc.noaa.gov/misc/about.html — tier definitions
+- https://turfjs.org/docs/api/pointToLineDistance — units + method options
+- https://turfjs.org/docs/api/polygonToLine — MultiLineString-on-holes return shape
+- https://turfjs.org/docs/api/flatten — MultiPolygon expansion
+- https://github.com/Turfjs/turf/issues/1743 — confirms no native point-to-polygon distance; documents workaround
+- https://docs.magicmirror.builders/module-development/core-module-file.html — module API conventions
 
 ### Secondary (MEDIUM confidence)
-- [NOAA SPC Day 3-8 Fire Weather PDD](https://www.spc.noaa.gov/misc/SPC_Day_3-8_Fire_Weather_Outlook_PDD.html) — product definition: categorical, ELEV/CRIT/EXTM, issuance at 2200 UTC
-- [NOAA MapServer SPC_firewx](https://mapservices.weather.noaa.gov/vector/rest/services/fire_weather/SPC_firewx/MapServer) — layer names confirm WindRH and dryltg sublayers exist for extended days
-- [SPC Fire Weather Experimental page](https://www.spc.noaa.gov/products/exper/fire_wx/) — confirms `/products/exper/fire_wx/` path, once-daily issuance
-
-### Tertiary (LOW confidence)
-- WebSearch 2026-03-21 (multiple queries) — no indexed `lyr.geojson` filenames for Day 3–8 found; confirms absence of easy URL confirmation
+- https://norcast.tv/understanding-the-storm-prediction-centers-tornado-probabilities/ — probability bands
+- https://en.wikipedia.org/wiki/Storm_Prediction_Center — tier scale cross-ref
+- https://www.smashingmagazine.com/2025/09/ux-strategies-real-time-dashboards/ — freshness UX
+- https://f1studioz.com/blog/smart-saas-dashboard-design/ — data-freshness indicator pattern
 
 ---
-*Research completed: 2026-03-21*
+*Research completed: 2026-04-25*
 *Ready for roadmap: yes*

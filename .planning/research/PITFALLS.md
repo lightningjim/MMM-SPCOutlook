@@ -1,169 +1,353 @@
-# Domain Pitfalls
+# Pitfalls Research
 
-**Domain:** Adding Day 3–8 fire weather (DryT/WindRH extended forecasts) to existing MagicMirror² SPC module
-**Researched:** 2026-03-21
-
----
+**Domain:** MagicMirror² module — adding turf.js distance/proximity weighting and stale-data UI to existing point-in-polygon backend on Raspberry Pi
+**Researched:** 2026-04-25
+**Confidence:** HIGH (codebase-grounded) / MEDIUM (turf.js workaround patterns confirmed via Turf.js Issue #1743)
 
 ## Critical Pitfalls
 
-### Pitfall 1: Extended Fire Weather Endpoints Are NOT Parallel to Day 1–2
+### Pitfall 1: Calling pointToLineDistance directly on a MultiPolygon
 
-**What goes wrong:** Developer assumes `day3fw_windrh.lyr.geojson` and `day3fw_dryt.lyr.geojson` exist at `https://www.spc.noaa.gov/products/fire_wx/` by analogy with Day 1 and Day 2. They do not. The URL pattern breaks entirely for Day 3+.
+**What goes wrong:**
+`turf.pointToLineDistance` accepts only `LineString` / `MultiLineString` inputs. Passing a `MultiPolygon` (or even a Polygon) silently returns garbage or throws — there is no native point-to-polygon distance in turf as of v7.x. The naive workaround "convert with `polygonToLine` then call distance" works for a single Polygon, but for a MultiPolygon `polygonToLine` returns a FeatureCollection of LineStrings (one per ring, including holes), which `pointToLineDistance` cannot consume in a single call.
 
-**Why it happens:** The Day 1–2 fire weather endpoints follow a clean naming convention (`day1fw_windrh.lyr.geojson`, `day2fw_dryt.lyr.geojson`). It is natural to extrapolate `day3fw_*` through `day8fw_*`. SPC does not publish these files.
+**Why it happens:**
+Day 1 categorical SPC outlooks frequently arrive as `MultiPolygon` features (multiple disjoint risk areas across CONUS) plus interior holes. The existing `extractPolygons` already handles both `Polygon` and `MultiPolygon` correctly for `booleanPointInPolygon`, so it is tempting to assume distance functions take the same input.
 
-**What SPC actually publishes for Day 3–8 fire weather:**
-- Human-readable HTML forecasts at `https://www.spc.noaa.gov/products/exper/fire_wx/`
-- No `.lyr.geojson` files confirmed for Day 3–8 via search or live inspection as of 2026-03-21
-- The extended fire weather product is experimental, issued once daily at 2200 UTC
+**How to avoid:**
+Build a small helper `distanceToPolygonBoundary(pt, polyFeature)` that:
+1. Runs `turf.flatten(polyFeature)` to expand a MultiPolygon into individual Polygons.
+2. For each Polygon, calls `turf.polygonToLine(p)` — which can return either a `LineString` (no holes) or a `MultiLineString` (with holes / multiple rings). Handle both: if MultiLineString, iterate `geometry.coordinates` and wrap each as a LineString.
+3. Take `Math.min(...)` of `pointToLineDistance(pt, line, { units: 'kilometers' })` across every ring.
+4. Cache the per-feature flattened-line representation on the cache entry alongside `result` so it is computed once per polygon refresh, not once per render.
 
-**Consequences:** 404 errors on every update cycle for 12 non-existent URLs. `fetchGeoJsonCached` returns `{ data: null, cachedResult: null }` for each, and extended fire weather silently shows 0 risk for all days, making the feature appear to work while doing nothing.
+**Warning signs:**
+- Distance values that are absurdly large (millions of km) or `NaN` — input type mismatch.
+- Distance reported even when the point is clearly inside the polygon (should be 0 or skipped — see Pitfall 2).
+- Per-evaluation latency on RPi spiking from the existing ~5–15 ms baseline into hundreds of ms.
 
-**Prevention:** Before writing a single line of fetch code, verify all 12 target URLs return HTTP 200 with valid GeoJSON. Use `curl -I` or the existing `fetchGeoJson` with test logging to confirm endpoint existence. Do not assume naming continuity from Day 1–2.
-
-**Detection:** Log the HTTP status code returned for each extended fire weather URL on first fetch. A 404 or connection failure with `cachedResult: null` on every cycle is the warning sign.
-
-**Phase:** Address in the URL verification task before any implementation work. Block implementation on confirmed live URLs.
-
-**Confidence:** HIGH — v1 Phase 3 research (2026-03-05) explicitly flagged this: "Days 3–8 use a separate experimental endpoint with a different URL pattern and probabilistic (not categorical) output; that complexity is out of scope."
-
----
-
-### Pitfall 2: Schema Difference — Extended Fire Weather Uses Probabilistic, Not Categorical LABEL
-
-**What goes wrong:** If SPC does publish Day 3–8 fire weather GeoJSON files, the feature schema will likely differ from the Day 1–2 categorical LABEL system (ELEV/CRIT/EXTM). The existing `extractPolygons()` call using `fireRiskToValue[label] || 0` will silently return 0 for all features if the LABEL property contains probability integers or different string values.
-
-**Why it happens:** The Day 3–8 fire weather outlook is documented as probabilistic, not categorical. The convective extended outlook uses numeric probability labels (`5`, `15`, `30`...) in its GeoJSON. Fire weather extended may follow the same pattern — or a completely different schema. The existing label-to-value map `{ ELEV: 1, CRIT: 2, EXTM: 3 }` will not match numeric probability strings.
-
-**Consequences:** All extended fire weather polygon evaluations return 0. Module never shows extended fire weather risk even when the user is inside a risk zone. Silent false negative — the worst failure mode for this module's core value.
-
-**Prevention:** Fetch and inspect at least one live extended fire weather GeoJSON file before coding the label mapper. Check `properties.LABEL` values directly. If numeric probabilities are found, use the same `parseFloat(label)` pattern already used for Days 4–8 convective outlooks.
-
-**Detection:** Manually log the raw `properties.LABEL` values from the first feature of each fetched GeoJSON. If labels don't match `{ ELEV, CRIT, EXTM }`, the mapper is wrong.
-
-**Phase:** Must be verified during the URL/schema investigation task before the fetch implementation task.
-
-**Confidence:** MEDIUM — Probabilistic output for extended fire weather is documented but specific property schema of the GeoJSON (if it exists) has not been confirmed live.
+**Phase to address:**
+Proximity-implementation phase. Pre-implementation spike: write a 20-line script that loads `day1otlk_cat.lyr.geojson`, runs the helper against a known interior and known exterior point, and asserts both finite kilometer values.
 
 ---
 
-## Moderate Pitfalls
+### Pitfall 2: Computing distance when the point is inside the higher tier already
 
-### Pitfall 3: 12 Additional Sequential Fetches Extend Update Cycle Time on RPi
+**What goes wrong:**
+"Distance to next-higher tier" is undefined when the point is already in the higher tier. If you blindly compute `pointToLineDistance` from inside a polygon you get the distance to the *nearest boundary* (a positive number) — meaningful geometrically, but not what the badge implies. UI ends up showing `MDT → HIGH 12 km` while the user is already in HIGH and seeing the HIGH categorical color. Confusion follows.
 
-**What goes wrong:** Adding 12 new `fetchGeoJsonCached` calls (2 per day × 6 days) to `getSpcOutlook()` in the extended branch adds up to 12 sequential HTTP round-trips. On a Raspberry Pi with a slow connection, or when SPC servers are slow, the update cycle may take 30–60+ seconds on cache miss, blocking the event loop on every cold start or cache invalidation.
+**Why it happens:**
+`pointToLineDistance` doesn't know about containment. It just measures geometry. Developers conflate "distance from point to polygon" with "distance to entry/exit of polygon."
 
-**Why it happens:** The existing architecture is sequential awaits. The Day 4–8 convective fetch adds 5 sequential calls in the extended branch. Adding 12 more fire weather calls compounds this. On a quiet fire weather day all 12 return quickly (small "no areas" GeoJSON), but on first load after a reboot — or when the ETag changes for all files simultaneously at SPC's nightly issuance — every call is a cache miss.
+**How to avoid:**
+Before calling distance, run `booleanPointInPolygon` against the higher-tier polygon. Branch:
+- Inside higher tier → no proximity badge needed (the categorical render already conveys it). Set `weight = 1.0` and skip distance calc.
+- Outside higher tier → compute distance and weight.
+The existing `evaluatePolygons` already iterates with `booleanPointInPolygon`; reuse the result rather than calling it twice.
 
-**Consequences:** MagicMirror display takes much longer to render the first result after module start or cache flush. RPi CPU remains engaged for the entire sequential chain even though it is mostly waiting on I/O.
+**Warning signs:**
+- Badge text contradicts the primary risk color (e.g. red `HIGH` background with `MDT → HIGH 8 km` annotation).
+- Weight values > 1 or near 1.0 when the user is clearly inside the lower tier.
 
-**Mitigation:** Cache behavior means after the first cycle most extended fire weather calls will return `304 Not Modified` (or hash-match) and cost only one HTTP round-trip with no turf work. The RPi CPU impact per cycle is low once warm. The initial cold start cost is the actual concern.
-
-**Prevention:** Gate all 12 extended fire weather fetches inside the `if (extended)` branch (they already should be). Consider whether a Day 3 fetch alone covers the highest-value case for most users, deferring Days 4–8 fire weather to a config option (`extendedFireWeather: true`). At minimum, note in the plan that performance on the first cold cycle should be observed post-deployment.
-
-**Phase:** Note in implementation plan. Measure actual cycle time post-implementation. If cold-start time is > 60s total, consider parallelizing the extended fire weather fetches with `Promise.all`.
-
-**Confidence:** HIGH — Based on existing code structure and RPi constraint documented in PROJECT.md.
-
----
-
-### Pitfall 4: Cache Entry Collision Between Per-Day Fire Weather Risk Value and Per-Day Convective Risk Value
-
-**What goes wrong:** The cache stores a per-URL result value. For Day 1–2 fire weather, the cached `result` is an integer (0–3, the max fire risk from WindRH and DryT merged). This is correct. For Days 3–8, if a single file covers both WindRH and DryT (combined), or if the developer caches the wrong intermediate value (e.g., just WindRH risk before merging with DryT), the cache entry for the URL may hold a value from only one component, not the merged max.
-
-**Why it happens:** The v1 Day 1–2 fire weather implementation caches result values per URL — each URL (WindRH, DryT separately) stores its individual risk value. The per-day merged max is computed in memory but never stored. This is correct because the two URLs are separate. If Day 3–8 uses a combined URL (one file for both components), caching must still store the correct final value.
-
-**Consequences:** On a cache hit, the retrieved `cachedResult` for a URL reflects only that URL's contribution to the max, not the combined per-day result. If Day 3 has a single URL that covers both components, the cache entry will be correct. If it uses two separate URLs, the existing per-URL caching pattern works as-is.
-
-**Prevention:** Match the caching pattern to the URL structure. If each day has two URLs (WindRH + DryT), use the existing v1 pattern — cache each URL's result independently, merge in memory. If a day has a single combined URL, cache the single result. Do not cache the merged per-day value against either component URL.
-
-**Phase:** Implementation task — verify URL count per day before writing cache store calls.
-
-**Confidence:** MEDIUM — Based on analysis of current v1 caching pattern.
+**Phase to address:**
+Proximity-implementation phase. Add an assertion: pick three test points (deep interior of HIGH, on the SLGT/MDT boundary, far outside) and snapshot the expected `(insideTier, weight)` tuple.
 
 ---
 
-### Pitfall 5: `getDom()` No-Risk Guard Misses Extended Fire Weather Days
+### Pitfall 3: Coordinate order — codebase uses [lon, lat] for turf
 
-**What goes wrong:** The current no-risk guard in `getDom()` checks `fireWeather.day1Risk > 0 || fireWeather.day2Risk > 0` for fire weather. After adding Days 3–8, if a user is only in a Day 4 fire weather zone (but no Day 1/2 fire risk and no convective risk), the module still shows "No Severe Weather Risk."
+**What goes wrong:**
+GeoJSON spec is `[lon, lat]`. The codebase already uses `turf.point([lon, lat])` consistently (see `node_helper.js:374` and `:879`). The risk during this milestone: the new proximity helper is written by reflex with `[lat, lon]` — distances become wildly wrong (a 1° lat error near 35°N mislocates by ~111 km, a 1° lon error by ~91 km) and the badge shows the user perpetually "near MDT" everywhere.
 
-**Why it happens:** The guard was written for Day 1–2 fire weather only. It is not automatically extended when new days are added to `fireWeather`.
+**Why it happens:**
+Most weather APIs and the user-facing config order is "lat, lon." Mixing the two conventions inside the same file causes silent, plausible-looking bugs.
 
-**Consequences:** False negative — module says no risk when the user is in an extended fire weather zone. This directly violates the module's stated core value.
+**How to avoid:**
+- Pass an already-constructed `loc` (turf point) into the new proximity helper — never raw lat/lon. The existing pattern (`const loc = turf.point([lon, lat]);` at line 374, threaded through `fetchAndEvaluateHazard`) is correct; extend it.
+- Add a one-time sanity assertion at startup: distance from `loc` to a known landmark within an expected range; log and bail loudly if not.
+- Code-review checkpoint: grep new code for `lat, lon` argument order and `[lat, lon]` array literals — both should be absent in turf-call sites.
 
-**Prevention:** When adding `fireWeather.day3Risk` through `fireWeather.day8Risk`, update the no-risk guard to include them. A helper like `Object.values(this.spcrisk.fireWeather).some(v => typeof v === 'number' && v > 0)` is more maintainable than listing each day explicitly, but explicit is also acceptable and consistent with the existing style.
+**Warning signs:**
+- Distances orders of magnitude off (10,000+ km in CONUS).
+- Proximity badges fire in obviously wrong locations (e.g. user in OKC reported as "near" a polygon over the Atlantic).
 
-**Detection:** Test with simulated non-zero extended fire weather risk and zero Day 1–2 fire/convective risk. If "No Severe Weather Risk" appears, the guard is incomplete.
-
-**Phase:** Display implementation task — update guard in same commit as adding the display rows.
-
-**Confidence:** HIGH — Direct analysis of `MMM-SPCOutlook.js` lines 55–58.
-
----
-
-### Pitfall 6: `fireWeather` Return Object Only Grows in One of Two Return Paths
-
-**What goes wrong:** `getSpcOutlook()` has two `return` blocks — one for `!extended` (line ~570) and one for `extended` (line ~725). The v1 implementation correctly adds `fireWeather` to both. If the developer adds Day 3–8 fire weather fields only to the extended return block, the non-extended return will have `fireWeather.day1Risk` and `fireWeather.day2Risk` but none of the new fields, causing `undefined` reads in `getDom()`.
-
-**Why it happens:** The extended fire weather fetch block sits inside the `if (extended)` branch, so it is natural to assume only the extended return needs the new fields. But the display code accesses `fireWeather.day3Risk` etc. without checking the `extended` config flag.
-
-**Prevention:** When adding `day3Risk`–`day8Risk` fields to the `fireWeather` object in the extended return, also add them (with value 0) to the non-extended return. Or define the fireWeather object once after both branches with a ternary. Keep both return paths structurally identical.
-
-**Phase:** Implementation task — treat this as the same class of defect as the v1 "forgetting the second return statement" pitfall that was already documented.
-
-**Confidence:** HIGH — Based on direct code inspection showing two return statements.
+**Phase to address:**
+Proximity-implementation phase, enforced via grep checklist in plan.
 
 ---
 
-## Minor Pitfalls
+### Pitfall 4: Great-circle vs planar — silent units mismatch
 
-### Pitfall 7: Display Clutter When All 6 Extended Days Show Risk
+**What goes wrong:**
+`pointToLineDistance` returns kilometers by default but accepts a `{ units }` option (`'degrees' | 'radians' | 'miles' | 'kilometers'`). If two callers disagree (one uses default km, another passes `'miles'`), the falloff thresholds become nonsense. Worse: turf v7 supports both `'geodesic'` and `'planar'` methods; using planar over CONUS-scale distances introduces meaningful error (a few % at hundreds of km), which is *not* catastrophic but pushes weight values across thresholds inconsistently.
 
-**What goes wrong:** If the user is in a large fire weather setup covering Days 3–8, the module renders 6 new fire weather rows below the existing convective and Day 1–2 fire weather rows. On a typical MagicMirror portrait display with a small font, 6 additional rows may overflow the widget or crowd out other modules.
+**Why it happens:**
+Defaults are easy to forget. Documentation reads "returns distance" without forcing the units choice at call site.
 
-**Why it happens:** The existing Day 1–2 fire weather display was designed with 2 rows in mind. The v1.1 requirement is "per-day display rows shown only when risk > 0 for user's location" — but during an active fire weather period in the western US, all 6 days can simultaneously have risk.
+**How to avoid:**
+- Centralize: define one `PROXIMITY_UNITS = 'kilometers'` and one `PROXIMITY_METHOD = 'geodesic'` constant at top of `node_helper.js`. Pass both explicitly to every `pointToLineDistance` call.
+- Pin the falloff function to those units (e.g. `weight = 1 - clamp(d_km / 50, 0, 1)`) and document the unit in the inline comment next to the constant.
+- Verify against a hand-checked landmark distance (e.g. OKC → Tulsa ≈ 160 km) at module start in dev mode.
 
-**Prevention:** This is a UX edge case, not a bug. The display-only-when-risk guard already limits output to active days. Document the all-days-active scenario in the validation checklist so it can be visually inspected before release. No code change required unless overflow is observed.
+**Warning signs:**
+- Sudden jumps in weight values when a turf version bump occurs.
+- Badge thresholds firing at obviously wrong distances.
 
-**Phase:** Validation task — manually verify display with all 6 days simulated as non-zero.
-
-**Confidence:** MEDIUM — Based on display architecture analysis; actual overflow depends on user's display resolution and font size config.
-
----
-
-### Pitfall 8: Cache Stampede at SPC's Nightly Fire Weather Issuance
-
-**What goes wrong:** The Day 3–8 fire weather product is issued once daily at 2200 UTC. At that moment, all 12 URLs simultaneously return new content. On the next update cycle after 2200 UTC, every cache entry will be a miss, triggering 12 sequential fetches with full JSON parse and turf evaluation back-to-back. This is the worst-case CPU spike.
-
-**Why it happens:** The cache is keyed per URL, and SPC rotates all files at once. There is no staggering.
-
-**Prevention:** This is the same pattern already present for the 5 Day 4–8 convective files. The existing system already accepts this behavior. No change needed; just be aware the first update cycle after 2200 UTC will be slower than typical cycles.
-
-**Phase:** No implementation work needed. Note in performance validation.
-
-**Confidence:** MEDIUM — SPC issuance time confirmed from web search; exact impact on RPi cycle time is not yet measured.
+**Phase to address:**
+Proximity-implementation phase. Constant + explicit option object in the helper signature.
 
 ---
 
-## Phase-Specific Warnings
+### Pitfall 5: No higher-tier polygon for the day → graceful degrade
 
-| Phase Topic | Likely Pitfall | Mitigation |
-|-------------|---------------|------------|
-| URL discovery | Endpoints may not exist or may differ from Day 1–2 naming | Verify all 12 URLs return HTTP 200 before writing fetch code |
-| Schema verification | Extended GeoJSON LABEL values may be numeric probability strings, not ELEV/CRIT/EXTM | Inspect live GeoJSON before writing label mapper |
-| Fetch implementation | Extended fetches in non-extended return path | Add all new `fireWeather` fields (as 0) to both return blocks |
-| Display implementation | No-risk guard misses new days | Update guard to include `day3Risk`–`day8Risk` in same commit as display rows |
-| Display implementation | All-6-days-active overflow | Add to validation checklist; check visually on target hardware |
-| Performance validation | Cold-start cycle time | Measure total `getSpcOutlook()` duration on first run after restart |
+**What goes wrong:**
+On many days, only MRGL or SLGT polygons exist for Day 1; no MDT or HIGH polygon at all. The proximity code asks "distance to next-higher tier" and finds an empty input set. Naive code returns `Infinity`, `null`, or — worst — throws inside the render loop and hides the entire risk display behind an error.
+
+**Why it happens:**
+SPC issues categorical outlooks tier-by-tier; the existence of higher tiers is data-dependent and varies daily. Day 4–8 outlooks rarely have anything above SLGT.
+
+**How to avoid:**
+- Make the "next-higher tier" lookup explicit: build the tiered polygon set once after the categorical fetch, then iterate from `currentTier + 1` upward. If no polygon exists at any higher tier, return `{ adjacent: null, distanceKm: null, weight: 0 }`.
+- Render layer: only draw the badge when `adjacent !== null`. Keep it visually identical to the no-proximity case otherwise.
+- Add an explicit assertion for: (a) inside HIGH (no higher tier ever), (b) inside SLGT but no MDT issued today, (c) NONE everywhere.
+
+**Warning signs:**
+- Badge text reading "→ undefined" or "→ NaN km".
+- Display blanking on otherwise quiet weather days.
+- Errors in MagicMirror logs only on no-risk days.
+
+**Phase to address:**
+Proximity-implementation phase. Explicit null-result branch in helper + display guard.
 
 ---
+
+### Pitfall 6: Precision jitter — weight flicker between updates
+
+**What goes wrong:**
+SPC outlooks update on a fixed schedule (Day 1: 0600/1300/1630/2000/0100 UTC; Day 2: 0600/1730 UTC). Between updates the polygons are static, so the weight should be stable. But if the helper recomputes weight from scratch each render and the falloff uses high-precision floats, the displayed badge can flicker between, e.g., `0.59` and `0.60` due to floating-point representation across separate evaluations — even with no underlying data change. With the current 60-minute update interval this is mostly invisible, but a future user setting `updateInterval: 5` will see flicker.
+
+**Why it happens:**
+`Math.min(...)` over many `pointToLineDistance` calls + a continuous falloff function = many opportunities for last-bit float drift. Compounded by `100 * day1.torRisk + "%"` style display already in the codebase.
+
+**How to avoid:**
+- Cache the computed weight on the cache entry alongside `result`, keyed to the same ETag/hash that drives the polygon cache. If the polygon hasn't changed and the location hasn't changed, return the cached weight verbatim — no recomputation.
+- Display layer: round to 2 significant figures (`weight.toFixed(2)`) before stringifying.
+- Consider banding (e.g. snap to nearest 0.05) — visually cleaner and immune to last-bit drift.
+
+**Warning signs:**
+- Badge value changing on every update tick despite SPC not having issued a new outlook.
+- Subjective "twitchy" feel at short update intervals during user testing.
+
+**Phase to address:**
+Proximity-implementation phase. Caching is essentially free given `_geoJsonCache` already exists.
+
+---
+
+### Pitfall 7: Stale-detection clock skew — server time vs RPi local time
+
+**What goes wrong:**
+The existing `_isWithinStaleWindow` uses `Date.now() - timestamp` where `timestamp` was set by `Date.now()` at fetch. Both calls are local — *consistent with each other*, so the stale-window comparison is safe. The trap appears if v1.2 introduces any of:
+1. Surfacing "data as of HH:MM" using the SPC-published issuance time (parsed from GeoJSON properties or HTTP `Last-Modified`) without acknowledging the RPi clock may be wrong (RPi has no RTC; if NTP fails on boot, system time can be hours/days off).
+2. Comparing `_staleAsOf` (set on backend with `Date.now()`) against `new Date()` on the front-end — same machine, same clock, fine. But if MagicMirror is run remotely in some setups, the two clocks differ.
+3. Showing relative times ("5 minutes ago") that go negative because the issuance timestamp is in the future relative to a misset RPi clock.
+
+**Why it happens:**
+RPi 4/5 lacks an RTC. After an unclean shutdown or extended power loss, system time defaults to the last known time or epoch until NTP succeeds. Module starts before NTP finishes on slow networks.
+
+**How to avoid:**
+- Display "Stale" as a binary state, not a "X minutes ago" countdown, in the first cut.
+- If showing relative age, clamp to non-negative (`Math.max(0, Date.now() - asOf)`) and display "just now" for any value < 60 s.
+- For "data issued HH:MM" labels, use the SPC-published time directly as a string ("Issued 13:00 UTC") rather than computing relative offsets — the absolute label remains correct regardless of local clock.
+- Front-end and backend both run on the same RPi process tree; `_staleAsOf` set with `Date.now()` on backend and consumed on front-end is consistent. Document this assumption explicitly.
+
+**Warning signs:**
+- "Stale" badge showing immediately on fresh fetch (clock jumped backward during fetch).
+- Negative relative times in display ("Updated -3 minutes ago").
+- "Stale" never clearing despite successful fetches.
+
+**Phase to address:**
+Stale-indicator phase. Keep first iteration boolean-only.
+
+---
+
+### Pitfall 8: Stale-window logic assumes config.updateInterval — but node_helper has no this.config
+
+**What goes wrong:**
+`_isWithinStaleWindow` reads `this.config?.updateInterval ?? 60`. Reviewing the codebase: **`this.config` is never set on the node_helper** — `MMM-SPCOutlook.js` has `defaults`/`config`, but the backend only receives `payload` from socket notifications and doesn't store config anywhere. The optional-chain + nullish-coalesce silently falls through to `60`, so the function works *coincidentally* because the default matches. If a user sets `updateInterval: 10`, the stale window remains 60 minutes — masking missed fetches for almost an hour.
+
+**Why it happens:**
+The `?.` and `??` operators turn what should be a TypeError into a silent default. Easy to ship and never notice.
+
+**How to avoid:**
+- Pass `updateInterval` through the existing `GET_SPC_DATA` payload (already has `lat`, `lon`, `extended` — add `updateInterval`).
+- In `socketNotificationReceived`, store it on `this._updateIntervalMin = payload.updateInterval ?? 60;`.
+- Update `_isWithinStaleWindow` to read `this._updateIntervalMin` instead of `this.config?.updateInterval`.
+- This is a pre-existing latent bug; v1.2 stale-indicator work should fix it as a prerequisite, otherwise the new UI surface will mislead users on non-default intervals.
+
+**Warning signs:**
+- Setting `updateInterval: 5` and not seeing stale fallback for ~60 minutes during a NOAA outage.
+- `this.config` referenced in node_helper.js (it should not be).
+
+**Phase to address:**
+Stale-indicator phase, as a prerequisite refactor.
+
+---
+
+### Pitfall 9: fetchAndEvaluateHazard return-signature change ripples through 6 call sites
+
+**What goes wrong:**
+Adding proximity to Convective Day 1–3 + CIG tiers naturally extends `fetchAndEvaluateHazard` to also return `{ adjacent, distanceKm, weight }`. The current return is `{ risk, cig, stale }` and is destructured at 6 call sites in `getSpcOutlook` (Day1 tor/hail/wind, Day2 tor/hail/wind). Day 3 cat/prob/cig are inlined separately — *not* using the helper — so they need parallel changes.
+
+The risk: a partial refactor (helper updated, Day 3 inline blocks not updated) ships an inconsistent feature set where Day 1–2 have proximity badges and Day 3 silently doesn't, despite the spec including Day 3.
+
+**Why it happens:**
+Day 3 was inlined in v1.0 because the cat/prob structure differs from Day 1–2 (separate `_cat` and `_prob` URLs, no torn/hail/wind split). It was never DRYed into the helper. Easy to miss.
+
+**How to avoid:**
+- Before implementation: grep `fetchAndEvaluateHazard` to inventory all 6 call sites; grep `day3` blocks to inventory the inlined logic.
+- Either (a) extract a Day 3-shaped helper alongside the existing one, or (b) implement proximity as a separate post-step that takes any `{label, value, poly}[]` and a current-tier value, decoupling it from `fetchAndEvaluateHazard`'s shape entirely. Option (b) is cleaner — proximity is an orthogonal concern to fetch+evaluate.
+- Guard with a "proximity coverage checklist" in the phase: Day1Tor / Day1Hail / Day1Wind / Day2Tor / Day2Hail / Day2Wind / Day3Cat / Day1CigTor / Day1CigHail / Day1CigWind / Day2CigTor / Day2CigHail / Day2CigWind / Day3Cig — verify each emits a badge field.
+
+**Warning signs:**
+- Day 1 shows proximity badge, Day 3 doesn't, despite both being in scope.
+- Destructuring failures (`undefined.adjacent`) at unexpected call sites.
+
+**Phase to address:**
+Proximity-implementation phase. Decide refactor strategy in the planning step before writing code.
+
+---
+
+### Pitfall 10: extractPolygons throws away features with `value === 0` — but those are needed for proximity
+
+**What goes wrong:**
+`extractPolygons` filters via `(label, val) => val > 0`. For categorical layers this drops the implicit "TSTM/none" polygon. Fine for `evaluatePolygons` (we want the max risk). **Not fine for proximity:** to know "distance to next-higher tier" you need the *higher* polygons, but to know "which tier the point falls in to start" you need the *current* polygon. The current code computes the current tier via `evaluatePolygons` and that's sufficient. But if a future refactor switches the filter, proximity could break silently.
+
+A subtler version: when the point is in NONE (outside all polygons) and proximity is on, "next higher" is the lowest-tier polygon (MRGL). The helper must be allowed to look at MRGL polygons even when current tier is NONE. With the current `val > 0` filter MRGL is preserved, but if SLGT is treated as the floor of "interesting tiers" then jumping straight to SLGT skips MRGL entirely.
+
+**Why it happens:**
+Filter predicates baked into the data extraction layer become invisible to downstream consumers.
+
+**How to avoid:**
+- Document in the proximity helper: "expects the full ordered set of tier polygons including the lowest tier of interest."
+- In implementation: extract polygons once with `val >= 0` (all-tiers) into a tiered map `{ 1: [...], 2: [...], 3: [...], ... }`, derive `currentTier` from it, derive `nextHigherTier` from it. Single source of truth.
+- Add an assertion in dev mode: tier polygon sets per day are non-decreasing in count from MRGL to HIGH (monotonic containment is roughly true for SPC outlooks).
+
+**Warning signs:**
+- Proximity badge skipping tiers (e.g. "in MRGL → ENH" with no mention of SLGT).
+- Display shows "in NONE → SLGT" when an MRGL polygon clearly exists and is closer.
+
+**Phase to address:**
+Proximity-implementation phase.
+
+---
+
+## Technical Debt Patterns
+
+| Shortcut | Immediate Benefit | Long-term Cost | When Acceptable |
+|----------|-------------------|----------------|-----------------|
+| Convert MultiPolygon to lines on every render call | Skips caching design | Burns RPi CPU — `polygonToLine` + `flatten` on Day 1 cat polygon is 50–500 ms per call | Never — cache on `_geoJsonCache` entry |
+| Recompute weight inside `getDom()` instead of in `node_helper` | Front-end has direct access to SPC data | Heavy turf math on the render thread breaks the "backend does math" architectural decision | Never |
+| Use `setTimeout(updateDom, 0)` to mask flicker from weight jitter | Visually quiets the symptom | Hides the underlying float-drift bug; symptom returns at shorter intervals | Never — fix at source via caching + rounding |
+| Skip the `_isWithinStaleWindow` config refactor and just hardcode 60 min | Fewer files touched | Stale window silently wrong for any non-default `updateInterval` | Never (latent bug; fix as prereq) |
+| Show "Stale" by reading `_stale` only, ignoring `_staleAsOf` | Single field to consume | Loses ability to show "stale since HH:MM" later without backend change | Acceptable for v1.2 first cut; document as deferred |
+| Compute proximity for Day 4–8 too "while we're at it" | Feels complete | Day 4–8 polygons are coarser and the proximity signal is meteorologically meaningless at that lead time | Out of scope per spec — resist scope creep |
+
+## Integration Gotchas
+
+| Integration | Common Mistake | Correct Approach |
+|-------------|----------------|------------------|
+| MagicMirror² socket notifications | Sending the new proximity result as a separate notification | Extend the existing `SPC_DATA_RESULT` payload — same envelope, additive fields. Front-end stays single-handler. |
+| MagicMirror² `getDom()` | Mutating `wrapper.innerHTML` with `+=` to add a badge after the risk text | Continue the existing string-concat pattern (already in use throughout `getDom`); don't introduce a virtual-DOM library for one badge. Keep it consistent. |
+| turf.js v7 ESM/CJS | Importing a sub-package (`@turf/point-to-line-distance`) and tree-shaking-by-hand | The codebase already does `require("@turf/turf")` (full bundle). Stay with that — sub-package mixing has caused version-skew bugs in MM² modules historically. |
+| NOAA SPC GeoJSON | Assuming polygon ring winding is correct (CCW outer, CW holes) | SPC's GeoJSON is mostly correct; `pointToLineDistance` is winding-agnostic; `booleanPointInPolygon` is more sensitive but already known-working against this data. |
+| Cache invalidation on location change | Forgetting to also invalidate proximity-cached weights when lat/lon changes | The existing location-change invalidation at `node_helper.js:309–317` zeroes `result` and `timestamp`. Extend it to also clear any new `weight` / `distanceKm` fields stored on the entry. |
+
+## Performance Traps
+
+| Trap | Symptoms | Prevention | When It Breaks |
+|------|----------|------------|----------------|
+| Running `polygonToLine` + `pointToLineDistance` on every render tick | RPi load spike every minute; `getDom` lag | Cache flattened-line representation per polygon refresh, not per render | Immediately on RPi 3/4 with default `updateInterval: 60` |
+| Iterating all features in extractPolygons twice (once for current tier, once per higher tier) | 2–6× turf calls per evaluation | Single-pass: build tiered polygon map once, reuse for current + higher lookups | At Day 1 outlook with all 6 tiers present (rare but real on active days) |
+| Forgetting to short-circuit when current tier == max tier (HIGH) | Wasted distance calls returning `null` anyway | Early return `{ adjacent: null }` when `currentTier === 6` | On HIGH risk days (rare; 1–5 per year nationally) |
+| Computing distance to *every* ring in MultiPolygon, including holes | Each Day 1 cat polygon can have 5–20 rings | Use `Math.min` over `flatten`'d single-Polygons; consider treating outer ring only, accepting hole-distance as approximation | When SPC issues complex MultiPolygon with holes (common in winter mixed-mode events) |
+| Re-fetching the full GeoJSON because proximity needs "different data" | Doubled network + parse cost | Proximity uses the *same* polygon set already fetched for `evaluatePolygons` — feed it through, don't refetch | Easy mistake during implementation |
+
+## Security Mistakes
+
+(Limited applicability — this is a read-only display module fetching public NOAA data on a single-user RPi.)
+
+| Mistake | Risk | Prevention |
+|---------|------|------------|
+| Trusting LABEL/DN values from GeoJSON without validation in proximity mapping | Crash if SPC changes label scheme mid-cycle | Continue `cigToTier[label] \|\| 0` fallback pattern already used; new tier-map should follow same defensive default |
+| Logging full GeoJSON payload at INFO level when adding stale debug | Fills RPi log partition | Keep `Log.info` for one-line summaries only; gate any geometry logging behind a `config.debug` flag |
+
+## UX Pitfalls
+
+| Pitfall | User Impact | Better Approach |
+|---------|-------------|-----------------|
+| Flashing/blinking "STALE" badge | Eye drawn away from actual risk; defeats the at-a-glance value | Static text marker. A subtle "(stale)" suffix or muted color, not animated. |
+| Color-changing the entire risk display when stale | User mistakes stale state for a *new* risk level | Keep the categorical color authoritative; layer staleness as a separate, smaller indicator |
+| Proximity badge with more visual weight than the categorical risk | "Near MDT" reads louder than "currently in SLGT" — inverted information hierarchy | Smaller font, subdued color, parenthetical placement: `SLGT (0.6 → MDT)` |
+| Showing weight as raw float "0.5832" | Reads as fake precision | Round to 2 sig figs (`0.58`) or band into 5 buckets (low/lo-med/med/med-hi/hi) |
+| Showing proximity badge inside the higher tier "for completeness" | Contradicts primary display (Pitfall 2) | Suppress badge when inside higher tier; categorical color already conveys it |
+| Stale indicator that disappears the moment fetch completes (even if cached/304) | User loses signal that data is "as of recently" rather than "as of now" | "Stale" should reflect actual data age, not fetch-attempt recency. Tie to `_staleAsOf` not to fetch event. |
+| Badge appears/disappears between updates due to weight crossing threshold | Visual flicker; eye distraction | Hysteresis: enter "near" state at weight ≥ 0.5, exit only at weight < 0.4 |
+| Different proximity treatment for tor/hail/wind hazards on the same day | Display becomes a wall of badges | Show proximity at most once per day-row, on the highest-tier hazard, OR consolidate to a single Day-level badge |
+
+## "Looks Done But Isn't" Checklist
+
+- [ ] **Proximity helper:** Verified against MultiPolygon input — not just single Polygon test data
+- [ ] **Proximity helper:** Returns `null` cleanly when no higher tier exists for that day
+- [ ] **Proximity helper:** Returns `weight: 1.0` (or skips) when point is inside higher tier
+- [ ] **Proximity helper:** Distance units constant + method constant referenced explicitly at every call site (no defaults)
+- [ ] **Proximity helper:** Coordinate order verified — `[lon, lat]` everywhere, no `[lat, lon]` slip
+- [ ] **Proximity coverage:** All 14 hazard surfaces in scope (Day1/2 tor+hail+wind+CIG×3, Day3 cat+CIG) emit badge data — verify with checklist
+- [ ] **Proximity caching:** Weight stored on `_geoJsonCache` entry, invalidated on location change alongside `result`
+- [ ] **Stale indicator:** Works at non-default `updateInterval` values (test with 10 and 120)
+- [ ] **Stale indicator:** `_isWithinStaleWindow` reads from passed-through config, not `this.config?.` (latent bug fixed)
+- [ ] **Stale indicator:** Renders binary-only (no negative relative times)
+- [ ] **Stale indicator:** Visually subordinate to risk display (smaller, muted, no animation)
+- [ ] **Config gate:** Proximity feature opt-in via `config.proximity` (or similar) — defaults to off, doesn't change existing user installs
+- [ ] **Config gate:** Front-end gracefully handles backend that doesn't yet emit proximity fields (forward/backward compat for users who upgrade backend before frontend or vice versa)
+- [ ] **No-risk display path:** "No Severe Weather Risk" guard at `MMM-SPCOutlook.js:52` still triggers correctly when proximity is enabled but no risks exist
+- [ ] **Hysteresis:** Badge appearance threshold differs from disappearance threshold to prevent flicker
+
+## Recovery Strategies
+
+| Pitfall | Recovery Cost | Recovery Steps |
+|---------|---------------|----------------|
+| Coordinate order bug shipped | LOW | Single-line fix; users see immediate correction on next update tick |
+| MultiPolygon distance returning garbage | LOW | Ship hotfix with `flatten` + per-line min; cached values self-heal on next fetch |
+| Weight flicker reported by user | LOW | Add rounding/banding in display layer; no backend change needed |
+| Stale window silently wrong for non-default intervals | MEDIUM | Requires payload + handler change in both files; coordinated release |
+| Proximity scope creep into Day 4–8 already shipped | MEDIUM | Feature flag rollback; user-visible UI change |
+| Flashing badge UX backlash | LOW | CSS-only adjustment; instant fix |
+| Performance regression on RPi 3 | MEDIUM | Add caching layer; if insufficient, gate proximity behind `config.proximity` opt-in (already planned) so users opt in to the cost |
+
+## Pitfall-to-Phase Mapping
+
+| Pitfall | Prevention Phase | Verification |
+|---------|------------------|--------------|
+| 1: pointToLineDistance on MultiPolygon | Proximity-implementation | Pre-implementation spike against live Day 1 cat polygon |
+| 2: Distance when inside higher tier | Proximity-implementation | Three-point assertion (interior/boundary/exterior) |
+| 3: Coordinate order [lon,lat] | Proximity-implementation | Grep checklist + landmark sanity assertion |
+| 4: Units / great-circle vs planar | Proximity-implementation | Centralized constants; landmark distance check |
+| 5: No higher tier exists | Proximity-implementation | Null-result branch + display guard; quiet-day test |
+| 6: Weight precision jitter | Proximity-implementation | Cache weight + display rounding; observe at `updateInterval: 5` |
+| 7: Clock-skew stale detection | Stale-indicator | Boolean-only first cut; document RPi clock assumption |
+| 8: `this.config` not on node_helper | Stale-indicator (prereq) | Test at `updateInterval: 10` and `120` |
+| 9: 6 call sites + Day 3 inlined | Proximity-implementation (planning step) | Coverage checklist before writing code |
+| 10: extractPolygons val>0 filter | Proximity-implementation | Tiered-map single-pass extraction |
 
 ## Sources
 
-- Live codebase: `/home/kcreasey/OneDrive/Projects/weather/MMM-SPCOutlook/node_helper.js` — current v1 fire weather implementation, caching pattern, return structure (confirmed 2026-03-21)
-- Live codebase: `/home/kcreasey/OneDrive/Projects/weather/MMM-SPCOutlook/MMM-SPCOutlook.js` — no-risk guard and fire weather display block (confirmed 2026-03-21)
-- `.planning/milestones/v1.0-phases/03-fire-weather/03-RESEARCH.md` — v1 research explicitly flagging extended fire weather as out of scope with different URL pattern (HIGH confidence for endpoint structure claim)
-- [SPC Fire Weather Outlooks page](https://www.spc.noaa.gov/products/exper/fire_wx/) — Day 3–8 extended product confirmation (MEDIUM confidence for URL structure)
-- [SPC GIS Data](https://www.spc.noaa.gov/gis/) — authoritative GeoJSON endpoint list; absence of day3–8 lyr.geojson in search results is meaningful
-- [fire_weather/SPC_firewx MapServer](https://mapservices.weather.noaa.gov/vector/rest/services/fire_weather/SPC_firewx/MapServer) — NOAA ArcGIS REST service for fire weather (alternative access path if direct GeoJSON files don't exist)
+- [Turf.js Issue #1743 — Distance to Polygon / MultiPolygon from Point](https://github.com/Turfjs/turf/issues/1743) — confirms no native point-to-polygon distance; documents `polygonToLine` + `pointToLineDistance` workaround pattern
+- [polygonToLine | Turf.js](https://turfjs.org/docs/api/polygonToLine) — confirms returns LineString or MultiLineString depending on hole presence
+- [flatten | Turf.js](https://turfjs.org/docs/api/flatten) — MultiPolygon → individual Polygons
+- [pointToLineDistance | Turf.js](https://turfjs.org/docs/api/pointToLineDistance) — units + method options
+- Codebase grounding: `node_helper.js` (lines 159–162 stale window; 241–290 fetchAndEvaluateHazard; 309–317 location invalidation; 374, 879 turf.point [lon,lat] convention) and `MMM-SPCOutlook.js` (lines 13, 18, 52 socket + render structure)
+- `.planning/PROJECT.md` — milestone scope, constraints, known tech debt
+
+---
+*Pitfalls research for: MMM-SPCOutlook v1.2 — proximity weighting + stale indicator on Raspberry Pi*
+*Researched: 2026-04-25*
