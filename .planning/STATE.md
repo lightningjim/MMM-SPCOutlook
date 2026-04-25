@@ -4,13 +4,14 @@ milestone: v1.2
 milestone_name: QoL Enhancements
 status: completed
 stopped_at: Phase 11 context gathered
-last_updated: "2026-04-25T17:16:36.682Z"
+last_updated: "2026-04-25T17:29:05.038Z"
 last_activity: 2026-04-25 — Roadmap created (3 phases, 14 requirements mapped)
 progress:
   total_phases: 3
   completed_phases: 0
-  total_plans: 0
+  total_plans: 2
   completed_plans: 0
+  percent: 0
 ---
 
 # Project State
@@ -67,3 +68,5 @@ None.
 Last session: --stopped-at
 Stopped at: Phase 11 context gathered
 Resume file: --resume-file
+
+**Planned Phase:** 11 (Stale Data Indicator) — 2 plans — 2026-04-25T17:29:05.034Z
