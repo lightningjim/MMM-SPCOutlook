@@ -51,7 +51,9 @@ Full details: `.planning/milestones/v1.1-ROADMAP.md`
   2. When the backend reports `_stale === true`, a compact warning indicator is visible at the top of the module wrapper.
   3. The stale indicator displays a relative last-fresh-fetch time (e.g. "12 minutes ago") sourced from `_staleAsOf`.
   4. When the backend reports `_stale === false` (or omits it), no stale indicator is rendered.
-**Plans**: TBD
+**Plans**: 2 plans
+- [ ] 11-01-PLAN.md — Backend interval threading bug fix (STALE-01)
+- [ ] 11-02-PLAN.md — Frontend payload + stale indicator render (STALE-02, STALE-03)
 **UI hint**: yes
 
 ### Phase 12: Proximity Backend Foundation
@@ -64,7 +66,9 @@ Full details: `.planning/milestones/v1.1-ROADMAP.md`
   3. Computed weights use linear falloff with a 40 km cutoff (`weight = max(0, 1 − d_km/40)`) and are strictly capped below the next-tier integer.
   4. When no higher-tier polygon exists for a given day/hazard, the helper returns `null` (no spurious subtree entries).
   5. Polygon-to-line conversions are memoized inside `_geoJsonCache` entries so per-render turf cost stays at O(1) for unchanged inputs.
-**Plans**: TBD
+**Plans**: 2 plans
+- [ ] 11-01-PLAN.md — Backend interval threading bug fix (STALE-01)
+- [ ] 11-02-PLAN.md — Frontend payload + stale indicator render (STALE-02, STALE-03)
 
 ### Phase 13: Proximity Frontend Render
 **Goal**: User sees adjacent-tier proximity badges inline with existing risk text on Day 1/2/3 categorical and CIG rows when proximity weighting is enabled.
@@ -76,7 +80,9 @@ Full details: `.planning/milestones/v1.1-ROADMAP.md`
   3. When the user is outside all categorical tiers but a tier polygon is within 40 km, an inline `W.W (near TIER)` badge is rendered.
   4. Per-hazard CIG badges (Day 1/2 tor/hail/wind, Day 3 cig) render alongside existing `cigLabel` output using the same primitive.
   5. Weights are displayed rounded to one decimal; badges below the noise threshold are suppressed so the display does not flicker between updates.
-**Plans**: TBD
+**Plans**: 2 plans
+- [ ] 11-01-PLAN.md — Backend interval threading bug fix (STALE-01)
+- [ ] 11-02-PLAN.md — Frontend payload + stale indicator render (STALE-02, STALE-03)
 **UI hint**: yes
 
 ## Progress
@@ -93,6 +99,6 @@ Full details: `.planning/milestones/v1.1-ROADMAP.md`
 | 8. URL Verification | v1.1 | 1/1 | Complete | 2026-03-21 |
 | 9. Backend Implementation | v1.1 | 1/1 | Complete | 2026-03-21 |
 | 10. Display Implementation | v1.1 | 1/1 | Complete | 2026-03-21 |
-| 11. Stale Data Indicator | v1.2 | 0/0 | Not started | — |
+| 11. Stale Data Indicator | v1.2 | 0/2 | Not started | — |
 | 12. Proximity Backend Foundation | v1.2 | 0/0 | Not started | — |
 | 13. Proximity Frontend Render | v1.2 | 0/0 | Not started | — |
