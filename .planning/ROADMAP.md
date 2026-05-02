@@ -81,7 +81,10 @@ Full details: `.planning/milestones/v1.1-ROADMAP.md`
   3. When the user is outside all categorical tiers but a tier polygon is within 40 km, an inline `W.W (near TIER)` badge is rendered.
   4. Per-hazard CIG badges (Day 1/2 tor/hail/wind, Day 3 cig) render alongside existing `cigLabel` output using the same primitive.
   5. Weights are displayed rounded to one decimal; badges below the noise threshold are suppressed so the display does not flicker between updates.
-**Plans**: TBD — to be designed during `/gsd-discuss-phase 13`
+**Plans**: 3 plans
+- [ ] 13-01-PLAN.md — Top-of-getDom helpers (PROX_MIN_WEIGHT, cigLabelFromTierString, proximityBadge) — PROXUI-05
+- [ ] 13-02-PLAN.md — Day 1/2 categorical + per-hazard CIG badges + umbrella gate extension — PROXUI-02, PROXUI-03, PROXUI-04
+- [ ] 13-03-PLAN.md — Day 3 dual-badge inline render + PROXUI-01 verification — PROXUI-01, PROXUI-02, PROXUI-03, PROXUI-04
 **UI hint**: yes
 
 ## Progress
@@ -99,5 +102,5 @@ Full details: `.planning/milestones/v1.1-ROADMAP.md`
 | 9. Backend Implementation | v1.1 | 1/1 | Complete | 2026-03-21 |
 | 10. Display Implementation | v1.1 | 1/1 | Complete | 2026-03-21 |
 | 11. Stale Data Indicator | v1.2 | 2/2 | Complete | 2026-04-25 |
-| 12. Proximity Backend Foundation | v1.2 | 3/3 | Complete   | 2026-04-26 |
-| 13. Proximity Frontend Render | v1.2 | 0/0 | Not started | — |
+| 12. Proximity Backend Foundation | v1.2 | 3/3 | Complete    | 2026-05-02 |
+| 13. Proximity Frontend Render | v1.2 | 0/3 | Planned | — |
