@@ -121,14 +121,14 @@
         wrapper.innerHTML += probRiskHTML+"<br/>";
       }}
       
-      if(this.spcrisk.day2.risk != "NONE") 
+      if(this.spcrisk.day2.risk != "NONE" || this.spcrisk.day2.proximity?.categorical)
       {
-        wrapper.innerHTML +=  dowToText(dow+1) + " (Day 2): <span style=\"color:#" + this.spcrisk.day2.color + "\">" + this.spcrisk.day2.text + "</span><br/>";
+        wrapper.innerHTML +=  dowToText(dow+1) + " (Day 2): <span style=\"color:#" + this.spcrisk.day2.color + "\">" + this.spcrisk.day2.text + "</span>" + proximityBadge(this.spcrisk.day2.proximity?.categorical, this.spcrisk.day2.risk == "NONE" ? "outside" : "inside") + "<br/>";
       if(this.spcrisk.day2.probRisk) {
         let probRiskHTML = ""
-        if (this.spcrisk.day2.torRisk > 0) probRiskHTML += "<i class=\"wi wi-tornado\"></i>" + cigLabel(this.spcrisk.day2.torCig) + 100 * this.spcrisk.day2.torRisk + "% ";
-        if (this.spcrisk.day2.hailRisk > 0) probRiskHTML += "<i class=\"wi wi-meteor\"></i>" + cigLabel(this.spcrisk.day2.hailCig) + 100 * this.spcrisk.day2.hailRisk + "% ";
-        if (this.spcrisk.day2.windRisk > 0) probRiskHTML += "<i class=\"wi wi-strong-wind\"></i>" + cigLabel(this.spcrisk.day2.windCig) + 100 * this.spcrisk.day2.windRisk + "% ";
+        if (this.spcrisk.day2.torRisk > 0) probRiskHTML += "<i class=\"wi wi-tornado\"></i>" + cigLabel(this.spcrisk.day2.torCig) + proximityBadge(this.spcrisk.day2.proximity?.torCig, this.spcrisk.day2.torCig === 0 ? "outside" : "inside") + 100 * this.spcrisk.day2.torRisk + "% ";
+        if (this.spcrisk.day2.hailRisk > 0) probRiskHTML += "<i class=\"wi wi-meteor\"></i>" + cigLabel(this.spcrisk.day2.hailCig) + proximityBadge(this.spcrisk.day2.proximity?.hailCig, this.spcrisk.day2.hailCig === 0 ? "outside" : "inside") + 100 * this.spcrisk.day2.hailRisk + "% ";
+        if (this.spcrisk.day2.windRisk > 0) probRiskHTML += "<i class=\"wi wi-strong-wind\"></i>" + cigLabel(this.spcrisk.day2.windCig) + proximityBadge(this.spcrisk.day2.proximity?.windCig, this.spcrisk.day2.windCig === 0 ? "outside" : "inside") + 100 * this.spcrisk.day2.windRisk + "% ";
         wrapper.innerHTML += probRiskHTML+"<br/>";
       }}
       if(this.spcrisk.day3.risk != "NONE") 
