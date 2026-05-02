@@ -74,6 +74,9 @@
       this.spcrisk.day1.risk == "NONE" &&
       this.spcrisk.day2.risk == "NONE" &&
       this.spcrisk.day3.risk == "NONE" &&
+      !this.spcrisk.day1.proximity &&
+      !this.spcrisk.day2.proximity &&
+      !this.spcrisk.day3.proximity &&
       !( this.config.extended && this.spcrisk.day48Risk ) &&
       !(this.spcrisk.fireWeather && (this.spcrisk.fireWeather.day1Risk > 0 || this.spcrisk.fireWeather.day2Risk > 0)) &&
       !(this.config.extended && this.spcrisk.fireWeather && (
