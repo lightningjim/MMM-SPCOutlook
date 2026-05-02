@@ -24,12 +24,13 @@ module.exports = NodeHelper.create({
     this._cachedLat = null;
     this._cachedLon = null;
     this._updateInterval = 60;
+    this._proximityWeighting = false;
   },
 
   // Called when the front-end (MMM-SPCOutlook.js) sends a socket notification
   socketNotificationReceived: async function(notification, payload) {
     if (notification === "GET_SPC_DATA") {
-      const { lat, lon, extended, updateInterval } = payload;
+      const { lat, lon, extended, updateInterval, proximityWeighting } = payload;
       if (updateInterval === undefined) {
         if (!this._loggedIntervalFallback) {
           Log.info("MMM-SPCOutlook: GET_SPC_DATA missing updateInterval, defaulting to 60 minutes");
@@ -39,6 +40,7 @@ module.exports = NodeHelper.create({
       } else {
         this._updateInterval = updateInterval;
       }
+      this._proximityWeighting = proximityWeighting === true;
       const md = await this.getMesoscaleDiscussion(lat, lon);
       const outlook = await this.getSpcOutlook(lat, lon, extended);
       // Send the results back to your front-end module
@@ -117,6 +119,81 @@ module.exports = NodeHelper.create({
       }
     });
     return best;
+  },
+
+  /**
+   * computeProximity — distance-weighted proximity to higher-tier polygons via linear falloff (40 km cutoff).
+   * @param items - array of { label, value, poly, line } — `line` is pre-derived by caller
+   *                via turf.polygonToLine and memoized on _geoJsonCache entries (Plan 12-03)
+   * @param loc - turf point representing the query location
+   * @param currentValue - the user's current tier value (e.g. result of evaluatePolygons against same items)
+   * @param comparator - object with { initial, comparator(best, value) } shape; used to identify "higher tier" items
+   * @returns { value: number, nextTier: string } when a higher-tier polygon is within 40 km, else null
+   *
+   * value = currentValue + weight, where weight = max(0, 1 - d_km/40), strictly capped below 1.
+   * When two or more higher-tier polygons are within 40 km, the polygon producing the max weight wins;
+   * nextTier is that winning polygon's label. Strict cap is enforced by gating on d_km > 0 (per D-07):
+   * weight = 1 only at d = 0, which is excluded — a user on a higher-tier boundary is treated as inside it.
+   *
+   * IMPORTANT: this helper does NOT call turf.polygonToLine. Each item must carry a pre-derived `line`
+   * (Feature<LineString> for Polygon source, FeatureCollection<LineString> for MultiPolygon source).
+   * Memoization of `line` per cache entry is owned by Plan 12-03's call sites.
+   */
+  computeProximity(items, loc, currentValue, comparator){
+    let best = null;
+    items.forEach(({label, value, poly, line}) => {
+      // D-08: comparator-driven "higher tier" check — uniform across catComparator and cigComparator
+      if (comparator.comparator(currentValue, value) === currentValue) return;
+
+      // D-07: strict cap below 1. If the user is inside (or on the boundary of) the higher-tier
+      // polygon, treat as already inside that tier and skip — no proximity contribution. This
+      // covers both d_km === 0 and the practical case where turf's spherical distance reports a
+      // tiny epsilon for points on a straight (but spherically curved) polygon edge.
+      if (poly && turf.booleanPointInPolygon(loc, poly)) return;
+
+      // Branch on Feature<LineString> vs FeatureCollection<LineString>; min distance across features
+      const lineFeatures = (line && line.type === "FeatureCollection") ? line.features : [line];
+      let dKm = Infinity;
+      for (const lf of lineFeatures) {
+        const d = turf.pointToLineDistance(loc, lf, { units: "kilometers" });
+        if (d < dKm) dKm = d;
+      }
+
+      // Belt-and-suspenders d_km > 0 gate (per D-07 simplest-implementation note)
+      if (!(dKm > 0)) return;
+
+      const weight = Math.max(0, 1 - dKm / 40);
+      if (weight <= 0) return;
+
+      if (best === null || weight > best.weight) {
+        best = { weight, label };
+      }
+    });
+
+    // PROX-06 / D-14: null when no higher-tier polygon contributed within 40 km
+    if (best === null) return null;
+    return { value: currentValue + best.weight, nextTier: best.label };
+  },
+
+  /**
+   * Ensure a _geoJsonCache entry has a `lines` array of items annotated with pre-derived
+   * line geometry. If `entry.lines` already exists, return it. Otherwise derive lines from
+   * `entry.polys` via turf.polygonToLine, write the array back to the entry, and return it.
+   * Used by Plan 12-03 cache-hit branches so that proximity weighting toggled false→true
+   * lazily fills `lines` on first hit; subsequent hits are O(1). PROX-05.
+   * @param entry - cache entry from this._geoJsonCache.get(url); must have a `polys` field
+   * @returns array of { label, value, poly, line } items ready for computeProximity, or null
+   */
+  deriveLinesIfMissing(entry) {
+    if (entry.lines) return entry.lines;
+    if (!entry.polys) return null;
+    entry.lines = entry.polys.map(item => ({
+      label: item.label,
+      value: item.value,
+      poly: item.poly,
+      line: turf.polygonToLine(item.poly)
+    }));
+    return entry.lines;
   },
 
   /**
@@ -252,6 +329,7 @@ module.exports = NodeHelper.create({
     let risk = 0;
     let cig = 0;
     let stale = false;
+    let cigProximity = null;
 
     const fetchResult = await this.fetchGeoJsonCached(url);
     if (fetchResult.stale) stale = true;
@@ -279,6 +357,13 @@ module.exports = NodeHelper.create({
       if (cigFetch.stale) stale = true;
       if (cigFetch.data === null && cigFetch.cachedResult !== null) {
         cig = cigFetch.cachedResult;
+        if (this._proximityWeighting) {
+          const cachedEntry = this._geoJsonCache.get(cigUrl);
+          if (cachedEntry && cachedEntry.polys) {
+            const lines = this.deriveLinesIfMissing(cachedEntry);
+            cigProximity = this.computeProximity(lines, loc, cig, cigComparator);
+          }
+        }
       } else if (cigFetch.data !== null) {
         const cigPolys = this.extractPolygons(
           cigFetch.data,
@@ -286,17 +371,28 @@ module.exports = NodeHelper.create({
           (label, val) => val > 0
         );
         cig = this.evaluatePolygons(cigPolys, loc, cigComparator);
+        let cigLines = null;
+        if (this._proximityWeighting) {
+          cigLines = cigPolys.map(item => ({
+            label: item.label,
+            value: item.value,
+            poly: item.poly,
+            line: turf.polygonToLine(item.poly)
+          }));
+          cigProximity = this.computeProximity(cigLines, loc, cig, cigComparator);
+        }
         this._geoJsonCache.set(cigUrl, {
           mode: cigFetch.mode,
           etag: cigFetch.newEtag ?? null,
           hash: cigFetch.newHash ?? null,
           result: cig,
-          timestamp: Date.now()
+          timestamp: Date.now(),
+          ...(this._proximityWeighting ? { polys: cigPolys, lines: cigLines } : {})
         });
       }
     }
 
-    return { risk, cig, stale };
+    return { risk, cig, stale, cigProximity };
   },
 
   /**
@@ -383,6 +479,18 @@ module.exports = NodeHelper.create({
 
       const loc = turf.point([lon, lat]);
 
+      // Assemble dayN.proximity from per-hazard locals; omits null entries (D-04).
+      // Returns {} when all entries are null (subtree omitted entirely),
+      // else { proximity: {<resolved keys only>} } — spreadable into a day literal.
+      const buildProximitySubtree = (entries) => {
+        const resolved = {};
+        for (const [key, val] of Object.entries(entries)) {
+          if (val !== null && val !== undefined) resolved[key] = val;
+        }
+        if (Object.keys(resolved).length === 0) return {};
+        return { proximity: resolved };
+      };
+
       let anyStale = false;
 
       //Day 1
@@ -390,34 +498,59 @@ module.exports = NodeHelper.create({
       //Day 1 Cat
       let day1RiskResult;
       let day1Risk;
+      let day1CatProximity = null;
       {
         const fetchResult = await this.fetchGeoJsonCached(day1CatURL);
         if (fetchResult.stale) anyStale = true;
         if (fetchResult.data === null && fetchResult.cachedResult !== null) {
           day1RiskResult = fetchResult.cachedResult;
+          if (this._proximityWeighting) {
+            const cachedEntry = this._geoJsonCache.get(day1CatURL);
+            if (cachedEntry && cachedEntry.polys) {
+              const lines = this.deriveLinesIfMissing(cachedEntry);
+              day1CatProximity = this.computeProximity(lines, loc, day1RiskResult, catComparator);
+            }
+          }
         } else if (fetchResult.data === null) {
           day1RiskResult = 0;
         } else {
           const gj = fetchResult.data;
           const day1RiskPoly = this.extractPolygons(gj, label => riskToValue[label] || 0, (label, val) => val > 0);
           day1RiskResult = this.evaluatePolygons(day1RiskPoly, loc, catComparator);
-          this._geoJsonCache.set(day1CatURL, { mode: fetchResult.mode, etag: fetchResult.newEtag ?? null, hash: fetchResult.newHash ?? null, result: day1RiskResult, timestamp: Date.now() });
+          let day1RiskLines = null;
+          if (this._proximityWeighting) {
+            day1RiskLines = day1RiskPoly.map(item => ({
+              label: item.label,
+              value: item.value,
+              poly: item.poly,
+              line: turf.polygonToLine(item.poly)
+            }));
+            day1CatProximity = this.computeProximity(day1RiskLines, loc, day1RiskResult, catComparator);
+          }
+          this._geoJsonCache.set(day1CatURL, {
+            mode: fetchResult.mode,
+            etag: fetchResult.newEtag ?? null,
+            hash: fetchResult.newHash ?? null,
+            result: day1RiskResult,
+            timestamp: Date.now(),
+            ...(this._proximityWeighting ? { polys: day1RiskPoly, lines: day1RiskLines } : {})
+          });
         }
         day1Risk = day1RiskResult === 0 ? "NONE" : valueToRisk[day1RiskResult];
       }
   
       // Day 1 Torn
-      const { risk: day1TorRisk, cig: day1TorCig, stale: s1Tor } =
+      const { risk: day1TorRisk, cig: day1TorCig, stale: s1Tor, cigProximity: day1TorCigProximity } =
         await this.fetchAndEvaluateHazard(day1TorURL, day1CigTorURL, loc, percComparator, cigComparator, cigToTier);
       if (s1Tor) anyStale = true;
 
       // Day 1 Hail
-      const { risk: day1HailRisk, cig: day1HailCig, stale: s1Hail } =
+      const { risk: day1HailRisk, cig: day1HailCig, stale: s1Hail, cigProximity: day1HailCigProximity } =
         await this.fetchAndEvaluateHazard(day1HailURL, day1CigHailURL, loc, percComparator, cigComparator, cigToTier);
       if (s1Hail) anyStale = true;
 
       // Day 1 Wind
-      const { risk: day1WindRisk, cig: day1WindCig, stale: s1Wind } =
+      const { risk: day1WindRisk, cig: day1WindCig, stale: s1Wind, cigProximity: day1WindCigProximity } =
         await this.fetchAndEvaluateHazard(day1WindURL, day1CigWindURL, loc, percComparator, cigComparator, cigToTier);
       if (s1Wind) anyStale = true;
 
@@ -429,34 +562,59 @@ module.exports = NodeHelper.create({
       //Day 2 Cat
       let day2RiskResult;
       let day2Risk;
+      let day2CatProximity = null;
       {
         const fetchResult = await this.fetchGeoJsonCached(day2CatURL);
         if (fetchResult.stale) anyStale = true;
         if (fetchResult.data === null && fetchResult.cachedResult !== null) {
           day2RiskResult = fetchResult.cachedResult;
+          if (this._proximityWeighting) {
+            const cachedEntry = this._geoJsonCache.get(day2CatURL);
+            if (cachedEntry && cachedEntry.polys) {
+              const lines = this.deriveLinesIfMissing(cachedEntry);
+              day2CatProximity = this.computeProximity(lines, loc, day2RiskResult, catComparator);
+            }
+          }
         } else if (fetchResult.data === null) {
           day2RiskResult = 0;
         } else {
           const gj = fetchResult.data;
-          const poly = this.extractPolygons(gj, label => riskToValue[label] || 0, (label, val) => val > 0);
-          day2RiskResult = this.evaluatePolygons(poly, loc, catComparator);
-          this._geoJsonCache.set(day2CatURL, { mode: fetchResult.mode, etag: fetchResult.newEtag ?? null, hash: fetchResult.newHash ?? null, result: day2RiskResult, timestamp: Date.now() });
+          const day2RiskPoly = this.extractPolygons(gj, label => riskToValue[label] || 0, (label, val) => val > 0);
+          day2RiskResult = this.evaluatePolygons(day2RiskPoly, loc, catComparator);
+          let day2RiskLines = null;
+          if (this._proximityWeighting) {
+            day2RiskLines = day2RiskPoly.map(item => ({
+              label: item.label,
+              value: item.value,
+              poly: item.poly,
+              line: turf.polygonToLine(item.poly)
+            }));
+            day2CatProximity = this.computeProximity(day2RiskLines, loc, day2RiskResult, catComparator);
+          }
+          this._geoJsonCache.set(day2CatURL, {
+            mode: fetchResult.mode,
+            etag: fetchResult.newEtag ?? null,
+            hash: fetchResult.newHash ?? null,
+            result: day2RiskResult,
+            timestamp: Date.now(),
+            ...(this._proximityWeighting ? { polys: day2RiskPoly, lines: day2RiskLines } : {})
+          });
         }
         day2Risk = day2RiskResult === 0 ? "NONE" : valueToRisk[day2RiskResult];
       }
 
       // Day 2 Torn
-      const { risk: day2TorRisk, cig: day2TorCig, stale: s2Tor } =
+      const { risk: day2TorRisk, cig: day2TorCig, stale: s2Tor, cigProximity: day2TorCigProximity } =
         await this.fetchAndEvaluateHazard(day2TorURL, day2CigTorURL, loc, percComparator, cigComparator, cigToTier);
       if (s2Tor) anyStale = true;
 
       // Day 2 Hail
-      const { risk: day2HailRisk, cig: day2HailCig, stale: s2Hail } =
+      const { risk: day2HailRisk, cig: day2HailCig, stale: s2Hail, cigProximity: day2HailCigProximity } =
         await this.fetchAndEvaluateHazard(day2HailURL, day2CigHailURL, loc, percComparator, cigComparator, cigToTier);
       if (s2Hail) anyStale = true;
 
       // Day 2 Wind
-      const { risk: day2WindRisk, cig: day2WindCig, stale: s2Wind } =
+      const { risk: day2WindRisk, cig: day2WindCig, stale: s2Wind, cigProximity: day2WindCigProximity } =
         await this.fetchAndEvaluateHazard(day2WindURL, day2CigWindURL, loc, percComparator, cigComparator, cigToTier);
       if (s2Wind) anyStale = true;
 
@@ -467,18 +625,43 @@ module.exports = NodeHelper.create({
       //Day 3 Cat
       let day3RiskResult;
       let day3Risk;
+      let day3CatProximity = null;
       {
         const fetchResult = await this.fetchGeoJsonCached(day3CatURL);
         if (fetchResult.stale) anyStale = true;
         if (fetchResult.data === null && fetchResult.cachedResult !== null) {
           day3RiskResult = fetchResult.cachedResult;
+          if (this._proximityWeighting) {
+            const cachedEntry = this._geoJsonCache.get(day3CatURL);
+            if (cachedEntry && cachedEntry.polys) {
+              const lines = this.deriveLinesIfMissing(cachedEntry);
+              day3CatProximity = this.computeProximity(lines, loc, day3RiskResult, catComparator);
+            }
+          }
         } else if (fetchResult.data === null) {
           day3RiskResult = 0;
         } else {
           const gj = fetchResult.data;
-          const poly = this.extractPolygons(gj, label => riskToValue[label] || 0, (label, val) => val > 0);
-          day3RiskResult = this.evaluatePolygons(poly, loc, catComparator);
-          this._geoJsonCache.set(day3CatURL, { mode: fetchResult.mode, etag: fetchResult.newEtag ?? null, hash: fetchResult.newHash ?? null, result: day3RiskResult, timestamp: Date.now() });
+          const day3RiskPoly = this.extractPolygons(gj, label => riskToValue[label] || 0, (label, val) => val > 0);
+          day3RiskResult = this.evaluatePolygons(day3RiskPoly, loc, catComparator);
+          let day3RiskLines = null;
+          if (this._proximityWeighting) {
+            day3RiskLines = day3RiskPoly.map(item => ({
+              label: item.label,
+              value: item.value,
+              poly: item.poly,
+              line: turf.polygonToLine(item.poly)
+            }));
+            day3CatProximity = this.computeProximity(day3RiskLines, loc, day3RiskResult, catComparator);
+          }
+          this._geoJsonCache.set(day3CatURL, {
+            mode: fetchResult.mode,
+            etag: fetchResult.newEtag ?? null,
+            hash: fetchResult.newHash ?? null,
+            result: day3RiskResult,
+            timestamp: Date.now(),
+            ...(this._proximityWeighting ? { polys: day3RiskPoly, lines: day3RiskLines } : {})
+          });
         }
         day3Risk = day3RiskResult === 0 ? "NONE" : valueToRisk[day3RiskResult];
       }
@@ -500,15 +683,40 @@ module.exports = NodeHelper.create({
         }
       }
       let day3Cig = 0;
+      let day3CigProximity = null;
       if (day3ProbRisk > 0) {
         const fetchResult = await this.fetchGeoJsonCached(day3CigUrl);
         if (fetchResult.stale) anyStale = true;
         if (fetchResult.data === null && fetchResult.cachedResult !== null) {
           day3Cig = fetchResult.cachedResult;
+          if (this._proximityWeighting) {
+            const cachedEntry = this._geoJsonCache.get(day3CigUrl);
+            if (cachedEntry && cachedEntry.polys) {
+              const lines = this.deriveLinesIfMissing(cachedEntry);
+              day3CigProximity = this.computeProximity(lines, loc, day3Cig, cigComparator);
+            }
+          }
         } else if (fetchResult.data !== null) {
           const cigPolys = this.extractPolygons(fetchResult.data, label => cigToTier[label] || 0, (label, val) => val > 0);
           day3Cig = this.evaluatePolygons(cigPolys, loc, cigComparator);
-          this._geoJsonCache.set(day3CigUrl, { mode: fetchResult.mode, etag: fetchResult.newEtag ?? null, hash: fetchResult.newHash ?? null, result: day3Cig, timestamp: Date.now() });
+          let cigLines = null;
+          if (this._proximityWeighting) {
+            cigLines = cigPolys.map(item => ({
+              label: item.label,
+              value: item.value,
+              poly: item.poly,
+              line: turf.polygonToLine(item.poly)
+            }));
+            day3CigProximity = this.computeProximity(cigLines, loc, day3Cig, cigComparator);
+          }
+          this._geoJsonCache.set(day3CigUrl, {
+            mode: fetchResult.mode,
+            etag: fetchResult.newEtag ?? null,
+            hash: fetchResult.newHash ?? null,
+            result: day3Cig,
+            timestamp: Date.now(),
+            ...(this._proximityWeighting ? { polys: cigPolys, lines: cigLines } : {})
+          });
         }
       }
 
@@ -635,7 +843,13 @@ module.exports = NodeHelper.create({
            "hailRisk": day1HailRisk,
            "hailCig": day1HailCig,
            "windRisk": day1WindRisk,
-           "windCig": day1WindCig
+           "windCig": day1WindCig,
+           ...buildProximitySubtree({
+             categorical: day1CatProximity,
+             torCig: day1TorCigProximity,
+             hailCig: day1HailCigProximity,
+             windCig: day1WindCigProximity
+           })
           },
           day2: {
             "risk": day2Risk,
@@ -647,14 +861,24 @@ module.exports = NodeHelper.create({
             "hailRisk": day2HailRisk,
             "hailCig": day2HailCig,
             "windRisk": day2WindRisk,
-            "windCig": day2WindCig
+            "windCig": day2WindCig,
+            ...buildProximitySubtree({
+              categorical: day2CatProximity,
+              torCig: day2TorCigProximity,
+              hailCig: day2HailCigProximity,
+              windCig: day2WindCigProximity
+            })
           },
           day3: {
           "risk": day3Risk,
           "text": valueToFullRisk[day3Risk],
           "color": riskToColor[day3Risk],
           "probRisk": day3ProbRisk,
-          "cig": day3Cig
+          "cig": day3Cig,
+          ...buildProximitySubtree({
+            categorical: day3CatProximity,
+            cig: day3CigProximity
+          })
           },
           fireWeather: {
             day1Risk: day1FireRisk,
@@ -803,7 +1027,13 @@ module.exports = NodeHelper.create({
            "hailRisk": day1HailRisk,
            "hailCig": day1HailCig,
            "windRisk": day1WindRisk,
-           "windCig": day1WindCig
+           "windCig": day1WindCig,
+           ...buildProximitySubtree({
+             categorical: day1CatProximity,
+             torCig: day1TorCigProximity,
+             hailCig: day1HailCigProximity,
+             windCig: day1WindCigProximity
+           })
           },
           day2: {
             "risk": day2Risk,
@@ -815,14 +1045,24 @@ module.exports = NodeHelper.create({
             "hailRisk": day2HailRisk,
             "hailCig": day2HailCig,
             "windRisk": day2WindRisk,
-            "windCig": day2WindCig
+            "windCig": day2WindCig,
+            ...buildProximitySubtree({
+              categorical: day2CatProximity,
+              torCig: day2TorCigProximity,
+              hailCig: day2HailCigProximity,
+              windCig: day2WindCigProximity
+            })
           },
           day3: {
           "risk": day3Risk,
           "text": valueToFullRisk[day3Risk],
           "color": riskToColor[day3Risk],
           "probRisk": day3ProbRisk,
-          "cig": day3Cig
+          "cig": day3Cig,
+          ...buildProximitySubtree({
+            categorical: day3CatProximity,
+            cig: day3CigProximity
+          })
           },
         day4: {
           "risk": day4Risk,
