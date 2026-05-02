@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: QoL Enhancements
-status: executing
-stopped_at: Completed 11-02-PLAN.md (Phase 11 complete)
-last_updated: "2026-04-25T17:35:48Z"
-last_activity: 2026-04-25 -- Plan 11-02 complete; Phase 11 complete
+status: verifying
+stopped_at: Completed 12-03-PLAN.md
+last_updated: "2026-04-26T02:19:46.200Z"
+last_activity: 2026-04-26
 progress:
   total_phases: 3
-  completed_phases: 1
-  total_plans: 2
-  completed_plans: 2
+  completed_phases: 2
+  total_plans: 5
+  completed_plans: 5
   percent: 100
 ---
 
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-25)
 
 **Core value:** Accurately and efficiently tell the user if they're in a weather risk zone right now — no false negatives, no unnecessary CPU burn on the RPi.
-**Current focus:** Phase 11 — Stale Data Indicator
+**Current focus:** Phase 12 — proximity-backend-foundation
 
 ## Current Position
 
-Phase: 11 (Stale Data Indicator) — COMPLETE
-Plan: 2 of 2 (Phase 11 done; Phase 12 next)
-Status: Phase 11 complete — STALE-01/02/03 shipped
-Last activity: 2026-04-25 -- Plan 11-02 complete; Phase 11 complete
+Phase: 12 (proximity-backend-foundation) — EXECUTING
+Plan: 3 of 3
+Status: Phase complete — ready for verification
+Last activity: 2026-04-26
 
 ## Performance Metrics
 
@@ -44,6 +44,9 @@ Last activity: 2026-04-25 -- Plan 11-02 complete; Phase 11 complete
 |------|----------|-------|-------|
 | 11-01 | 5min | 1 | 1 |
 | 11-02 | 2min | 2 | 1 |
+| 12-01 | 3min | 2 | 1 |
+| 12-02 | 1min | 2 | 2 |
+| Phase 12 P03 | 4min | 3 tasks | 1 files |
 
 ## Accumulated Context
 
@@ -69,6 +72,17 @@ See `.planning/PROJECT.md` — all key decisions from v1.0 and v1.1 recorded the
 | Added `updateInterval` to both `GET_SPC_DATA` payload literals (start + setInterval) | 11-02 | Cross-file invariant with 11-01; both sites must change together to close the contract |
 | Stale indicator via inline `<span style="color:#FFCC00">⚠ Stale — <fromNow></span>` in data-bearing else-branch | 11-02 | Matches existing colored-span pattern; no CSS file added (D-08); placement satisfies ROADMAP success criterion 4 |
 | `isFinite(asOf)` guard + negative-delta short-circuit to "just now" | 11-02 | D-11 + D-12: defensive against invalid timestamps and clock skew |
+| `computeProximity` consumes pre-derived `item.line`; no `turf.polygonToLine` inside helper | 12-01 | Keeps helper pure compute; PROX-05 O(1)-per-render delegated to Plan 12-03's cache-level memoization |
+| Boundary-safe strict cap via `turf.booleanPointInPolygon` pre-check (over D-07's `d_km > 0` gate alone) | 12-01 | turf spherical `pointToLineDistance` returns ~3m epsilon for points on straight polygon edges; pre-check catches boundary AND interior cases robustly |
+| Comparator-driven higher-tier filter (`comparator.comparator(currentValue, value) === currentValue` skip) | 12-01 | D-08 / D-13: uniform helper across `catComparator` and `cigComparator`; no hardcoded `>` |
+| Strict-true coerce (`=== true`) for `proximityWeighting` at destructure boundary | 12-02 | D-11; mitigates T-12-03 type-confusion tampering — only literal `true` enables proximity, all other values (undefined/null/0/'true'/{}) resolve to `false` |
+| No `_loggedProximityFallback` log on missing `proximityWeighting` | 12-02 | D-14 §Claude's Discretion; default-off is the legitimate state, logging on every cold-start tick would flood the journal |
+| Both `GET_SPC_DATA` payload literals (start + setInterval) updated together for `proximityWeighting` | 12-02 | Cross-file invariant mirrored from 11-02; never one without the other |
+| Cache-level memoization split (eager-on-miss + lazy-on-toggle via `deriveLinesIfMissing`) | 12-03 | PROX-05 amortized O(1)-per-render: `lines` either eagerly derived at fetch-miss when flag is on, or lazily filled on first cache-hit and written back to entry; subsequent hits are O(1) |
+| `polys` + `lines` as `_geoJsonCache` field names (additive, only written when flag is true) | 12-03 | Conditional spread `...(this._proximityWeighting ? { polys, lines } : {})` preserves default-off byte-identity; field names parallel existing `result` |
+| `buildProximitySubtree` placed at top of `getSpcOutlook` (after `const loc`, before `let anyStale`) | 12-03 | W7: closure must be visible to BOTH `!extended` and `extended` return branches; placing inside `if (!extended)` would scope it incorrectly |
+| Local-name parity rename strategy (a) for Day 2/3 cat blocks: `poly` → `dayNRiskPoly` | 12-03 | Uniform pattern across all three days; cache-spread reads `polys: dayNRiskPoly` consistently |
+| Default-off byte-identity via null-omission: `buildProximitySubtree({all-null})` returns `{}` (no-op spread) | 12-03 | When `proximityWeighting` is false, every per-hazard local stays null, helper produces `{}`, payload shape byte-identical to pre-Phase-12 |
 
 ### Pending Todos
 
@@ -80,8 +94,8 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-04-25T17:35:48Z
-Stopped at: Completed 11-02-PLAN.md (Phase 11 complete)
-Resume file: None
+Last session: 2026-05-02
+Stopped at: Phase 12 landed in main (3-commit sequence); proceeding to /gsd-secure-phase 12 then /gsd-discuss-phase 13
+Resume file: None (HANDOFF.json + .continue-here.md cleared)
 
 **Planned Phase:** 11 (Stale Data Indicator) — 2 plans — 2026-04-25T17:29:05.034Z

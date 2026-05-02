@@ -17,12 +17,12 @@ Predecessor milestones: v1.0 (Refactor & Feature Update, shipped 2026-03-12), v1
 
 ### Proximity Backend (PROX)
 
-- [ ] **PROX-01**: New `computeProximity(items, loc, currentValue, comparator)` helper computes a weighted value via linear falloff with 40 km cutoff (`weight = max(0, 1 − d_km/40)`), capped strictly below the next tier integer
-- [ ] **PROX-02**: `proximityWeighting` boolean is threaded from frontend through `GET_SPC_DATA` payload to `getSpcOutlook` → `fetchAndEvaluateHazard` and the inlined Day 3 blocks; default false
-- [ ] **PROX-03**: Per-`dayN` `proximity` subtree is emitted for Convective Day 1–3 categorical when `proximityWeighting` is true (suppressed otherwise)
-- [ ] **PROX-04**: Per-`dayN` `proximity` subtree includes per-hazard CIG entries (Day 1/2 torCig/hailCig/windCig + Day 3 cig) when `proximityWeighting` is true
-- [ ] **PROX-05**: `_geoJsonCache` entries are extended additively to memoize the flattened-line polygon representation alongside the scalar value (no recompute per render)
-- [ ] **PROX-06**: Helper returns `null` and frontend suppresses the badge when no higher tier polygon exists for the day (e.g. inside HIGH, quiet day)
+- [x] **PROX-01**: New `computeProximity(items, loc, currentValue, comparator)` helper computes a weighted value via linear falloff with 40 km cutoff (`weight = max(0, 1 − d_km/40)`), capped strictly below the next tier integer
+- [x] **PROX-02**: `proximityWeighting` boolean is threaded from frontend through `GET_SPC_DATA` payload to `getSpcOutlook` → `fetchAndEvaluateHazard` and the inlined Day 3 blocks; default false
+- [x] **PROX-03**: Per-`dayN` `proximity` subtree is emitted for Convective Day 1–3 categorical when `proximityWeighting` is true (suppressed otherwise)
+- [x] **PROX-04**: Per-`dayN` `proximity` subtree includes per-hazard CIG entries (Day 1/2 torCig/hailCig/windCig + Day 3 cig) when `proximityWeighting` is true
+- [x] **PROX-05**: `_geoJsonCache` entries are extended additively to memoize the flattened-line polygon representation alongside the scalar value (no recompute per render)
+- [x] **PROX-06**: Helper returns `null` and frontend suppresses the badge when no higher tier polygon exists for the day (e.g. inside HIGH, quiet day)
 
 ### Proximity Frontend (PROXUI)
 

@@ -37,7 +37,7 @@ Full details: `.planning/milestones/v1.1-ROADMAP.md`
 ### v1.2 QoL Enhancements (Phases 11–13) — IN PROGRESS
 
 - [x] **Phase 11: Stale Data Indicator** — Fix latent stale-window bug and surface a freshness warning in the display (completed 2026-04-25)
-- [ ] **Phase 12: Proximity Backend Foundation** — Compute and emit per-day proximity-weighted risk subtree from `node_helper`
+- [x] **Phase 12: Proximity Backend Foundation** — Compute and emit per-day proximity-weighted risk subtree from `node_helper` (completed 2026-04-26)
 - [ ] **Phase 13: Proximity Frontend Render** — Render inside/outside-tier and CIG proximity badges, gated on the new config flag
 
 ## Phase Details
@@ -66,9 +66,10 @@ Full details: `.planning/milestones/v1.1-ROADMAP.md`
   3. Computed weights use linear falloff with a 40 km cutoff (`weight = max(0, 1 − d_km/40)`) and are strictly capped below the next-tier integer.
   4. When no higher-tier polygon exists for a given day/hazard, the helper returns `null` (no spurious subtree entries).
   5. Polygon-to-line conversions are memoized inside `_geoJsonCache` entries so per-render turf cost stays at O(1) for unchanged inputs.
-**Plans**: 2 plans
-- [ ] 11-01-PLAN.md — Backend interval threading bug fix (STALE-01)
-- [ ] 11-02-PLAN.md — Frontend payload + stale indicator render (STALE-02, STALE-03)
+**Plans**: 3 plans
+- [x] 12-01-PLAN.md — computeProximity helper + cache polys/lines memoization (PROX-01, PROX-05)
+- [x] 12-02-PLAN.md — proximityWeighting flag threading frontend → backend (PROX-02)
+- [x] 12-03-PLAN.md — Wire computeProximity into Day 1/2/3 categorical + CIG; emit dayN.proximity subtree (PROX-03, PROX-04, PROX-06)
 
 ### Phase 13: Proximity Frontend Render
 **Goal**: User sees adjacent-tier proximity badges inline with existing risk text on Day 1/2/3 categorical and CIG rows when proximity weighting is enabled.
@@ -80,9 +81,7 @@ Full details: `.planning/milestones/v1.1-ROADMAP.md`
   3. When the user is outside all categorical tiers but a tier polygon is within 40 km, an inline `W.W (near TIER)` badge is rendered.
   4. Per-hazard CIG badges (Day 1/2 tor/hail/wind, Day 3 cig) render alongside existing `cigLabel` output using the same primitive.
   5. Weights are displayed rounded to one decimal; badges below the noise threshold are suppressed so the display does not flicker between updates.
-**Plans**: 2 plans
-- [ ] 11-01-PLAN.md — Backend interval threading bug fix (STALE-01)
-- [ ] 11-02-PLAN.md — Frontend payload + stale indicator render (STALE-02, STALE-03)
+**Plans**: TBD — to be designed during `/gsd-discuss-phase 13`
 **UI hint**: yes
 
 ## Progress
@@ -100,5 +99,5 @@ Full details: `.planning/milestones/v1.1-ROADMAP.md`
 | 9. Backend Implementation | v1.1 | 1/1 | Complete | 2026-03-21 |
 | 10. Display Implementation | v1.1 | 1/1 | Complete | 2026-03-21 |
 | 11. Stale Data Indicator | v1.2 | 2/2 | Complete | 2026-04-25 |
-| 12. Proximity Backend Foundation | v1.2 | 0/0 | Not started | — |
+| 12. Proximity Backend Foundation | v1.2 | 3/3 | Complete   | 2026-04-26 |
 | 13. Proximity Frontend Render | v1.2 | 0/0 | Not started | — |
