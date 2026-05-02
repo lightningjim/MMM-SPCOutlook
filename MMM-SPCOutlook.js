@@ -45,6 +45,13 @@
       return "";
     };
     const fireRiskToColor = { 0: "aaaaaa", 1: "FF7F00", 2: "FF0000", 3: "FF00FF" };
+    const PROX_MIN_WEIGHT = 0.1;
+    const cigLabelFromTierString = (tier) => {
+      if (tier === "CIG3") return "③";
+      if (tier === "CIG2") return "②";
+      if (tier === "CIG1") return "①";
+      return "";
+    };
     const wrapper = document.createElement("div");
     if (!this.spcrisk) {
       wrapper.innerHTML = "Loading SPC Outlook...";
