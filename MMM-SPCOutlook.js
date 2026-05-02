@@ -131,10 +131,13 @@
         if (this.spcrisk.day2.windRisk > 0) probRiskHTML += "<i class=\"wi wi-strong-wind\"></i>" + cigLabel(this.spcrisk.day2.windCig) + proximityBadge(this.spcrisk.day2.proximity?.windCig, this.spcrisk.day2.windCig === 0 ? "outside" : "inside") + 100 * this.spcrisk.day2.windRisk + "% ";
         wrapper.innerHTML += probRiskHTML+"<br/>";
       }}
-      if(this.spcrisk.day3.risk != "NONE") 
+      if(this.spcrisk.day3.risk != "NONE" || this.spcrisk.day3.proximity?.categorical || this.spcrisk.day3.proximity?.cig)
       {
-      wrapper.innerHTML += dowToText(dow+2) + " (Day 3): <span style=\"color:#" + this.spcrisk.day3.color + "\">" + this.spcrisk.day3.text + cigLabel(this.spcrisk.day3.cig) + "</span>";
-      wrapper.innerHTML += "<br/>";
+        const day3CatBadge = proximityBadge(this.spcrisk.day3.proximity?.categorical, this.spcrisk.day3.risk == "NONE" ? "outside" : "inside");
+        const day3CigBadge = proximityBadge(this.spcrisk.day3.proximity?.cig, this.spcrisk.day3.cig === 0 ? "outside" : "inside");
+        const day3DualSep = (day3CatBadge !== "" && day3CigBadge !== "") ? ";" : "";
+        wrapper.innerHTML += dowToText(dow+2) + " (Day 3): <span style=\"color:#" + this.spcrisk.day3.color + "\">" + this.spcrisk.day3.text + cigLabel(this.spcrisk.day3.cig) + day3CatBadge + day3DualSep + day3CigBadge + "</span>";
+        wrapper.innerHTML += "<br/>";
       }
       if(this.config.extended)
       {
