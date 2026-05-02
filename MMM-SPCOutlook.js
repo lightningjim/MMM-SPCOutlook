@@ -52,6 +52,19 @@
       if (tier === "CIG1") return "①";
       return "";
     };
+    const proximityBadge = (prox, mode) => {
+      if (!prox) return "";
+      if (typeof prox.value !== "number" || !isFinite(prox.value)) return "";
+      if (typeof prox.nextTier !== "string" || prox.nextTier.length === 0) return "";
+      const weight = prox.value - Math.trunc(prox.value);
+      if (weight < PROX_MIN_WEIGHT) return "";
+      const tierLabel = prox.nextTier.startsWith("CIG")
+        ? cigLabelFromTierString(prox.nextTier)
+        : prox.nextTier;
+      if (tierLabel === "") return "";
+      if (mode === "outside") return " " + weight.toFixed(1) + " (near " + tierLabel + ")";
+      return " → " + tierLabel + " " + weight.toFixed(1);
+    };
     const wrapper = document.createElement("div");
     if (!this.spcrisk) {
       wrapper.innerHTML = "Loading SPC Outlook...";
