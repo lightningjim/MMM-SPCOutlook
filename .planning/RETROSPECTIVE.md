@@ -91,9 +91,62 @@
 
 ---
 
+## Milestone: v1.2 — QoL Enhancements
+
+**Shipped:** 2026-05-03
+**Phases:** 3 | **Plans:** 8 | **Duration:** ~8 days (2026-04-25 → 2026-05-03)
+
+### What Was Built
+
+- **Stale data indicator** (Phase 11): Backend `_isWithinStaleWindow` corrected to honor user-configured `updateInterval` via `GET_SPC_DATA` payload threading (fixed latent 60-min default bug); frontend `⚠ Stale — N minutes ago` indicator at top of module wrapper sourcing relative time from `_staleAsOf` via vendored `moment` global with `isFinite` guard and clock-skew short-circuit.
+- **Proximity backend** (Phase 12): `computeProximity()` distance-weighted helper with linear 40 km falloff and boundary-safe strict cap via `turf.booleanPointInPolygon` pre-check; polygon→line cache memoization (`deriveLinesIfMissing`) for amortized O(1) per-render cost; additive `dayN.proximity` subtree emission for Day 1–3 categorical + per-hazard CIG, gated by `proximityWeighting` (default false) with strict-true coerce at destructure boundary.
+- **Proximity frontend** (Phase 13): Inside-tier `→ ENH 0.7`, outside-tier `0.6 (near SLGT)`, per-hazard CIG glyphs (`①②③`), Day 3 dual-badge with semicolon separator inside colored span, noise-floor flicker suppression at `PROX_MIN_WEIGHT = 0.1`. All 10 wiring sites route through one `proximityBadge(prox, mode)` helper.
+- **Default-off byte-identity invariant**: With `proximityWeighting: false` (default), DOM and payload shape are byte-identical to pre-v1.2; verified end-to-end via static analysis, behavioral simulation, and live MagicMirror² UAT.
+
+### What Worked
+
+- **Backend before frontend sequencing** (Phase 12 → 13) meant the frontend had a stable contract to render against. No payload-shape thrashing during Phase 13 wiring.
+- **Stale phase shipped first** (Phase 11) closed a latent bug independently of the larger proximity work, delivering value standalone and decoupling the two efforts.
+- **One centralizing helper for badge formatting** (`proximityBadge`) — 10 frontend call sites all route through one function, so noise floor (D-13), 1-decimal rounding (D-04), CIG glyph mapping, and inside/outside form selection live in one place.
+- **Explicit default-off byte-identity invariant** as a verification target meant every change was scrutinized for whether it preserved pre-v1.2 behavior. Caught the subtle issue where `buildProximitySubtree({all-null})` had to return `{}` not `{proximity: {}}` to keep the spread structurally inert.
+- **`/gsd-audit-milestone` integration checker** re-verified all 6 cross-phase boundaries WIRED and all 5 E2E flows PASS without re-running the per-phase verifiers.
+- **`/gsd-verify-work` for Phase 13** confirmed the human_needed live items (default-off DOM byte-identity, on-mode badge readability, noise-floor flicker suppression) in a single conversational session.
+
+### What Was Inefficient
+
+- **Phase 11 shipped without VERIFICATION.md** — same root-cause as v1.0's Phase 2 retroactive verification. The post-execute verifier wasn't yet in the standard chain when Phase 11 ran. Caught by `/gsd-audit-milestone`, backfilled retroactively via direct `gsd-verifier` invocation (no slash command exists for that operation).
+- **Bookkeeping debt at session interruption** — Phase 13 finished implementation cleanly but the session ran out of credits during the wrap-up step. ROADMAP.md progress table, REQUIREMENTS.md checkboxes, SUMMARY frontmatter `requirements_completed`, and `13-VERIFICATION.md` commit all accumulated as drift. `/gsd-progress` and `/gsd-audit-milestone` surfaced the gaps cleanly, but each one was a separate manual fix.
+- **`SUMMARY.md` `requirements_completed: []` empty for all three Phase 13 plans** — the executor agent didn't populate the frontmatter even though the plan-level `<requirements>` were stated. This is a small lint-level gap that the milestone audit caught only via 3-source cross-reference.
+- **Nyquist validation gate was on but not applicable** — `workflow.nyquist_validation: true` (default) flagged 3 phases as MISSING during the audit, but REQUIREMENTS.md explicitly out-of-scopes automated test framework. Resolved by setting the project config to `false`. Should have been disabled at project init given the manual-UAT-only verification strategy.
+
+### Patterns Established
+
+- **Retroactive VERIFICATION.md backfill via direct agent invocation** — when a phase ships without one, spawning `gsd-verifier` directly with explicit context (existing PLANs/SUMMARYs, integration-checker findings from milestone audit) produces a faithful artifact. No slash command exists for this operation; the agent is invoked through `Task()` directly.
+- **Audit-then-cleanup-then-close cycle** — `/gsd-audit-milestone` first surfaces every gap, manual cleanup commits each fix atomically, then `/gsd-complete-milestone` runs against a clean tree. Better than trying to close with drift outstanding.
+- **Default-off byte-identity as an opt-in feature invariant** — for any new opt-in feature, pin "with flag false, output is byte-identical to pre-feature" as a first-class verification target. Drives helpers to handle `undefined`/`null` cleanly via short-circuit, prevents structural payload changes from leaking into the disabled path.
+- **`gsd-integration-checker`'s value scales with cross-phase work** — for v1.2's 3 tightly-coupled phases (11 stale, 12 backend, 13 frontend with shape contract), the integration checker re-verified contract compatibility, default-off invariance, and STALE×PROX coexistence in one pass. For v1.1's 3 sequential phases (8 verify → 9 backend → 10 display), it had less to add.
+- **Live UAT can implicitly verify prior phases** — Phase 13's UAT (cold-start + module-loads-cleanly tests) implicitly exercised the Phase 11 stale render path on the live Pi. Acknowledged in `11-VERIFICATION.md` as lowering but not eliminating residual `human_needed` items.
+
+### Key Lessons
+
+1. **Disable Nyquist at project init when verification strategy is manual-UAT-only.** REQUIREMENTS.md should drive the `workflow.nyquist_validation` config; if "automated test framework" is in Out of Scope, set the gate to `false`. Otherwise every milestone audit flags MISSING phantom gaps.
+2. **Make verifier the last task of every execute-phase, not an optional follow-up.** Phase 11 shipped without VERIFICATION.md because the post-execute verifier wasn't standard at the time. Required a direct agent invocation (no slash command) to backfill retroactively.
+3. **Session-credit-loss recovery has a known shape: bookkeeping drift > code defects.** When a session is cut off during wrap-up, the code is usually fine; what's stale is the documentation/state files. `/gsd-progress` is the right first move, then a quick audit, then targeted cleanup commits.
+4. **Pin "no slash command exists" gaps when discovered.** Backfilling VERIFICATION.md required raw `Task()` invocation. If this is a recurring need, consider proposing a `/gsd-backfill-verification <phase>` skill — but only if it stops being a one-off.
+5. **Default-off byte-identity is the right invariant for opt-in features in long-lived modules.** Existing users on `proximityWeighting:false` (the vast majority) saw zero change. New users opting in get all the new behavior. This invariant let v1.2 ship without any compatibility shim.
+
+### Cost Observations
+
+- Model mix: Sonnet 4.6 (executor + verifier + integration checker + plan-checker); Opus 4.6 (planner)
+- Sessions: ~3-4 (Phase 11 quick, Phase 12 single session, Phase 13 split across 2 sessions due to credit exhaustion mid-wrap-up)
+- Notable: The post-credit-loss recovery (audit + 11-VERIFICATION backfill + UAT + cleanup commits + milestone close) was lighter than expected because the v1.2 work was already verified — the second session was almost entirely artifact reconciliation, not fresh verification.
+
+---
+
 ## Cross-Milestone Trends
 
 | Milestone | Phases | Plans | Unplanned Gaps | Nyquist Compliant |
 |-----------|--------|-------|----------------|-------------------|
 | v1.0 | 7 (5 planned + 2 gap-closure) | 13 | 2 (Ph6, Ph7) | 1/7 |
 | v1.1 | 3 (all planned) | 3 | 0 | 0/3 |
+| v1.2 | 3 (all planned) | 8 | 0 | n/a (gate disabled mid-milestone — manual UAT is the project's strategy) |

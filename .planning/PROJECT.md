@@ -2,7 +2,7 @@
 
 ## What This Is
 
-A MagicMirror² module that uses geospatial math (turf.js) to determine whether the user's configured location falls within any active SPC (Storm Prediction Center) Convective Outlook risk zone, Fire Weather Risk area, or Mesoscale Discussion. It fetches live GeoJSON/KMZ data from NOAA SPC endpoints, runs point-in-polygon analysis on the backend, and renders risk levels with weather icons on the MagicMirror display. Runs on a Raspberry Pi-based MagicMirror. Shipped v1.1 with full Day 3–8 fire weather support (backend + display).
+A MagicMirror² module that uses geospatial math (turf.js) to determine whether the user's configured location falls within any active SPC (Storm Prediction Center) Convective Outlook risk zone, Fire Weather Risk area, or Mesoscale Discussion. It fetches live GeoJSON/KMZ data from NOAA SPC endpoints, runs point-in-polygon analysis on the backend, and renders risk levels with weather icons on the MagicMirror display. Runs on a Raspberry Pi-based MagicMirror. Shipped v1.2 with stale-data freshness indicator and opt-in distance-weighted proximity badges for adjacent-tier risk awareness.
 
 ## Core Value
 
@@ -30,24 +30,18 @@ Accurately and efficiently tell the user if they're in a weather risk zone right
 - ✓ Day 3–8 fire weather endpoint URLs confirmed live (all 12 HTTP 200); DN-based parsing strategy documented (FWXT-05) — v1.1
 - ✓ `getSpcOutlook()` fetches Day 3–8 fire weather via `fetchGeoJsonCached`, evaluates via DN-based parsing, populates `day3Risk`–`day8Risk` + `day3Text`–`day8Text` in both return paths (FWXT-01, FWXT-02, FWXT-04) — v1.1
 - ✓ Display per-day fire weather rows for Days 3–8, shown only when that day's risk > 0; no-risk guard extended to include Day 3–8 checks (FWXT-03) — v1.1
+- ✓ Backend `_isWithinStaleWindow` honors user-configured `updateInterval` threaded via `GET_SPC_DATA` payload (STALE-01) — v1.2
+- ✓ `⚠ Stale — N minutes ago` indicator at top of module wrapper, sourcing relative time from `_staleAsOf` via vendored `moment` global (STALE-02, STALE-03) — v1.2
+- ✓ `computeProximity()` distance-weighted helper with linear 40 km falloff and boundary-safe strict cap (PROX-01) — v1.2
+- ✓ `proximityWeighting` boolean threaded frontend → backend via both `GET_SPC_DATA` payloads with strict-true coerce; default false (PROX-02) — v1.2
+- ✓ Per-`dayN` proximity subtree (categorical + per-hazard CIG entries) emitted for Day 1–3 when flag is on; default-off remains byte-identical (PROX-03, PROX-04, PROX-06) — v1.2
+- ✓ `_geoJsonCache` polygon→line memoization via `deriveLinesIfMissing` for O(1) per-render cost (PROX-05) — v1.2
+- ✓ Inside-tier `→ ENH 0.7`, outside-tier `0.6 (near SLGT)`, per-hazard CIG glyph (`①②③`), and Day 3 dual-badge with semicolon separator (PROXUI-01..04) — v1.2
+- ✓ Noise-floor flicker suppression at `PROX_MIN_WEIGHT = 0.1` with `weight.toFixed(1)` rounding (PROXUI-05) — v1.2
 
 ### Active
 
-**Milestone v1.2 — QoL Enhancements**
-
-- Stale data indicator — surface backend `_stale`/`_staleAsOf` fields in display
-- Proximity-weighted risk awareness (config-toggleable, default off)
-  - Scope: Convective Day 1–3 categorical, CIG tiers (cigtorn/cighail/cigwind)
-  - Display: Adjacent-tier badge (e.g. `EHN → MDT 0.75` inside risk; `0.6 (near SLGT)` outside)
-  - Implementation: turf.js `pointToLineDistance`-based weighting; falloff function TBD via research
-
-## Current Milestone: v1.2 QoL Enhancements
-
-**Goal:** Make the at-a-glance display more informative — surface data freshness and adjacent-tier risk proximity.
-
-**Target features:**
-- Stale data indicator (consumes existing `_stale`/`_staleAsOf` backend fields)
-- Proximity-weighted risk awareness for Convective Day 1–3 + CIG tiers, opt-in via config, with adjacent-tier badge display
+**Next milestone — TBD** (define via `/gsd-new-milestone`)
 
 ### Out of Scope
 
@@ -55,10 +49,19 @@ Accurately and efficiently tell the user if they're in a weather risk zone right
 - Push notifications or alerts — display only
 - Historical outlook data — live/current data only
 - Non-SPC weather data sources — SPC products only
-- Stale data UI indicator — `_stale`/`_staleAsOf` backend fields exist; frontend never surfaces them (v2 candidate)
-- Automated test framework — no test infrastructure; not added in this pass
+- Automated test framework — manual UAT and static analysis is the project's verification strategy; `workflow.nyquist_validation` disabled
+- Per-row staleness UX — would require backend stale-aggregation refactor (deferred from v1.2)
+- Proximity weighting for Fire Weather (Day 1–8) and Convective Day 4–8 (deferred from v1.2)
+- User-configurable `proximityMaxKm` and `proximityMinWeight` knobs (deferred from v1.2)
+- Trend / predictive proximity — would require payload history (deferred from v1.2)
 
 ## Context
+
+**Shipped v1.2 — 2026-05-03**
+- 3 phases (11–13), 8 plans, 17 tasks, 36 commits over ~8 days
+- +333 insertions / -43 deletions across `MMM-SPCOutlook.js` and `node_helper.js`
+- All 14 v1.2 requirements satisfied (STALE-01..03, PROX-01..06, PROXUI-01..05)
+- Verification: 6/6 cross-phase boundaries WIRED, 5/5 E2E flows PASS, 7/7 live UAT tests pass
 
 **Shipped v1.1 — 2026-03-21**
 - 1,029 LOC total: `node_helper.js` (895 lines), `MMM-SPCOutlook.js` (134 lines)
@@ -71,9 +74,10 @@ Accurately and efficiently tell the user if they're in a weather risk zone right
 - 7 phases executed via GSD workflow over 8 days (2026-03-04 → 2026-03-12)
 - All 15 v1 requirements satisfied; 4 prior integration defects resolved post-audit
 
-**Known tech debt (v2 candidates):**
-- `_stale`/`_staleAsOf` backend fields not consumed in display (no user-facing stale indicator)
-- Human runtime verification pending for extended fire weather rows (requires live fire weather season data)
+**Known tech debt / accepted artifacts:**
+- Documented visual artifacts on per-hazard rows when proximity badges fire: double-space `②  →` between `cigLabel` and `proximityBadge`, missing space before percent `5%`. Accepted per Phase 13 CONTEXT.md deferred section; revisit if live readability complaints arise.
+- Human runtime verification pending for extended fire weather rows (requires live fire weather season data) — deferred from v1.1.
+- 4 residual human-needed edge cases on stale indicator (D-11 invalid timestamp, D-12 clock-skew, non-default `updateInterval` end-to-end, branch-isolation in Loading/Error/No-Risk) — recorded in `11-VERIFICATION.md`.
 
 ## Constraints
 
@@ -97,6 +101,16 @@ Accurately and efficiently tell the user if they're in a weather risk zone right
 | DN-based parsing for Day 3–8 fire weather | LABEL field contains "D3"/"D6" day identifier, not risk level; DN=5/8/10 encodes risk | ✓ Good — confirmed via live endpoint inspection |
 | Day 3–8 fire rows via loop in getDom() | `for (let d = 3; d <= 8; d++)` with per-day `dayNRisk > 0` guard — clean and DRY | ✓ Good |
 | Reuse `fireRiskToColor()` for Day 3–8 display | Same risk-to-color mapping as Day 1–2; no new logic needed | ✓ Good |
+| Thread `updateInterval` via `GET_SPC_DATA` payload + persist on `this._updateInterval` (v1.2) | Backend has no `this.config`; payload threading is the minimal correct fix for STALE-01 | ✓ Good |
+| One-shot fallback log via `_loggedIntervalFallback` flag (v1.2) | Avoids log flooding when a misconfigured caller repeatedly omits the field | ✓ Good |
+| Linear falloff with 40 km cutoff for proximity (v1.2) | Matches SPC's documented neighborhood radius for probabilistic→categorical conversion | ✓ Good |
+| Boundary-safe strict cap via `turf.booleanPointInPolygon` pre-check (v1.2) | turf spherical `pointToLineDistance` returns ~3m epsilon for points on straight polygon edges; pre-check catches boundary AND interior cases robustly | ✓ Good |
+| Strict-true coerce (`=== true`) for `proximityWeighting` at destructure boundary (v1.2) | Mitigates type-confusion: only literal `true` enables proximity, all other values resolve to `false` | ✓ Good |
+| Default-off byte-identity via null-omission spread (v1.2) | When flag is false, `buildProximitySubtree({all-null})` returns `{}`, payload shape byte-identical to pre-v1.2 | ✓ Good |
+| Cache-level memoization split: eager-on-miss + lazy-on-toggle via `deriveLinesIfMissing` (v1.2) | PROX-05 amortized O(1)-per-render; lazy fill when flag flips on after a cache hit | ✓ Good |
+| `proximityBadge(prox, mode)` helper centralizes formatting (v1.2) | All 10 frontend call sites route through one helper; D-13 noise floor and D-04 toFixed(1) live in one place | ✓ Good |
+| Day 3 dual-badge nested INSIDE colored span with semicolon separator (v1.2) | Single coherent visual element; separator only appears when both badges non-empty | ✓ Good |
+| Disabled `workflow.nyquist_validation` for this project (v1.2) | REQUIREMENTS.md explicitly out-of-scopes automated test framework; manual UAT + static analysis is the verification strategy | ✓ Good |
 
 ## Evolution
 
@@ -109,4 +123,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-04-25 — v1.2 milestone started*
+*Last updated: 2026-05-03 — v1.2 QoL Enhancements shipped*
