@@ -26,11 +26,11 @@ Predecessor milestones: v1.0 (Refactor & Feature Update, shipped 2026-03-12), v1
 
 ### Proximity Frontend (PROXUI)
 
-- [ ] **PROXUI-01**: `proximityWeighting: false` is added to `defaults` and included in both the initial and interval `GET_SPC_DATA` socket payloads
-- [ ] **PROXUI-02**: Inside-risk badge `CURR → NEXT W.W` is rendered after the existing Day 1/2/3 categorical risk text when proximity data is present
-- [ ] **PROXUI-03**: Outside-risk badge `W.W (near TIER)` is rendered when the point is outside all tiers but a tier polygon is within 40 km (uses min distance across all polygons of the lowest applicable tier)
-- [ ] **PROXUI-04**: Per-hazard CIG badges render alongside existing `cigLabel` output for Day 1/2 (tor/hail/wind) and Day 3
-- [ ] **PROXUI-05**: Weight displays rounded to 1 decimal; badge is suppressed when weight is below a noise threshold to prevent flicker between updates
+- [X] **PROXUI-01**: `proximityWeighting: false` is added to `defaults` and included in both the initial and interval `GET_SPC_DATA` socket payloads
+- [X] **PROXUI-02**: Inside-risk badge `CURR → NEXT W.W` is rendered after the existing Day 1/2/3 categorical risk text when proximity data is present
+- [X] **PROXUI-03**: Outside-risk badge `W.W (near TIER)` is rendered when the point is outside all tiers but a tier polygon is within 40 km (uses min distance across all polygons of the lowest applicable tier)
+- [X] **PROXUI-04**: Per-hazard CIG badges render alongside existing `cigLabel` output for Day 1/2 (tor/hail/wind) and Day 3
+- [X] **PROXUI-05**: Weight displays rounded to 1 decimal; badge is suppressed when weight is below a noise threshold to prevent flicker between updates
 
 ---
 
