@@ -52,16 +52,38 @@
       if (tier === "CIG1") return "①";
       return "";
     };
-    const proximityBadge = (prox, mode) => {
-      if (!prox) return "";
-      if (typeof prox.value !== "number" || !isFinite(prox.value)) return "";
-      if (typeof prox.nextTier !== "string" || prox.nextTier.length === 0) return "";
+    // Single source of truth for "is this proximity entry renderable?" — mirrors the
+    // gates inside proximityBadge() so visibility predicates and the badge renderer
+    // agree on what counts as above the PROX_MIN_WEIGHT noise floor. Without this,
+    // a sub-noise-floor proximity makes a day row render with an empty badge,
+    // leaving a bare "(Day N): None" line (bug: day2-none-still-displays).
+    const hasRenderableProximity = (prox) => {
+      if (!prox) return false;
+      if (typeof prox.value !== "number" || !isFinite(prox.value)) return false;
+      if (typeof prox.nextTier !== "string" || prox.nextTier.length === 0) return false;
       const weight = prox.value - Math.trunc(prox.value);
-      if (weight < PROX_MIN_WEIGHT) return "";
+      if (weight < PROX_MIN_WEIGHT) return false;
       const tierLabel = prox.nextTier.startsWith("CIG")
         ? cigLabelFromTierString(prox.nextTier)
         : prox.nextTier;
-      if (tierLabel === "") return "";
+      if (tierLabel === "") return false;
+      return true;
+    };
+    // True if any categorical/cig entry on a day's proximity subtree is renderable.
+    const hasAnyRenderableProximity = (proximity) => {
+      if (!proximity) return false;
+      return hasRenderableProximity(proximity.categorical)
+        || hasRenderableProximity(proximity.cig)
+        || hasRenderableProximity(proximity.torCig)
+        || hasRenderableProximity(proximity.hailCig)
+        || hasRenderableProximity(proximity.windCig);
+    };
+    const proximityBadge = (prox, mode) => {
+      if (!hasRenderableProximity(prox)) return "";
+      const weight = prox.value - Math.trunc(prox.value);
+      const tierLabel = prox.nextTier.startsWith("CIG")
+        ? cigLabelFromTierString(prox.nextTier)
+        : prox.nextTier;
       if (mode === "outside") return " " + weight.toFixed(1) + " (near " + tierLabel + ")";
       return " → " + tierLabel + " " + weight.toFixed(1);
     };
@@ -74,9 +96,9 @@
       this.spcrisk.day1.risk == "NONE" &&
       this.spcrisk.day2.risk == "NONE" &&
       this.spcrisk.day3.risk == "NONE" &&
-      !this.spcrisk.day1.proximity &&
-      !this.spcrisk.day2.proximity &&
-      !this.spcrisk.day3.proximity &&
+      !hasAnyRenderableProximity(this.spcrisk.day1.proximity) &&
+      !hasAnyRenderableProximity(this.spcrisk.day2.proximity) &&
+      !hasAnyRenderableProximity(this.spcrisk.day3.proximity) &&
       !( this.config.extended && this.spcrisk.day48Risk ) &&
       !(this.spcrisk.fireWeather && (this.spcrisk.fireWeather.day1Risk > 0 || this.spcrisk.fireWeather.day2Risk > 0)) &&
       !(this.config.extended && this.spcrisk.fireWeather && (
@@ -110,7 +132,7 @@
           wrapper.innerHTML += "<span style=\"color: #0059E0\">" + MD + " in effect.</span><br/>"
         }
       }
-      if(this.spcrisk.day1.risk != "NONE" || this.spcrisk.day1.proximity?.categorical)
+      if(this.spcrisk.day1.risk != "NONE" || hasRenderableProximity(this.spcrisk.day1.proximity?.categorical))
       {
         wrapper.innerHTML += dowToText(dow) + " (Day 1): <span style=\"color:#" + this.spcrisk.day1.color + "\">" + this.spcrisk.day1.text + "</span>" + proximityBadge(this.spcrisk.day1.proximity?.categorical, this.spcrisk.day1.risk == "NONE" ? "outside" : "inside") + "<br/>";
       if(this.spcrisk.day1.probRisk) {
@@ -120,8 +142,8 @@
         if (this.spcrisk.day1.windRisk > 0) probRiskHTML += "<i class=\"wi wi-strong-wind\"></i>" + cigLabel(this.spcrisk.day1.windCig) + proximityBadge(this.spcrisk.day1.proximity?.windCig, this.spcrisk.day1.windCig === 0 ? "outside" : "inside") + 100 * this.spcrisk.day1.windRisk + "% ";
         wrapper.innerHTML += probRiskHTML+"<br/>";
       }}
-      
-      if(this.spcrisk.day2.risk != "NONE" || this.spcrisk.day2.proximity?.categorical)
+
+      if(this.spcrisk.day2.risk != "NONE" || hasRenderableProximity(this.spcrisk.day2.proximity?.categorical))
       {
         wrapper.innerHTML +=  dowToText(dow+1) + " (Day 2): <span style=\"color:#" + this.spcrisk.day2.color + "\">" + this.spcrisk.day2.text + "</span>" + proximityBadge(this.spcrisk.day2.proximity?.categorical, this.spcrisk.day2.risk == "NONE" ? "outside" : "inside") + "<br/>";
       if(this.spcrisk.day2.probRisk) {
@@ -131,7 +153,7 @@
         if (this.spcrisk.day2.windRisk > 0) probRiskHTML += "<i class=\"wi wi-strong-wind\"></i>" + cigLabel(this.spcrisk.day2.windCig) + proximityBadge(this.spcrisk.day2.proximity?.windCig, this.spcrisk.day2.windCig === 0 ? "outside" : "inside") + 100 * this.spcrisk.day2.windRisk + "% ";
         wrapper.innerHTML += probRiskHTML+"<br/>";
       }}
-      if(this.spcrisk.day3.risk != "NONE" || this.spcrisk.day3.proximity?.categorical || this.spcrisk.day3.proximity?.cig)
+      if(this.spcrisk.day3.risk != "NONE" || hasRenderableProximity(this.spcrisk.day3.proximity?.categorical) || hasRenderableProximity(this.spcrisk.day3.proximity?.cig))
       {
         const day3CatBadge = proximityBadge(this.spcrisk.day3.proximity?.categorical, this.spcrisk.day3.risk == "NONE" ? "outside" : "inside");
         const day3CigBadge = proximityBadge(this.spcrisk.day3.proximity?.cig, this.spcrisk.day3.cig === 0 ? "outside" : "inside");
