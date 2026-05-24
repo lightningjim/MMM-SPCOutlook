@@ -152,14 +152,11 @@ module.exports = NodeHelper.create({
       if (poly && turf.booleanPointInPolygon(loc, poly)) return;
 
       // Normalise line to an array of Feature<LineString>.
-      // polygonToLine yields Feature<LineString> for a simple Polygon, Feature<MultiLineString>
-      // for a Polygon-with-holes, and FeatureCollection<LineString> for a MultiPolygon. Flatten
-      // the Multi* case so pointToLineDistance always receives a plain LineString feature.
-      const lineFeatures = (line && line.type === "FeatureCollection")
-        ? line.features
-        : (line && line.geometry && line.geometry.type === "MultiLineString")
-          ? turf.flatten(line).features
-          : [line];
+      // turf.polygonToLine returns Feature<LineString> (simple Polygon),
+      // Feature<MultiLineString> (Polygon with holes), or FeatureCollection (MultiPolygon —
+      // and entries can themselves be MultiLineString when a constituent polygon has holes).
+      // turf.flatten collapses all three shapes into single-part LineString features in one pass.
+      const lineFeatures = line ? turf.flatten(line).features : [];
       let dKm = Infinity;
       for (const lf of lineFeatures) {
         const d = turf.pointToLineDistance(loc, lf, { units: "kilometers" });

@@ -54,6 +54,18 @@ tdd_checkpoint: null
   observation: "Fix applied: added middle branch using turf.flatten(line).features for Feature<MultiLineString>. Smoke test: all three geometry types now compute distance without throwing."
   source: "code edit + REPL test"
 
+- timestamp: 2026-05-24T10:46:05
+  observation: "Bug recurred after commit 8cdad02 was deployed (line numbers shifted 158->165, 528->535, confirming the fix code is live). Initial fix was incomplete."
+  source: "error log"
+
+- timestamp: 2026-05-24
+  observation: "REPL verification: turf.polygonToLine on a MultiPolygon where one constituent polygon has a hole yields a FeatureCollection whose entries are a MIX of Feature<LineString> and Feature<MultiLineString>. The first fix's FeatureCollection branch took .features directly without flattening, so the MultiLineString entries inside the collection still reached pointToLineDistance and threw."
+  source: "node REPL — see verification snippet in commit message"
+
+- timestamp: 2026-05-24
+  observation: "Second fix applied: replaced the three-way ternary with a single unconditional turf.flatten(line).features call. turf.flatten accepts Feature/FeatureCollection/Geometry and always returns single-part LineString features. Verified all three cases (simple Polygon, Polygon-with-hole, MultiPolygon-with-hole) produce only LineString features."
+  source: "code edit + REPL test"
+
 ## Eliminated
 
 - "MultiLineString comes directly from SPC GeoJSON" — SPC GeoJSON contains Polygon/MultiPolygon features; the MultiLineString arises from polygonToLine conversion inside the module, not from raw SPC data.
@@ -61,9 +73,9 @@ tdd_checkpoint: null
 
 ## Resolution
 
-root_cause: "turf.polygonToLine returns Feature<MultiLineString> for any Polygon that has one or more inner rings (holes). The lineFeatures branch in computeProximity (node_helper.js:155) only handled FeatureCollection (MultiPolygon case) and Feature<LineString> (simple Polygon), silently falling through to [line] for the hole case and passing a Feature<MultiLineString> directly to pointToLineDistance, which rejects non-LineString input."
+root_cause: "turf.polygonToLine returns Feature<MultiLineString> for any Polygon with inner rings, AND when called on a MultiPolygon it returns a FeatureCollection whose entries are a mix of Feature<LineString> and Feature<MultiLineString> (one entry per constituent polygon, each entry shaped by whether that polygon has holes). The original code missed the bare-MultiLineString case (fixed in 8cdad02). The follow-up bug exposed today: the FeatureCollection branch passed .features through without flattening, so MultiLineString entries inside a collection still reached pointToLineDistance and threw."
 
-fix: "Expanded the lineFeatures ternary in computeProximity (node_helper.js lines 158-162) to add a middle branch: when line.geometry.type === 'MultiLineString', call turf.flatten(line).features to decompose it into an array of Feature<LineString> before iterating. No other call sites changed; turf.flatten is already available via @turf/turf."
+fix: "Replaced the three-way ternary with a single unconditional turf.flatten(line).features call in computeProximity (node_helper.js:154-159). turf.flatten accepts Feature, FeatureCollection, or Geometry and always returns single-part LineString features, so all three shapes (simple Polygon, Polygon-with-holes, MultiPolygon with any mix of holed constituents) flow through one code path. Verified via REPL: each case produces only LineString features and pointToLineDistance succeeds."
 
 files_changed:
-  - node_helper.js (lines 154-162 — lineFeatures branch in computeProximity)
+  - node_helper.js (computeProximity lineFeatures normalisation — first patch in 8cdad02, follow-up flatten-everything patch in the next commit)
