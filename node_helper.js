@@ -151,8 +151,15 @@ module.exports = NodeHelper.create({
       // tiny epsilon for points on a straight (but spherically curved) polygon edge.
       if (poly && turf.booleanPointInPolygon(loc, poly)) return;
 
-      // Branch on Feature<LineString> vs FeatureCollection<LineString>; min distance across features
-      const lineFeatures = (line && line.type === "FeatureCollection") ? line.features : [line];
+      // Normalise line to an array of Feature<LineString>.
+      // polygonToLine yields Feature<LineString> for a simple Polygon, Feature<MultiLineString>
+      // for a Polygon-with-holes, and FeatureCollection<LineString> for a MultiPolygon. Flatten
+      // the Multi* case so pointToLineDistance always receives a plain LineString feature.
+      const lineFeatures = (line && line.type === "FeatureCollection")
+        ? line.features
+        : (line && line.geometry && line.geometry.type === "MultiLineString")
+          ? turf.flatten(line).features
+          : [line];
       let dKm = Infinity;
       for (const lf of lineFeatures) {
         const d = turf.pointToLineDistance(loc, lf, { units: "kilometers" });
