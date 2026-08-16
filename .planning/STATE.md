@@ -1,17 +1,16 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.2
-milestone_name: QoL Enhancements
-status: milestone_complete
-stopped_at: v1.2 shipped 2026-05-03
-last_updated: "2026-05-03T16:30:00.000Z"
-last_activity: 2026-05-03
+milestone: v2.0
+milestone_name: WPC & CPC Integration + Unified Day Report
+status: planning
+last_updated: "2026-08-16T01:24:11.667Z"
+last_activity: 2026-08-16
 progress:
-  total_phases: 3
-  completed_phases: 3
-  total_plans: 8
-  completed_plans: 8
-  percent: 100
+  total_phases: 0
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State
@@ -25,10 +24,10 @@ See: .planning/PROJECT.md (updated 2026-05-03 after v1.2 ship)
 
 ## Current Position
 
-Phase: — (between milestones)
+Phase: Not started (defining requirements)
 Plan: —
-Status: v1.2 complete; awaiting next-milestone scope
-Last activity: 2026-05-03 — milestone closed
+Status: Defining requirements
+Last activity: 2026-08-16 — Milestone v2.0 started
 
 ## Performance Metrics
 

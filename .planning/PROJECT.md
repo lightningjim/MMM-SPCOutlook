@@ -41,7 +41,24 @@ Accurately and efficiently tell the user if they're in a weather risk zone right
 
 ### Active
 
-**Next milestone — TBD** (define via `/gsd-new-milestone`)
+## Current Milestone: v2.0 WPC & CPC Integration + Unified Day Report
+
+**Goal:** Extend the module beyond SPC to WPC and CPC hazard products, and restructure the display from per-product row sections into a unified per-day report that merges and deduplicates all sources.
+
+**Target features:**
+
+*New data sources:*
+- [ ] WPC Day 3–7 US Hazards Outlook
+- [ ] CPC Day 8–14 US Hazards Outlook
+- [ ] WPC Excessive Rainfall Outlook (Days 1–3)
+- [ ] WPC Winter Weather Outlook (Days 1–3)
+- [ ] WPC Mesoscale Precipitation Discussion (analog to existing SPC MD handling)
+- [ ] NWS/WPC HeatRisk (approach determined by research — raster product, needs point-queryable endpoint)
+
+*Display restructure:*
+- [ ] Unified day report replacing per-product sections — one block per day merging severe, fire, rainfall, winter, and extended hazards
+- [ ] Detail toggle — off (default): compact single line per day; on: per-day block expanded into source-labeled sub-rows
+- [ ] Cross-source deduplication via precedence table (better source supersedes coarser one on same hazard/day)
 
 ### Out of Scope
 
@@ -84,7 +101,7 @@ Accurately and efficiently tell the user if they're in a weather risk zone right
 - **Platform**: Raspberry Pi — keep CPU usage low; avoid blocking the event loop
 - **Framework**: MagicMirror² — must comply with module API conventions
 - **Dependencies**: Minimize changes to dependency tree; turf.js stays
-- **Data sources**: NOAA SPC endpoints only — no third-party weather APIs
+- **Data sources**: NOAA SPC, WPC, and CPC endpoints only — no third-party weather APIs (widened from SPC-only in v2.0)
 
 ## Key Decisions
 
@@ -111,6 +128,12 @@ Accurately and efficiently tell the user if they're in a weather risk zone right
 | `proximityBadge(prox, mode)` helper centralizes formatting (v1.2) | All 10 frontend call sites route through one helper; D-13 noise floor and D-04 toFixed(1) live in one place | ✓ Good |
 | Day 3 dual-badge nested INSIDE colored span with semicolon separator (v1.2) | Single coherent visual element; separator only appears when both badges non-empty | ✓ Good |
 | Disabled `workflow.nyquist_validation` for this project (v1.2) | REQUIREMENTS.md explicitly out-of-scopes automated test framework; manual UAT + static analysis is the verification strategy | ✓ Good |
+| Widen data sources to SPC + WPC + CPC (v2.0) | Milestone goal requires WPC/CPC hazard products; all remain NOAA first-party endpoints, so the "no third-party APIs" spirit holds | — Pending |
+| Unified day report becomes the default display, no legacy path (v2.0) | Merging sources per-day is the milestone's point; dual render paths in `getDom()` would need permanent maintenance and double UAT. Major version bump covers the breaking display change | — Pending |
+| Default-off byte-identity invariant does NOT carry forward past v1.2 (v2.0) | The v2.0 display restructure is intentionally breaking; retaining byte-identity would require a third render state | — Pending |
+| Single `updateInterval` for all new products, ETag-gated (v2.0) | ETag/SHA256 cache already skips turf work when data is unchanged, so slow-updating products cost ~one conditional GET per cycle — keeps RPi cost near-flat without a per-product scheduler | — Pending |
+| Per-product config toggles, all default false (v2.0) | Users opt into each new data source independently; contains row-count growth in active patterns | — Pending |
+| Cross-source precedence table derived from research, not assumed (v2.0) | The actual overlap set across 6 WPC/CPC products and SPC is unknown; seed example is SPC convective superseding the WPC thunderstorm hazard | — Pending |
 
 ## Evolution
 
@@ -123,4 +146,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-05-03 — v1.2 QoL Enhancements shipped*
+*Last updated: 2026-08-15 — v2.0 WPC & CPC Integration + Unified Day Report started*
