@@ -417,14 +417,14 @@ Source: `https://mapservices.weather.noaa.gov/vector/rest/services/hazards/wpc_p
 | A3 | `products` socket-request keys are named identically to the `defaults:` config flags (e.g. `products.showExcessiveRain`), rather than a separate id→flag translation | Architecture Patterns / Pattern 4 | Low — internal wire-format choice; D-06 only specifies the object must be nested, not the exact key-naming convention inside it; a mismatch would surface immediately as "toggle has no effect," easy to catch in UAT |
 | A4 | Disabled products should be excluded from `anyStale` (Pitfall 5's recommendation) | Common Pitfalls / Pitfall 5 | Low-Medium — this is one of CONTEXT.md's two explicit "Claude's Discretion" items; if the planner/user prefers a different resolution, this is a one-line change confined to the `if (this._products.showExcessiveRain)` gate boundary |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **Does `outlook`'s "High" tier ever appear live?** STACK.md's earlier research session (2026-08-15) noted no live polygon carried `dn: 4`/High at fetch time, only inferring its existence from the service description. This session's `drawingInfo.renderer` metadata confirms the legend entry exists (`"label": "High (At Least 70%)"`, `"values": [["4"]]`), but no live *feature* with `dn: 4` was observed either session.
+1. **Does `outlook`'s "High" tier ever appear live?** — **RESOLVED** (accepted as structurally-verified-only; recorded in plan 14-05) STACK.md's earlier research session (2026-08-15) noted no live polygon carried `dn: 4`/High at fetch time, only inferring its existence from the service description. This session's `drawingInfo.renderer` metadata confirms the legend entry exists (`"label": "High (At Least 70%)"`, `"values": [["4"]]`), but no live *feature* with `dn: 4` was observed either session.
    - What we know: The tier is defined in the service schema and legend.
    - What's unclear: Whether the mapping code will ever be exercised against a real `dn: 4` feature before a genuine High-risk day occurs.
    - Recommendation: Treat as structurally correct (schema-verified) rather than requiring a live-feature UAT pass before shipping; this mirrors how WSSI-03's out-of-season empty-result handling is already accepted as structurally-verified-only in REQUIREMENTS.md's quality notes.
 
-2. **Exact wire-key naming for the `products` object (A3 above).** CONTEXT.md's D-06 mandates the nesting but not the internal key convention.
+2. **Exact wire-key naming for the `products` object (A3 above).** — **RESOLVED** (flag-keyed `products.showExcessiveRain` adopted; recorded in plan 14-03) CONTEXT.md's D-06 mandates the nesting but not the internal key convention.
    - What we know: A `products: {...}` object must exist; `showExcessiveRain` is the confirmed frontend config-flag name (from ROADMAP.md/REQUIREMENTS.md's literal requirement text).
    - What's unclear: Whether Phases 15-17 will want product-id-keyed (`products.excessiveRain`) rather than flag-keyed (`products.showExcessiveRain`) — a purely internal convention choice.
    - Recommendation: Use the flag name directly as the object key (as shown in Pattern 4) — it requires no translation layer and is the simplest option consistent with D-06's stated goal ("keeps the wire payload from growing... gives Phase 17's `Promise.all` a single list to iterate," which the registry's `configFlag` field already provides independent of this naming choice).
