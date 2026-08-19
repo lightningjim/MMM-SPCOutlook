@@ -4,16 +4,19 @@
     lon: -97.44,
     extended: false,
     updateInterval: 60,
-    proximityWeighting: false
+    proximityWeighting: false,
+    showExcessiveRain: false    // WPC Excessive Rainfall Outlook toggle; every new product flag defaults to false
   },
 
   start: function() {
     // Request data once the module starts
     Log.info(`Starting module: ${this.name}`);
     Log.info("SPC-Outlook: GET_SPC_DATA - " + this.config.lat + "," + this.config.lon + "," + this.config.extended);
-    this.sendSocketNotification("GET_SPC_DATA", { lat: this.config.lat, lon: this.config.lon, extended: this.config.extended, updateInterval: this.config.updateInterval, proximityWeighting: this.config.proximityWeighting });
+    // Per-product toggles travel as one nested `products` object rather than additional flat fields;
+    // Phases 15-17 add their flags to this same object.
+    this.sendSocketNotification("GET_SPC_DATA", { lat: this.config.lat, lon: this.config.lon, extended: this.config.extended, updateInterval: this.config.updateInterval, proximityWeighting: this.config.proximityWeighting, products: { showExcessiveRain: this.config.showExcessiveRain } });
     // Set an interval to update every hour (3600000 milliseconds)
-    setInterval(() => {this.sendSocketNotification("GET_SPC_DATA", { lat: this.config.lat, lon: this.config.lon, extended: this.config.extended, updateInterval: this.config.updateInterval, proximityWeighting: this.config.proximityWeighting });}, this.config.updateInterval * 60000);
+    setInterval(() => {this.sendSocketNotification("GET_SPC_DATA", { lat: this.config.lat, lon: this.config.lon, extended: this.config.extended, updateInterval: this.config.updateInterval, proximityWeighting: this.config.proximityWeighting, products: { showExcessiveRain: this.config.showExcessiveRain } });}, this.config.updateInterval * 60000);
   },
 
   socketNotificationReceived: function(notification, payload) {
@@ -108,6 +111,14 @@
         this.spcrisk.fireWeather.day6Risk > 0 ||
         this.spcrisk.fireWeather.day7Risk > 0 ||
         this.spcrisk.fireWeather.day8Risk > 0
+      )) &&
+      // ERO extension of the no-risk gate (Phase 19 RPT-06 regression target)
+      !(this.config.showExcessiveRain && this.spcrisk.excessiveRain && (
+        this.spcrisk.excessiveRain.day1Risk != "NONE" ||
+        this.spcrisk.excessiveRain.day2Risk != "NONE" ||
+        this.spcrisk.excessiveRain.day3Risk != "NONE" ||
+        this.spcrisk.excessiveRain.day4Risk != "NONE" ||
+        this.spcrisk.excessiveRain.day5Risk != "NONE"
       ))
     ) {
       wrapper.innerHTML = "No Severe Weather Risk"
@@ -187,6 +198,15 @@
                 fireRiskToColor[this.spcrisk.fireWeather["day" + d + "Risk"]] + "\">" +
                 this.spcrisk.fireWeather["day" + d + "Text"] + "</span><br/>";
             }
+          }
+        }
+      }
+      if (this.config.showExcessiveRain && this.spcrisk.excessiveRain) {
+        for (let d = 1; d <= 5; d++) {
+          if (this.spcrisk.excessiveRain["day" + d + "Risk"] != "NONE") {
+            wrapper.innerHTML += "Excessive Rain (Day " + d + "): <span style=\"color:#" +
+              this.spcrisk.excessiveRain["day" + d + "Color"] + "\">" +
+              this.spcrisk.excessiveRain["day" + d + "Text"] + "</span><br/>";
           }
         }
       }
