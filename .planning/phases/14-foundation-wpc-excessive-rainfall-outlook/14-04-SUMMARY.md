@@ -137,3 +137,12 @@ None - no external service configuration required.
 ---
 *Phase: 14-foundation-wpc-excessive-rainfall-outlook*
 *Completed: 2026-08-19*
+
+## Self-Check: PASSED
+
+- FOUND: `MMM-SPCOutlook.js`
+- FOUND: `.planning/phases/14-foundation-wpc-excessive-rainfall-outlook/14-04-SUMMARY.md`
+- FOUND: commit `904aff4` (Task 1)
+- FOUND: commit `b35adc5` (Task 2)
+- FOUND: commit `aa33017` (Task 3)
+- FOUND: commit `2614892` (SUMMARY commit)
