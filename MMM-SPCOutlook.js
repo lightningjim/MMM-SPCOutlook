@@ -193,6 +193,15 @@
           }
         }
       }
+      if (this.config.showExcessiveRain && this.spcrisk.excessiveRain) {
+        for (let d = 1; d <= 5; d++) {
+          if (this.spcrisk.excessiveRain["day" + d + "Risk"] != "NONE") {
+            wrapper.innerHTML += "Excessive Rain (Day " + d + "): <span style=\"color:#" +
+              this.spcrisk.excessiveRain["day" + d + "Color"] + "\">" +
+              this.spcrisk.excessiveRain["day" + d + "Text"] + "</span><br/>";
+          }
+        }
+      }
     }
     return wrapper;
   }
