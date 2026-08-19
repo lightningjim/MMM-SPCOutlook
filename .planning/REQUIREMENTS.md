@@ -104,16 +104,51 @@ Deferred to v2.x. Tracked but not in this roadmap.
 
 ## Traceability
 
-Populated during roadmap creation.
-
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| _(pending roadmap)_ | | |
+| CFG-01 | Phase 14 | Pending |
+| CFG-02 | Phase 14 | Pending |
+| DATA-01 | Phase 14 | Pending |
+| PERF-02 | Phase 14 | Pending |
+| ERO-01 | Phase 14 | Pending |
+| ERO-02 | Phase 14 | Pending |
+| ERO-03 | Phase 14 | Pending |
+| WSSI-01 | Phase 15 | Pending |
+| WSSI-02 | Phase 15 | Pending |
+| WSSI-03 | Phase 15 | Pending |
+| MPD-01 | Phase 15 | Pending |
+| MPD-02 | Phase 15 | Pending |
+| MPD-03 | Phase 15 | Pending |
+| MPD-04 | Phase 15 | Pending |
+| HAZ-01 | Phase 16 | Pending |
+| HAZ-02 | Phase 16 | Pending |
+| HAZ-03 | Phase 16 | Pending |
+| HAZ-04 | Phase 16 | Pending |
+| DATA-02 | Phase 16 | Pending |
+| HEAT-01 | Phase 17 | Pending |
+| HEAT-02 | Phase 17 | Pending |
+| HEAT-03 | Phase 17 | Pending |
+| HEAT-04 | Phase 17 | Pending |
+| PERF-01 | Phase 17 | Pending |
+| DATA-03 | Phase 17 | Pending |
+| MERGE-01 | Phase 18 | Pending |
+| MERGE-02 | Phase 18 | Pending |
+| MERGE-03 | Phase 18 | Pending |
+| MERGE-04 | Phase 18 | Pending |
+| RPT-07 | Phase 18 | Pending |
+| PERF-03 | Phase 18 | Pending |
+| RPT-01 | Phase 19 | Pending |
+| RPT-02 | Phase 19 | Pending |
+| RPT-03 | Phase 19 | Pending |
+| RPT-04 | Phase 19 | Pending |
+| RPT-05 | Phase 19 | Pending |
+| RPT-06 | Phase 19 | Pending |
 
 **Coverage:**
-- v2.0 requirements: 34 total
-- Mapped to phases: 0
-- Unmapped: 34 ⚠️
+- v2.0 requirements: 37 total (corrected from initial header count of 34 — recount of the checklist above found 37 distinct REQ-IDs)
+- Mapped to phases: 37
+- Unmapped: 0 ✓
 
 ---
 *Requirements defined: 2026-08-15*
+*Roadmap mapping completed: 2026-08-15*
