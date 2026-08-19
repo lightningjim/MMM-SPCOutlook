@@ -124,3 +124,11 @@ None - no external service configuration required.
 ---
 *Phase: 14-foundation-wpc-excessive-rainfall-outlook*
 *Completed: 2026-08-19*
+
+## Self-Check: PASSED
+
+- FOUND: `productRegistry.js`
+- FOUND: `.planning/phases/14-foundation-wpc-excessive-rainfall-outlook/14-01-SUMMARY.md`
+- FOUND: commit `dc58dd3` (Task 1)
+- FOUND: commit `77caa5f` (Task 2)
+- FOUND: commit `4a1cb52` (metadata commit, pre-existing at time of check)
