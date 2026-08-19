@@ -833,6 +833,15 @@ module.exports = NodeHelper.create({
         day8FireRisk = dayFireRisks[8];
       }
 
+      // `extended` gates Day 4-8 fetching only — the payload shape never forks on it (CFG-02, D-01).
+      // Mirrors the fire-weather Day 3-8 block above: locals declared and defaulted to
+      // zero/no-risk before any gate, only the fetch blocks below are wrapped in `if (extended)`.
+      let day4ProbRisk = 0, day4Sign = false;
+      let day5ProbRisk = 0, day5Sign = false;
+      let day6ProbRisk = 0, day6Sign = false;
+      let day7ProbRisk = 0, day7Sign = false;
+      let day8ProbRisk = 0, day8Sign = false;
+
       if (!extended)
       {
         return {
@@ -905,114 +914,113 @@ module.exports = NodeHelper.create({
         };
       }
 
-      // Day 4 — PERF-02: single-pass extractPolygons for both risk and SIGN before evaluatePolygons
-      let day4ProbRisk, day4Sign;
-      {
-        const fetch4 = await this.fetchGeoJsonCached(day4URL);
-        if (fetch4.stale) anyStale = true;
-        if (fetch4.data === null && fetch4.cachedResult !== null) {
-          day4ProbRisk = fetch4.cachedResult.probRisk;
-          day4Sign = fetch4.cachedResult.sign;
-        } else if (fetch4.data === null) {
-          day4ProbRisk = 0;
-          day4Sign = false;
-        } else {
-          const gj = fetch4.data;
-          const day4RiskPoly = this.extractPolygons(gj, label => label === "" ? 0 : parseFloat(label), (label, val) => val > 0);
-          const day4SignPoly  = this.extractPolygons(gj, label => label, (label, val) => label === "SIGN");
-          day4ProbRisk = this.evaluatePolygons(day4RiskPoly, loc, percComparator);
-          day4Sign = day4ProbRisk > 0 ? this.evaluatePolygons(day4SignPoly, loc, sigComparator) : false;
-          this._geoJsonCache.set(day4URL, { mode: fetch4.mode, etag: fetch4.newEtag ?? null, hash: fetch4.newHash ?? null, result: { probRisk: day4ProbRisk, sign: day4Sign }, timestamp: Date.now() });
+      // Day 4-8 — PERF-02: single-pass extractPolygons for both risk and SIGN before evaluatePolygons
+      if (extended) {
+        // Day 4
+        {
+          const fetch4 = await this.fetchGeoJsonCached(day4URL);
+          if (fetch4.stale) anyStale = true;
+          if (fetch4.data === null && fetch4.cachedResult !== null) {
+            day4ProbRisk = fetch4.cachedResult.probRisk;
+            day4Sign = fetch4.cachedResult.sign;
+          } else if (fetch4.data === null) {
+            day4ProbRisk = 0;
+            day4Sign = false;
+          } else {
+            const gj = fetch4.data;
+            const day4RiskPoly = this.extractPolygons(gj, label => label === "" ? 0 : parseFloat(label), (label, val) => val > 0);
+            const day4SignPoly  = this.extractPolygons(gj, label => label, (label, val) => label === "SIGN");
+            day4ProbRisk = this.evaluatePolygons(day4RiskPoly, loc, percComparator);
+            day4Sign = day4ProbRisk > 0 ? this.evaluatePolygons(day4SignPoly, loc, sigComparator) : false;
+            this._geoJsonCache.set(day4URL, { mode: fetch4.mode, etag: fetch4.newEtag ?? null, hash: fetch4.newHash ?? null, result: { probRisk: day4ProbRisk, sign: day4Sign }, timestamp: Date.now() });
+          }
+        }
+
+        // Day 5
+        {
+          const fetch5 = await this.fetchGeoJsonCached(day5URL);
+          if (fetch5.stale) anyStale = true;
+          if (fetch5.data === null && fetch5.cachedResult !== null) {
+            day5ProbRisk = fetch5.cachedResult.probRisk;
+            day5Sign = fetch5.cachedResult.sign;
+          } else if (fetch5.data === null) {
+            day5ProbRisk = 0;
+            day5Sign = false;
+          } else {
+            const gj = fetch5.data;
+            const day5RiskPoly = this.extractPolygons(gj, label => label === "" ? 0 : parseFloat(label), (label, val) => val > 0);
+            const day5SignPoly  = this.extractPolygons(gj, label => label, (label, val) => label === "SIGN");
+            day5ProbRisk = this.evaluatePolygons(day5RiskPoly, loc, percComparator);
+            day5Sign = day5ProbRisk > 0 ? this.evaluatePolygons(day5SignPoly, loc, sigComparator) : false;
+            this._geoJsonCache.set(day5URL, { mode: fetch5.mode, etag: fetch5.newEtag ?? null, hash: fetch5.newHash ?? null, result: { probRisk: day5ProbRisk, sign: day5Sign }, timestamp: Date.now() });
+          }
+        }
+
+        // Day 6
+        {
+          const fetch6 = await this.fetchGeoJsonCached(day6URL);
+          if (fetch6.stale) anyStale = true;
+          if (fetch6.data === null && fetch6.cachedResult !== null) {
+            day6ProbRisk = fetch6.cachedResult.probRisk;
+            day6Sign = fetch6.cachedResult.sign;
+          } else if (fetch6.data === null) {
+            day6ProbRisk = 0;
+            day6Sign = false;
+          } else {
+            const gj = fetch6.data;
+            const day6RiskPoly = this.extractPolygons(gj, label => label === "" ? 0 : parseFloat(label), (label, val) => val > 0);
+            const day6SignPoly  = this.extractPolygons(gj, label => label, (label, val) => label === "SIGN");
+            day6ProbRisk = this.evaluatePolygons(day6RiskPoly, loc, percComparator);
+            day6Sign = day6ProbRisk > 0 ? this.evaluatePolygons(day6SignPoly, loc, sigComparator) : false;
+            this._geoJsonCache.set(day6URL, { mode: fetch6.mode, etag: fetch6.newEtag ?? null, hash: fetch6.newHash ?? null, result: { probRisk: day6ProbRisk, sign: day6Sign }, timestamp: Date.now() });
+          }
+        }
+
+        // Day 7
+        {
+          const fetch7 = await this.fetchGeoJsonCached(day7URL);
+          if (fetch7.stale) anyStale = true;
+          if (fetch7.data === null && fetch7.cachedResult !== null) {
+            day7ProbRisk = fetch7.cachedResult.probRisk;
+            day7Sign = fetch7.cachedResult.sign;
+          } else if (fetch7.data === null) {
+            day7ProbRisk = 0;
+            day7Sign = false;
+          } else {
+            const gj = fetch7.data;
+            const day7RiskPoly = this.extractPolygons(gj, label => label === "" ? 0 : parseFloat(label), (label, val) => val > 0);
+            const day7SignPoly  = this.extractPolygons(gj, label => label, (label, val) => label === "SIGN");
+            day7ProbRisk = this.evaluatePolygons(day7RiskPoly, loc, percComparator);
+            day7Sign = day7ProbRisk > 0 ? this.evaluatePolygons(day7SignPoly, loc, sigComparator) : false;
+            this._geoJsonCache.set(day7URL, { mode: fetch7.mode, etag: fetch7.newEtag ?? null, hash: fetch7.newHash ?? null, result: { probRisk: day7ProbRisk, sign: day7Sign }, timestamp: Date.now() });
+          }
+        }
+
+        // Day 8
+        {
+          const fetch8 = await this.fetchGeoJsonCached(day8URL);
+          if (fetch8.stale) anyStale = true;
+          if (fetch8.data === null && fetch8.cachedResult !== null) {
+            day8ProbRisk = fetch8.cachedResult.probRisk;
+            day8Sign = fetch8.cachedResult.sign;
+          } else if (fetch8.data === null) {
+            day8ProbRisk = 0;
+            day8Sign = false;
+          } else {
+            const gj = fetch8.data;
+            const day8RiskPoly = this.extractPolygons(gj, label => label === "" ? 0 : parseFloat(label), (label, val) => val > 0);
+            const day8SignPoly  = this.extractPolygons(gj, label => label, (label, val) => label === "SIGN");
+            day8ProbRisk = this.evaluatePolygons(day8RiskPoly, loc, percComparator);
+            day8Sign = day8ProbRisk > 0 ? this.evaluatePolygons(day8SignPoly, loc, sigComparator) : false;
+            this._geoJsonCache.set(day8URL, { mode: fetch8.mode, etag: fetch8.newEtag ?? null, hash: fetch8.newHash ?? null, result: { probRisk: day8ProbRisk, sign: day8Sign }, timestamp: Date.now() });
+          }
         }
       }
+
       const day4Risk = this.percToRisk(day4ProbRisk, day4Sign);
-
-      // Day 5
-      let day5ProbRisk, day5Sign;
-      {
-        const fetch5 = await this.fetchGeoJsonCached(day5URL);
-        if (fetch5.stale) anyStale = true;
-        if (fetch5.data === null && fetch5.cachedResult !== null) {
-          day5ProbRisk = fetch5.cachedResult.probRisk;
-          day5Sign = fetch5.cachedResult.sign;
-        } else if (fetch5.data === null) {
-          day5ProbRisk = 0;
-          day5Sign = false;
-        } else {
-          const gj = fetch5.data;
-          const day5RiskPoly = this.extractPolygons(gj, label => label === "" ? 0 : parseFloat(label), (label, val) => val > 0);
-          const day5SignPoly  = this.extractPolygons(gj, label => label, (label, val) => label === "SIGN");
-          day5ProbRisk = this.evaluatePolygons(day5RiskPoly, loc, percComparator);
-          day5Sign = day5ProbRisk > 0 ? this.evaluatePolygons(day5SignPoly, loc, sigComparator) : false;
-          this._geoJsonCache.set(day5URL, { mode: fetch5.mode, etag: fetch5.newEtag ?? null, hash: fetch5.newHash ?? null, result: { probRisk: day5ProbRisk, sign: day5Sign }, timestamp: Date.now() });
-        }
-      }
       const day5Risk = this.percToRisk(day5ProbRisk, day5Sign);
-
-      // Day 6
-      let day6ProbRisk, day6Sign;
-      {
-        const fetch6 = await this.fetchGeoJsonCached(day6URL);
-        if (fetch6.stale) anyStale = true;
-        if (fetch6.data === null && fetch6.cachedResult !== null) {
-          day6ProbRisk = fetch6.cachedResult.probRisk;
-          day6Sign = fetch6.cachedResult.sign;
-        } else if (fetch6.data === null) {
-          day6ProbRisk = 0;
-          day6Sign = false;
-        } else {
-          const gj = fetch6.data;
-          const day6RiskPoly = this.extractPolygons(gj, label => label === "" ? 0 : parseFloat(label), (label, val) => val > 0);
-          const day6SignPoly  = this.extractPolygons(gj, label => label, (label, val) => label === "SIGN");
-          day6ProbRisk = this.evaluatePolygons(day6RiskPoly, loc, percComparator);
-          day6Sign = day6ProbRisk > 0 ? this.evaluatePolygons(day6SignPoly, loc, sigComparator) : false;
-          this._geoJsonCache.set(day6URL, { mode: fetch6.mode, etag: fetch6.newEtag ?? null, hash: fetch6.newHash ?? null, result: { probRisk: day6ProbRisk, sign: day6Sign }, timestamp: Date.now() });
-        }
-      }
       const day6Risk = this.percToRisk(day6ProbRisk, day6Sign);
-
-      // Day 7
-      let day7ProbRisk, day7Sign;
-      {
-        const fetch7 = await this.fetchGeoJsonCached(day7URL);
-        if (fetch7.stale) anyStale = true;
-        if (fetch7.data === null && fetch7.cachedResult !== null) {
-          day7ProbRisk = fetch7.cachedResult.probRisk;
-          day7Sign = fetch7.cachedResult.sign;
-        } else if (fetch7.data === null) {
-          day7ProbRisk = 0;
-          day7Sign = false;
-        } else {
-          const gj = fetch7.data;
-          const day7RiskPoly = this.extractPolygons(gj, label => label === "" ? 0 : parseFloat(label), (label, val) => val > 0);
-          const day7SignPoly  = this.extractPolygons(gj, label => label, (label, val) => label === "SIGN");
-          day7ProbRisk = this.evaluatePolygons(day7RiskPoly, loc, percComparator);
-          day7Sign = day7ProbRisk > 0 ? this.evaluatePolygons(day7SignPoly, loc, sigComparator) : false;
-          this._geoJsonCache.set(day7URL, { mode: fetch7.mode, etag: fetch7.newEtag ?? null, hash: fetch7.newHash ?? null, result: { probRisk: day7ProbRisk, sign: day7Sign }, timestamp: Date.now() });
-        }
-      }
       const day7Risk = this.percToRisk(day7ProbRisk, day7Sign);
-
-      // Day 8
-      let day8ProbRisk, day8Sign;
-      {
-        const fetch8 = await this.fetchGeoJsonCached(day8URL);
-        if (fetch8.stale) anyStale = true;
-        if (fetch8.data === null && fetch8.cachedResult !== null) {
-          day8ProbRisk = fetch8.cachedResult.probRisk;
-          day8Sign = fetch8.cachedResult.sign;
-        } else if (fetch8.data === null) {
-          day8ProbRisk = 0;
-          day8Sign = false;
-        } else {
-          const gj = fetch8.data;
-          const day8RiskPoly = this.extractPolygons(gj, label => label === "" ? 0 : parseFloat(label), (label, val) => val > 0);
-          const day8SignPoly  = this.extractPolygons(gj, label => label, (label, val) => label === "SIGN");
-          day8ProbRisk = this.evaluatePolygons(day8RiskPoly, loc, percComparator);
-          day8Sign = day8ProbRisk > 0 ? this.evaluatePolygons(day8SignPoly, loc, sigComparator) : false;
-          this._geoJsonCache.set(day8URL, { mode: fetch8.mode, etag: fetch8.newEtag ?? null, hash: fetch8.newHash ?? null, result: { probRisk: day8ProbRisk, sign: day8Sign }, timestamp: Date.now() });
-        }
-      }
       const day8Risk = this.percToRisk(day8ProbRisk, day8Sign);
 
       let day48Risk = false;
