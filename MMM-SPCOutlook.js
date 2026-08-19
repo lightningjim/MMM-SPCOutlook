@@ -111,6 +111,14 @@
         this.spcrisk.fireWeather.day6Risk > 0 ||
         this.spcrisk.fireWeather.day7Risk > 0 ||
         this.spcrisk.fireWeather.day8Risk > 0
+      )) &&
+      // ERO extension of the no-risk gate (Phase 19 RPT-06 regression target)
+      !(this.config.showExcessiveRain && this.spcrisk.excessiveRain && (
+        this.spcrisk.excessiveRain.day1Risk != "NONE" ||
+        this.spcrisk.excessiveRain.day2Risk != "NONE" ||
+        this.spcrisk.excessiveRain.day3Risk != "NONE" ||
+        this.spcrisk.excessiveRain.day4Risk != "NONE" ||
+        this.spcrisk.excessiveRain.day5Risk != "NONE"
       ))
     ) {
       wrapper.innerHTML = "No Severe Weather Risk"
