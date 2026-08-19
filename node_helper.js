@@ -10,6 +10,7 @@ const xpath    = require("xpath");
 const select = xpath.useNamespaces({
   k: "http://www.opengis.net/kml/2.2"
 });
+const { PRODUCT_REGISTRY } = require("./productRegistry");
 const valueToFullRisk = {
   NONE: "None", TSTM: "General Thunderstorms", MRGL: "Marginal", SLGT: "Slight", ENH: "Enhanced", MDT: "Moderate", HIGH: "High"
 };
@@ -25,12 +26,13 @@ module.exports = NodeHelper.create({
     this._cachedLon = null;
     this._updateInterval = 60;
     this._proximityWeighting = false;
+    this._products = { showExcessiveRain: false };
   },
 
   // Called when the front-end (MMM-SPCOutlook.js) sends a socket notification
   socketNotificationReceived: async function(notification, payload) {
     if (notification === "GET_SPC_DATA") {
-      const { lat, lon, extended, updateInterval, proximityWeighting } = payload;
+      const { lat, lon, extended, updateInterval, proximityWeighting, products } = payload;
       if (updateInterval === undefined) {
         if (!this._loggedIntervalFallback) {
           Log.info("MMM-SPCOutlook: GET_SPC_DATA missing updateInterval, defaulting to 60 minutes");
@@ -41,6 +43,10 @@ module.exports = NodeHelper.create({
         this._updateInterval = updateInterval;
       }
       this._proximityWeighting = proximityWeighting === true;
+      // Defensive re-default for per-product toggles (CFG-01, D-06), mirroring the
+      // _updateInterval / _proximityWeighting handling above — Phases 15-17 add one
+      // `=== true` line per new registry row here.
+      this._products = { showExcessiveRain: products?.showExcessiveRain === true };
       const md = await this.getMesoscaleDiscussion(lat, lon);
       const outlook = await this.getSpcOutlook(lat, lon, extended);
       // Send the results back to your front-end module
@@ -418,6 +424,9 @@ module.exports = NodeHelper.create({
    *   day48Risk (boolean, always false when `extended` is false);
    *   fireWeather with day1Risk/day1Text through day8Risk/day8Text
    *   (day3-8 zero/"None" defaults when `extended` is false);
+   *   excessiveRain with per-day Risk/Text/Color/ValidTime fields for days 1
+   *   through 5 (always present, regardless of this._products.showExcessiveRain
+   *   — "NONE"/"None"/no-data color/null defaults when the toggle is off, D-05);
    *   and optional _stale (boolean) and _staleAsOf (timestamp) when serving cached data
    */
   async getSpcOutlook(lat, lon, extended) {
@@ -961,6 +970,54 @@ module.exports = NodeHelper.create({
       let day48Risk = false;
       if(day4ProbRisk > 0 || day5ProbRisk > 0 || day6ProbRisk > 0 || day7ProbRisk > 0 || day8ProbRisk > 0) day48Risk = true;
 
+      // WPC Excessive Rainfall Outlook (ERO), Days 1-5. This block never runs when
+      // showExcessiveRain is off, yet the excessiveRain payload block below is
+      // always emitted (D-05). `anyStale` is confined strictly to this gate (D-04).
+      // ERO's `dn` map is the registry row's own (`ero.toValue`) and must never be
+      // fed through fire weather's uppercase-DN-keyed value map (ERO-02). Every URL
+      // comes from `ero.buildUrl` so the query string is byte-stable across polls
+      // (PERF-02, D-09). The cache stores the raw numeric tier under `value`, with
+      // the single `ero.valueToTier` conversion deliberately placed downstream of
+      // the cache-hit/fresh-data branch so both paths produce the identical tier
+      // string (PERF-02).
+      const ero = PRODUCT_REGISTRY.excessiveRain;
+      const eroTiers = { 1: "NONE", 2: "NONE", 3: "NONE", 4: "NONE", 5: "NONE" };
+      const eroValidTimes = { 1: null, 2: null, 3: null, 4: null, 5: null };
+
+      if (this._products.showExcessiveRain) {
+        for (let d = 1; d <= 5; d++) {
+          const url = ero.buildUrl(d);
+          const fetchResult = await this.fetchGeoJsonCached(url);
+          if (fetchResult.stale) anyStale = true;
+
+          let eroValue = 0;
+          let eroValidTime = null;
+
+          if (fetchResult.data === null && fetchResult.cachedResult !== null) {
+            eroValue = fetchResult.cachedResult.value;
+            eroValidTime = fetchResult.cachedResult.validTime;
+          } else if (fetchResult.data !== null) {
+            const polys = this.extractPolygons(fetchResult.data, ero.toValue, ero.includesFeat);
+            eroValue = this.evaluatePolygons(polys, loc, catComparator);
+            const firstFeature = fetchResult.data.features[0];
+            eroValidTime = firstFeature ? firstFeature.properties[ero.validTimeField] : null;
+            this._geoJsonCache.set(url, {
+              mode: fetchResult.mode,
+              etag: fetchResult.newEtag ?? null,
+              hash: fetchResult.newHash ?? null,
+              result: { value: eroValue, validTime: eroValidTime },
+              timestamp: Date.now()
+            });
+          }
+
+          // Convert exactly once, after the branch closes — never inside either
+          // branch — so a cache hit produces the identical tier string as a fresh
+          // fetch (PERF-02, D-03).
+          eroTiers[d] = ero.valueToTier[eroValue] || "NONE";
+          eroValidTimes[d] = eroValidTime;
+        }
+      }
+
       return {
         ...(anyStale ? { _stale: true, _staleAsOf: Date.now() } : {}),
         "day48Risk": day48Risk,
@@ -1063,6 +1120,13 @@ module.exports = NodeHelper.create({
           day7Text: fireValueToFull[day7FireRisk],
           day8Risk: day8FireRisk,
           day8Text: fireValueToFull[day8FireRisk]
+        },
+        excessiveRain: {
+          day1Risk: eroTiers[1], day1Text: ero.tierToText[eroTiers[1]], day1Color: ero.tierToColor[eroTiers[1]], day1ValidTime: eroValidTimes[1],
+          day2Risk: eroTiers[2], day2Text: ero.tierToText[eroTiers[2]], day2Color: ero.tierToColor[eroTiers[2]], day2ValidTime: eroValidTimes[2],
+          day3Risk: eroTiers[3], day3Text: ero.tierToText[eroTiers[3]], day3Color: ero.tierToColor[eroTiers[3]], day3ValidTime: eroValidTimes[3],
+          day4Risk: eroTiers[4], day4Text: ero.tierToText[eroTiers[4]], day4Color: ero.tierToColor[eroTiers[4]], day4ValidTime: eroValidTimes[4],
+          day5Risk: eroTiers[5], day5Text: ero.tierToText[eroTiers[5]], day5Color: ero.tierToColor[eroTiers[5]], day5ValidTime: eroValidTimes[5]
         }
       };
 
