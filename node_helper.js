@@ -10,6 +10,7 @@ const xpath    = require("xpath");
 const select = xpath.useNamespaces({
   k: "http://www.opengis.net/kml/2.2"
 });
+const { PRODUCT_REGISTRY } = require("./productRegistry");
 const valueToFullRisk = {
   NONE: "None", TSTM: "General Thunderstorms", MRGL: "Marginal", SLGT: "Slight", ENH: "Enhanced", MDT: "Moderate", HIGH: "High"
 };
@@ -25,12 +26,13 @@ module.exports = NodeHelper.create({
     this._cachedLon = null;
     this._updateInterval = 60;
     this._proximityWeighting = false;
+    this._products = { showExcessiveRain: false };
   },
 
   // Called when the front-end (MMM-SPCOutlook.js) sends a socket notification
   socketNotificationReceived: async function(notification, payload) {
     if (notification === "GET_SPC_DATA") {
-      const { lat, lon, extended, updateInterval, proximityWeighting } = payload;
+      const { lat, lon, extended, updateInterval, proximityWeighting, products } = payload;
       if (updateInterval === undefined) {
         if (!this._loggedIntervalFallback) {
           Log.info("MMM-SPCOutlook: GET_SPC_DATA missing updateInterval, defaulting to 60 minutes");
@@ -41,6 +43,10 @@ module.exports = NodeHelper.create({
         this._updateInterval = updateInterval;
       }
       this._proximityWeighting = proximityWeighting === true;
+      // Defensive re-default for per-product toggles (CFG-01, D-06), mirroring the
+      // _updateInterval / _proximityWeighting handling above — Phases 15-17 add one
+      // `=== true` line per new registry row here.
+      this._products = { showExcessiveRain: products?.showExcessiveRain === true };
       const md = await this.getMesoscaleDiscussion(lat, lon);
       const outlook = await this.getSpcOutlook(lat, lon, extended);
       // Send the results back to your front-end module
