@@ -401,16 +401,23 @@ module.exports = NodeHelper.create({
 
   /**
    * Fetch and evaluate all SPC outlook layers for the given location, returning structured risk data.
+   * The returned object always carries day1 through day8, day48Risk, and the full eight-day
+   * fireWeather block, regardless of the `extended` argument. `extended` controls only whether
+   * Day 4-8 SPC outlook and Day 3-8 fire weather data are fetched — it never changes which keys
+   * are present.
    * @param lat - latitude of the user location
    * @param lon - longitude of the user location
-   * @param extended - when true, also fetch Days 4-8 outlook data
-   * @returns object with day1, day2, day3 (and optionally day4-8) outlook data, each containing:
+   * @param extended - when true, also fetch Days 4-8 SPC outlook and Days 3-8 fire weather data
+   * @returns object with day1 through day8 outlook data, day48Risk, and fireWeather, each containing:
    *   risk (string), text (string), color (hex string), probRisk (boolean),
    *   torRisk (number), torCig (number), hailRisk (number), hailCig (number),
    *   windRisk (number), windCig (number) for days 1-2;
    *   probRisk (number) and cig (number) for day3;
-   *   probRisk (number), sign (boolean), risk (string), color, text for days 4-8;
-   *   fireWeather with day1Risk/day1Text/day2Risk/day2Text;
+   *   probRisk (number), sign (boolean), risk (string), color, text for days 4-8
+   *   (zero/no-risk defaults when `extended` is false);
+   *   day48Risk (boolean, always false when `extended` is false);
+   *   fireWeather with day1Risk/day1Text through day8Risk/day8Text
+   *   (day3-8 zero/"None" defaults when `extended` is false);
    *   and optional _stale (boolean) and _staleAsOf (timestamp) when serving cached data
    */
   async getSpcOutlook(lat, lon, extended) {
@@ -841,78 +848,6 @@ module.exports = NodeHelper.create({
       let day6ProbRisk = 0, day6Sign = false;
       let day7ProbRisk = 0, day7Sign = false;
       let day8ProbRisk = 0, day8Sign = false;
-
-      if (!extended)
-      {
-        return {
-          ...(anyStale ? { _stale: true, _staleAsOf: Date.now() } : {}),
-          day1: {
-           "risk": day1Risk,
-           "text": valueToFullRisk[day1Risk],
-           "color": riskToColor[day1Risk],
-           "probRisk": day1ProbRisk,
-           "torRisk": day1TorRisk,
-           "torCig": day1TorCig,
-           "hailRisk": day1HailRisk,
-           "hailCig": day1HailCig,
-           "windRisk": day1WindRisk,
-           "windCig": day1WindCig,
-           ...buildProximitySubtree({
-             categorical: day1CatProximity,
-             torCig: day1TorCigProximity,
-             hailCig: day1HailCigProximity,
-             windCig: day1WindCigProximity
-           })
-          },
-          day2: {
-            "risk": day2Risk,
-            "text": valueToFullRisk[day2Risk],
-            "color": riskToColor[day2Risk],
-            "probRisk": day2ProbRisk,
-            "torRisk": day2TorRisk,
-            "torCig": day2TorCig,
-            "hailRisk": day2HailRisk,
-            "hailCig": day2HailCig,
-            "windRisk": day2WindRisk,
-            "windCig": day2WindCig,
-            ...buildProximitySubtree({
-              categorical: day2CatProximity,
-              torCig: day2TorCigProximity,
-              hailCig: day2HailCigProximity,
-              windCig: day2WindCigProximity
-            })
-          },
-          day3: {
-          "risk": day3Risk,
-          "text": valueToFullRisk[day3Risk],
-          "color": riskToColor[day3Risk],
-          "probRisk": day3ProbRisk,
-          "cig": day3Cig,
-          ...buildProximitySubtree({
-            categorical: day3CatProximity,
-            cig: day3CigProximity
-          })
-          },
-          fireWeather: {
-            day1Risk: day1FireRisk,
-            day1Text: fireValueToFull[day1FireRisk],
-            day2Risk: day2FireRisk,
-            day2Text: fireValueToFull[day2FireRisk],
-            day3Risk: 0,
-            day3Text: "None",
-            day4Risk: 0,
-            day4Text: "None",
-            day5Risk: 0,
-            day5Text: "None",
-            day6Risk: 0,
-            day6Text: "None",
-            day7Risk: 0,
-            day7Text: "None",
-            day8Risk: 0,
-            day8Text: "None"
-          }
-        };
-      }
 
       // Day 4-8 — PERF-02: single-pass extractPolygons for both risk and SIGN before evaluatePolygons
       if (extended) {
