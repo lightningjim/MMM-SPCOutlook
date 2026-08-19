@@ -72,7 +72,7 @@ Full details: `.planning/milestones/v1.2-ROADMAP.md`
   4. A day where the location falls outside every ERO polygon shows no ERO row — not an empty or error row (ERO-03).
   5. A network trace shows the ERO endpoint always requested with `f=geojson` (never a raw `f=json` fallback), and the same query string is issued on every poll cycle so the ETag/hash cache hits instead of re-running turf on unchanged data (DATA-01, PERF-02).
 
-**Plans:** 3/5 plans executed
+**Plans:** 4/5 plans executed
 
 Plans:
 **Wave 1**
@@ -86,7 +86,7 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 14-04-PLAN.md — ERO frontend: toggle, render rows, extend the no-risk gate (wave 3)
+- [x] 14-04-PLAN.md — ERO frontend: toggle, render rows, extend the no-risk gate (wave 3)
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
@@ -190,7 +190,7 @@ Phases execute in numeric order: 14 → 15 → 16 → 17 → 18 → 19
 | 11. Stale Data Indicator | v1.2 | 2/2 | Complete | 2026-04-25 |
 | 12. Proximity Backend Foundation | v1.2 | 3/3 | Complete | 2026-05-02 |
 | 13. Proximity Frontend Render | v1.2 | 3/3 | Complete | 2026-05-03 |
-| 14. Foundation & WPC Excessive Rainfall Outlook | v2.0 | 3/5 | In Progress|  |
+| 14. Foundation & WPC Excessive Rainfall Outlook | v2.0 | 4/5 | In Progress|  |
 | 15. WPC Winter Storm Severity & Mesoscale Precipitation Discussion | v2.0 | 0/? | Not started | - |
 | 16. WPC Day 3–7 / CPC Day 8–14 Hazards Outlook | v2.0 | 0/? | Not started | - |
 | 17. NWS/WPC HeatRisk & Parallelized Fetching | v2.0 | 0/? | Not started | - |
