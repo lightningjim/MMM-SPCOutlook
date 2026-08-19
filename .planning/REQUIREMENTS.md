@@ -9,7 +9,7 @@
 ### Excessive Rainfall Outlook (WPC)
 
 - [ ] **ERO-01**: User sees their location's WPC Excessive Rainfall Outlook risk tier for Days 1–5 when `showExcessiveRain` is enabled
-- [ ] **ERO-02**: User sees the correct tier label (MRGL/SLGT/MDT/HIGH) with ERO's own `dn` value domain, not the fire weather `DN` mapping
+- [x] **ERO-02**: User sees the correct tier label (MRGL/SLGT/MDT/HIGH) with ERO's own `dn` value domain, not the fire weather `DN` mapping
 - [ ] **ERO-03**: User sees no ERO row for a day where their location falls outside all ERO polygons
 
 ### Winter Storm Severity Index (WPC)
@@ -61,12 +61,12 @@
 - [ ] **CFG-01**: User enables each new product independently via its own boolean, all defaulting to false
 - [ ] **CFG-02**: User's existing SPC and fire weather configuration continues to work, with the `extended` flag no longer gating the payload shape
 - [ ] **PERF-01**: User's Pi issues the new product fetches concurrently rather than sequentially, bounding cold-cache startup latency
-- [ ] **PERF-02**: User's ETag/SHA256 cache stays effective, via consistent ArcGIS query-string construction that does not multiply cache keys
+- [x] **PERF-02**: User's ETag/SHA256 cache stays effective, via consistent ArcGIS query-string construction that does not multiply cache keys
 - [ ] **PERF-03**: User sees a measured cold-cache latency figure on target hardware before the milestone closes
 
 ### Data Integrity
 
-- [ ] **DATA-01**: User's coordinates are always evaluated against WGS84 geometry, with `f=geojson` requested for every ArcGIS endpoint and no raw `f=json` fallback path
+- [x] **DATA-01**: User's coordinates are always evaluated against WGS84 geometry, with `f=geojson` requested for every ArcGIS endpoint and no raw `f=json` fallback path
 - [ ] **DATA-02**: User sees a stale indicator that accounts for the Hazards Outlook's Mon–Fri-only cadence, without false-alarming every weekend
 - [ ] **DATA-03**: Each product uses its own label-to-value vocabulary, with no mapping reused across products
 
@@ -108,10 +108,10 @@ Deferred to v2.x. Tracked but not in this roadmap.
 |-------------|-------|--------|
 | CFG-01 | Phase 14 | Pending |
 | CFG-02 | Phase 14 | Pending |
-| DATA-01 | Phase 14 | Pending |
-| PERF-02 | Phase 14 | Pending |
+| DATA-01 | Phase 14 | Complete |
+| PERF-02 | Phase 14 | Complete |
 | ERO-01 | Phase 14 | Pending |
-| ERO-02 | Phase 14 | Pending |
+| ERO-02 | Phase 14 | Complete |
 | ERO-03 | Phase 14 | Pending |
 | WSSI-01 | Phase 15 | Pending |
 | WSSI-02 | Phase 15 | Pending |
