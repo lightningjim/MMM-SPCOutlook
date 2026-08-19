@@ -4,16 +4,19 @@
     lon: -97.44,
     extended: false,
     updateInterval: 60,
-    proximityWeighting: false
+    proximityWeighting: false,
+    showExcessiveRain: false    // WPC Excessive Rainfall Outlook toggle; every new product flag defaults to false
   },
 
   start: function() {
     // Request data once the module starts
     Log.info(`Starting module: ${this.name}`);
     Log.info("SPC-Outlook: GET_SPC_DATA - " + this.config.lat + "," + this.config.lon + "," + this.config.extended);
-    this.sendSocketNotification("GET_SPC_DATA", { lat: this.config.lat, lon: this.config.lon, extended: this.config.extended, updateInterval: this.config.updateInterval, proximityWeighting: this.config.proximityWeighting });
+    // Per-product toggles travel as one nested `products` object rather than additional flat fields;
+    // Phases 15-17 add their flags to this same object.
+    this.sendSocketNotification("GET_SPC_DATA", { lat: this.config.lat, lon: this.config.lon, extended: this.config.extended, updateInterval: this.config.updateInterval, proximityWeighting: this.config.proximityWeighting, products: { showExcessiveRain: this.config.showExcessiveRain } });
     // Set an interval to update every hour (3600000 milliseconds)
-    setInterval(() => {this.sendSocketNotification("GET_SPC_DATA", { lat: this.config.lat, lon: this.config.lon, extended: this.config.extended, updateInterval: this.config.updateInterval, proximityWeighting: this.config.proximityWeighting });}, this.config.updateInterval * 60000);
+    setInterval(() => {this.sendSocketNotification("GET_SPC_DATA", { lat: this.config.lat, lon: this.config.lon, extended: this.config.extended, updateInterval: this.config.updateInterval, proximityWeighting: this.config.proximityWeighting, products: { showExcessiveRain: this.config.showExcessiveRain } });}, this.config.updateInterval * 60000);
   },
 
   socketNotificationReceived: function(notification, payload) {
