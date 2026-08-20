@@ -8,15 +8,29 @@
     showExcessiveRain: false    // WPC Excessive Rainfall Outlook toggle; every new product flag defaults to false
   },
 
+  // WR-15: single source of truth for the GET_SPC_DATA payload. It was previously written
+  // out twice — on startup and inside the interval — so a flag added to only one copy
+  // rendered correctly at startup and silently reverted on the first refresh.
+  // Per-product toggles travel as one nested `products` object rather than additional flat
+  // fields; Phases 15-17 add their flags here, in this one place.
+  buildRequestPayload: function() {
+    return {
+      lat: this.config.lat,
+      lon: this.config.lon,
+      extended: this.config.extended,
+      updateInterval: this.config.updateInterval,
+      proximityWeighting: this.config.proximityWeighting,
+      products: { showExcessiveRain: this.config.showExcessiveRain }
+    };
+  },
+
   start: function() {
     // Request data once the module starts
     Log.info(`Starting module: ${this.name}`);
     Log.info("SPC-Outlook: GET_SPC_DATA - " + this.config.lat + "," + this.config.lon + "," + this.config.extended);
-    // Per-product toggles travel as one nested `products` object rather than additional flat fields;
-    // Phases 15-17 add their flags to this same object.
-    this.sendSocketNotification("GET_SPC_DATA", { lat: this.config.lat, lon: this.config.lon, extended: this.config.extended, updateInterval: this.config.updateInterval, proximityWeighting: this.config.proximityWeighting, products: { showExcessiveRain: this.config.showExcessiveRain } });
+    this.sendSocketNotification("GET_SPC_DATA", this.buildRequestPayload());
     // Set an interval to update every hour (3600000 milliseconds)
-    setInterval(() => {this.sendSocketNotification("GET_SPC_DATA", { lat: this.config.lat, lon: this.config.lon, extended: this.config.extended, updateInterval: this.config.updateInterval, proximityWeighting: this.config.proximityWeighting, products: { showExcessiveRain: this.config.showExcessiveRain } });}, this.config.updateInterval * 60000);
+    setInterval(() => {this.sendSocketNotification("GET_SPC_DATA", this.buildRequestPayload());}, this.config.updateInterval * 60000);
   },
 
   socketNotificationReceived: function(notification, payload) {
