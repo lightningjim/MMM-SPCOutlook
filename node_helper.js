@@ -1,5 +1,18 @@
 const NodeHelper = require("node_helper");
 const fetch = (...args) => import('node-fetch').then(({ default: f }) => f(...args));
+// WR-11: node-fetch has no default timeout and getSpcOutlook is a fully serial ~25-hop
+// await chain that socketNotificationReceived awaits before emitting anything, so a single
+// hung socket would block the entire payload indefinitely — and with no in-flight guard the
+// next interval tick stacks another chain behind it. Every fetch in this file therefore
+// carries an abort signal. The AbortError lands in each call site's existing catch, which
+// already routes it to the stale-fallback / hard-failure path.
+const FETCH_TIMEOUT_MS = 15000;
+const withTimeout = (options = {}) => {
+  if (typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function") {
+    return { ...options, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) };
+  }
+  return options;   // Node < 17.3 — no core AbortSignal.timeout; behaviour is unchanged
+};
 const turf = require("@turf/turf"); // or another geometry librarykmz-
 const Log = require("logger");
 const crypto = require("crypto");
@@ -73,7 +86,7 @@ module.exports = NodeHelper.create({
   },
 
   async fetchBinBuffer(url){
-    const res = await fetch(url);
+    const res = await fetch(url, withTimeout());
     if(!res.ok) throw new Error(`Failed to fetch ${url}: ${res.status}`);
     return Buffer.from(await res.arrayBuffer());
   },
@@ -322,7 +335,7 @@ module.exports = NodeHelper.create({
 
   async fetchGeoJson(url){
     try {
-      const result = await fetch(url);
+      const result = await fetch(url, withTimeout());
       if(!result.ok) throw new Error(`HTTP ${result.status} fetching ${url}`);
       const data = await result.json();
       return data;
@@ -352,7 +365,7 @@ module.exports = NodeHelper.create({
 
     let res;
     try {
-      res = await fetch(url, { headers });
+      res = await fetch(url, withTimeout({ headers }));
     } catch (err) {
       // Network error
       if (entry && this._isWithinStaleWindow(entry.timestamp, this._updateInterval)) {
