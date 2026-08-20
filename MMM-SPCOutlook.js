@@ -90,11 +90,20 @@
       if (mode === "outside") return " " + weight.toFixed(1) + " (near " + tierLabel + ")";
       return " → " + tierLabel + " " + weight.toFixed(1);
     };
+    // WR-12: every string below that originates upstream is remote-controlled. The helper's
+    // error text is err.toString(), and a JSON.parse SyntaxError embeds a verbatim window of
+    // the response body, so an attacker-positioned `<img src=x onerror=...>` fragment would
+    // otherwise reach innerHTML unescaped; MD names are unbounded remote KML text. Error
+    // text goes through textContent; anything concatenated into an innerHTML string is
+    // escaped first.
+    const escapeHtml = (value) => String(value).replace(/[&<>"']/g, (ch) => (
+      { "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" }[ch]
+    ));
     const wrapper = document.createElement("div");
     if (!this.spcrisk) {
       wrapper.innerHTML = "Loading SPC Outlook...";
     } else if (this.spcrisk.error) {
-      wrapper.innerHTML = "Error: " + this.spcrisk.error;
+      wrapper.textContent = "Error: " + this.spcrisk.error;
     } else if (
       this.spcrisk.day1.risk == "NONE" &&
       this.spcrisk.day2.risk == "NONE" &&
@@ -140,7 +149,7 @@
       }
       if(this.mds) {
         for(const MD of this.mds){
-          wrapper.innerHTML += "<span style=\"color: #0059E0\">" + MD + " in effect.</span><br/>"
+          wrapper.innerHTML += "<span style=\"color: #0059E0\">" + escapeHtml(MD) + " in effect.</span><br/>"
         }
       }
       if(this.spcrisk.day1.risk != "NONE" || hasRenderableProximity(this.spcrisk.day1.proximity?.categorical))
