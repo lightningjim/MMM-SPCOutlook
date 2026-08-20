@@ -105,7 +105,10 @@ module.exports = NodeHelper.create({
    * @param geojson - GeoJSON FeatureCollection containing Polygon and/or MultiPolygon features
    * @param toValue - function mapping a feature's LABEL string to a numeric value
    * @param includesFeat - predicate (label, value) => boolean; feature is included when true
-   * @returns array of { label, value, poly } objects for features that pass the predicate.
+   * @returns array of { label, value, poly, feature } objects for features that pass the
+   *   predicate. `feature` is the source GeoJSON feature, retained so callers can read
+   *   product-specific properties (e.g. the ERO's `valid_time`) off the polygon the user
+   *   is actually inside rather than off `features[0]` (CR-01/WR-10).
    *   Returns an empty array rather than throwing when `geojson` is not a usable
    *   FeatureCollection (see `_isFeatureCollection`), and silently skips
    *   individual features lacking `properties` or `geometry`.
@@ -126,7 +129,7 @@ module.exports = NodeHelper.create({
       if (f.geometry.type === "Polygon") { poly = turf.polygon(f.geometry.coordinates);}
       else if (f.geometry.type === "MultiPolygon") { poly = turf.multiPolygon(f.geometry.coordinates);}
       else return;
-      polygons.push({ label, value, poly });
+      polygons.push({ label, value, poly, feature: f });
     });
     return polygons;
   },
@@ -146,6 +149,31 @@ module.exports = NodeHelper.create({
       }
     });
     return best;
+  },
+
+  /**
+   * Read a validity-window property off the polygon that produced the winning tier.
+   * @param items - array of { label, value, poly, feature } from extractPolygons
+   * @param loc - turf point representing the query location
+   * @param winningValue - the tier value evaluatePolygons resolved for `loc`
+   * @param field - the feature property to read (e.g. the ERO registry row's validTimeField)
+   * @returns the property value from the first item whose value equals `winningValue` and
+   *   whose polygon contains `loc`, or null when there is no such item or it carries no
+   *   usable `properties`. Never throws: a malformed feature yields null rather than
+   *   discarding an already-resolved risk tier (CR-01), and `features[0]` is never
+   *   consulted, since it is whichever polygon the server serialised first, not the one
+   *   the user is standing in (WR-10).
+   */
+  _validTimeOfWinner(items, loc, winningValue, field){
+    if (!Array.isArray(items) || !field) return null;
+    for (const item of items) {
+      if (!item || item.value !== winningValue || !item.poly) continue;
+      if (!turf.booleanPointInPolygon(loc, item.poly)) continue;
+      const props = item.feature && item.feature.properties;
+      if (!props || typeof props !== "object") return null;
+      return props[field] ?? null;
+    }
+    return null;
   },
 
   /**
@@ -1032,8 +1060,14 @@ module.exports = NodeHelper.create({
             }
             const polys = this.extractPolygons(fetchResult.data, ero.toValue, ero.includesFeat);
             eroValue = this.evaluatePolygons(polys, loc, catComparator);
-            const firstFeature = fetchResult.data.features[0];
-            eroValidTime = firstFeature ? firstFeature.properties[ero.validTimeField] : null;
+            // CR-01/WR-10: read valid_time off the winning polygon — the one the user is
+            // actually inside at the resolved tier — never off `features[0]`, and never at
+            // all on the no-risk path (a risk-free day must not advertise a valid window).
+            // Every dereference here is guarded: a feature with absent/null `properties`
+            // must never throw away an already-computed real tier.
+            eroValidTime = eroValue > 0
+              ? this._validTimeOfWinner(polys, loc, eroValue, ero.validTimeField)
+              : null;
             this._geoJsonCache.set(url, {
               mode: fetchResult.mode,
               etag: fetchResult.newEtag ?? null,
