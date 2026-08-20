@@ -50,7 +50,7 @@ Full details: `.planning/milestones/v1.2-ROADMAP.md`
 
 **Milestone Goal:** Extend the module beyond SPC to WPC and CPC hazard products, and restructure the display from per-product row sections into a unified per-day report that merges and deduplicates all sources.
 
-- [x] **Phase 14: Foundation & WPC Excessive Rainfall Outlook** - Decouple payload shape from `extended`, establish per-product toggles and endpoint conventions, ship ERO (all 5 plans executed; verification found 1 blocking gap — see 14-VERIFICATION.md) (completed 2026-08-20)
+- [ ] **Phase 14: Foundation & WPC Excessive Rainfall Outlook** - Decouple payload shape from `extended`, establish per-product toggles and endpoint conventions, ship ERO (all 7 plans executed incl. CR-01 gap closure; re-verification found 3 blocking gaps — see 14-VERIFICATION.md)
 - [ ] **Phase 15: WPC Winter Storm Severity & Mesoscale Precipitation Discussion** - Ship WSSI Overall Impact and MPD advisories
 - [ ] **Phase 16: WPC Day 3–7 / CPC Day 8–14 Hazards Outlook** - Ship per-day and window-spanning hazard entries with weekday-aware staleness
 - [ ] **Phase 17: NWS/WPC HeatRisk & Parallelized Fetching** - Ship the raster-identify HeatRisk product and parallelize all new fetches
@@ -198,7 +198,7 @@ Phases execute in numeric order: 14 → 15 → 16 → 17 → 18 → 19
 | 11. Stale Data Indicator | v1.2 | 2/2 | Complete | 2026-04-25 |
 | 12. Proximity Backend Foundation | v1.2 | 3/3 | Complete | 2026-05-02 |
 | 13. Proximity Frontend Render | v1.2 | 3/3 | Complete | 2026-05-03 |
-| 14. Foundation & WPC Excessive Rainfall Outlook | v2.0 | 7/7 | Complete   | 2026-08-20 |
+| 14. Foundation & WPC Excessive Rainfall Outlook | v2.0 | 7/7 | In Progress | -          |
 | 15. WPC Winter Storm Severity & Mesoscale Precipitation Discussion | v2.0 | 0/? | Not started | - |
 | 16. WPC Day 3–7 / CPC Day 8–14 Hazards Outlook | v2.0 | 0/? | Not started | - |
 | 17. NWS/WPC HeatRisk & Parallelized Fetching | v2.0 | 0/? | Not started | - |
