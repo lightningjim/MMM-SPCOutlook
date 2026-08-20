@@ -390,6 +390,13 @@ module.exports = NodeHelper.create({
 
     // 304 Not Modified — ETag cache hit (no body, must check before res.text())
     if (res.status === 304) {
+      // WR-14: a proxy can answer 304 to a request that carried no If-None-Match. Without
+      // this guard the `entry.result` dereference throws into getSpcOutlook's shared catch
+      // and nulls the entire payload over one layer.
+      if (!entry) {
+        Log.error('MMM-SPCOutlook: received 304 with no cache entry for ' + url + '; treating as a fetch failure');
+        return { data: null, cachedResult: null, stale: false, failed: true };
+      }
       Log.info('MMM-SPCOutlook: cache hit (ETag) for ' + url);
       return { data: null, cachedResult: entry.result, stale: false };
     }
@@ -581,9 +588,14 @@ module.exports = NodeHelper.create({
       // Part A: Location change invalidation
       const locationChanged = (lat !== this._cachedLat || lon !== this._cachedLon);
       if (locationChanged) {
-        for (const [url, entry] of this._geoJsonCache) {
-          this._geoJsonCache.set(url, { ...entry, result: null, timestamp: 0 });
-        }
+        // WR-14: clear outright rather than nulling `result` in place. Keeping mode/etag/hash
+        // meant the next request still sent If-None-Match, the server answered 304, and the
+        // 304 path returned cachedResult: null — which every caller's
+        // `data === null && cachedResult !== null` branch skips, falling through to the
+        // no-risk default. Because the 304 path never rewrites the entry, that pinned every
+        // product to "no risk" until the upstream bytes changed. Nothing in an entry is
+        // location-independent once `result` is dropped.
+        this._geoJsonCache.clear();
         this._cachedLat = lat;
         this._cachedLon = lon;
         Log.info('MMM-SPCOutlook: location changed — cache results invalidated');
