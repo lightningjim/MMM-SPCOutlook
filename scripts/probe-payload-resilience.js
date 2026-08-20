@@ -401,7 +401,11 @@ async function main() {
   process.exit(failed === 0 ? 0 : 1);
 }
 
+// WR-05: report what actually went wrong. A failure before the scenario loop — most
+// importantly loadNodeHelper() throwing because a stub no longer matches a require in
+// node_helper.js after a dependency change — is not a scenario result, and printing a
+// fabricated per-scenario tally hid the only diagnostic the runner had.
 main().catch((err) => {
-  console.log(`PROBE RESULT: 0 passed, ${scenarios.length} failed`);
+  console.log(`PROBE ABORTED before scenarios completed: ${err && err.stack ? err.stack : err}`);
   process.exitCode = 1;
 });
