@@ -351,6 +351,33 @@ module.exports = NodeHelper.create({
     const rawText = await res.text();
     const newEtag = res.headers.get('etag');
 
+    // CR-02: an HTTP 200 whose body is unusable (ArcGIS REST returns most failures as a
+    // 200 carrying an `error` object and no `features`; SPC can return an HTML error page)
+    // must never reach extractPolygons and must never be written to _geoJsonCache. Caching
+    // the resulting `0` under the bad body's ETag pins that layer to "no risk" behind every
+    // later 304 — a silent, self-perpetuating false negative. Instead fall back to a
+    // still-fresh cached result when one exists, exactly like the network-error path, and
+    // always name the URL that degraded.
+    const rejectBody = (reason) => {
+      Log.error('MMM-SPCOutlook: rejected an unusable response body for ' + url + ' (' + reason + '); not caching');
+      if (entry && entry.result !== null && entry.result !== undefined &&
+          this._isWithinStaleWindow(entry.timestamp, this._updateInterval)) {
+        return { data: null, cachedResult: entry.result, stale: true, failed: true };
+      }
+      return { data: null, cachedResult: null, stale: false, failed: true };
+    };
+
+    // JSON.parse on a remote body throws on any non-JSON response; letting that escape
+    // would reach getSpcOutlook's shared catch and null the entire payload for one bad
+    // layer (the containment CR-01 established for the ERO, applied to every layer).
+    const parseBody = () => {
+      try {
+        return { ok: true, value: JSON.parse(rawText) };
+      } catch (err) {
+        return { ok: false, reason: 'unparseable body: ' + err.message };
+      }
+    };
+
     if (newEtag) {
       // ETag mode — skip hash computation
       // If same ETag as cached, it's a hit (server didn't send 304, but ETag matches)
@@ -358,9 +385,11 @@ module.exports = NodeHelper.create({
         Log.info('MMM-SPCOutlook: cache hit (ETag) for ' + url);
         return { data: null, cachedResult: entry.result, stale: false };
       }
-      // Cache miss — parse and return new data
-      const data = JSON.parse(rawText);
-      return { data, rawText, newEtag, newHash: null, mode: 'etag' };
+      // Cache miss — parse, validate the shape, and return new data
+      const parsed = parseBody();
+      if (!parsed.ok) return rejectBody(parsed.reason);
+      if (!this._isFeatureCollection(parsed.value)) return rejectBody('not a usable FeatureCollection');
+      return { data: parsed.value, rawText, newEtag, newHash: null, mode: 'etag' };
     } else {
       // Hash mode — compute SHA256 of raw text
       const newHash = crypto.createHash('sha256').update(rawText).digest('hex');
@@ -368,9 +397,11 @@ module.exports = NodeHelper.create({
         Log.info('MMM-SPCOutlook: cache hit (hash) for ' + url);
         return { data: null, cachedResult: entry.result, stale: false };
       }
-      // Cache miss — parse and return new data
-      const data = JSON.parse(rawText);
-      return { data, rawText, newEtag: null, newHash, mode: 'hash' };
+      // Cache miss — parse, validate the shape, and return new data
+      const parsed = parseBody();
+      if (!parsed.ok) return rejectBody(parsed.reason);
+      if (!this._isFeatureCollection(parsed.value)) return rejectBody('not a usable FeatureCollection');
+      return { data: parsed.value, rawText, newEtag: null, newHash, mode: 'hash' };
     }
   },
 
