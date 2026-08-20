@@ -244,20 +244,40 @@ const GOLDEN_FIRE_WEATHER = '{"day1Risk":0,"day1Text":"None","day2Risk":0,"day2T
 
 const scenarios = [
   {
+    // WR-02: this is the scenario that actually states CR-01's contract — an optional,
+    // default-off product must not take the primary product offline. Registering only ERO
+    // routes could not show that: every SPC layer hard-failed too, so day1.risk was "NONE"
+    // whether or not the containment worked, and a regression that preserved the key shape
+    // while zeroing every SPC value would have passed. The day1 categorical layer is
+    // therefore routed to a real SLGT body and its *value* is asserted.
     name: "ero-arcgis-error-body",
     run: async (helper) => {
       resetHelper(helper);
       resetLogs();
       helper._products = { showExcessiveRain: true };
       installFetch(helper, [
+        ["https://www.spc.noaa.gov/products/outlook/day1otlk_cat.lyr.geojson", freshFetch(SPC_SLGT_BODY)],
         [ERO_URLS[1], freshFetch(ARCGIS_ERROR_BODY)],
         [ERO_URLS[2], freshFetch(ARCGIS_ERROR_BODY)],
         [ERO_URLS[3], freshFetch(ARCGIS_ERROR_BODY)],
         [ERO_URLS[4], freshFetch(ARCGIS_ERROR_BODY)],
         [ERO_URLS[5], freshFetch(ARCGIS_ERROR_BODY)]
       ]);
-      const out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false);
+      const originalPointInPolygon = turfStub.pointInPolygon;
+      turfStub.pointInPolygon = () => true;
+      let out;
+      try {
+        out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showExcessiveRain: true });
+      } finally {
+        turfStub.pointInPolygon = originalPointInPolygon;
+      }
       assertPayloadIntact(out);
+      if (out.day1.risk !== "SLGT") {
+        throw new Error(`an ERO failure destroyed the SPC day1 value: expected SLGT, got ${out.day1.risk}`);
+      }
+      if (out.day1.text !== "Slight" || out.day1.color !== "f7f690") {
+        throw new Error(`SPC day1 presentation fields did not survive the ERO failure: ${JSON.stringify(out.day1)}`);
+      }
       for (let d = 1; d <= 5; d++) {
         if (out.excessiveRain[`day${d}Risk`] !== "NONE") {
           throw new Error(`day${d}Risk expected NONE, got ${out.excessiveRain[`day${d}Risk`]}`);
