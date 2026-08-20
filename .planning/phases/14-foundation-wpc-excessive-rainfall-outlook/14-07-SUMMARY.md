@@ -199,3 +199,11 @@ None - no external service configuration required.
 ---
 *Phase: 14-foundation-wpc-excessive-rainfall-outlook*
 *Completed: 2026-08-19*
+
+## Self-Check: PASSED
+
+- FOUND: node_helper.js
+- FOUND: .planning/phases/14-foundation-wpc-excessive-rainfall-outlook/14-07-SUMMARY.md
+- FOUND: da7e092 (Task 1 commit)
+- FOUND: 10b42b7 (Task 2 commit)
+- FOUND: 2c2519c (SUMMARY commit)
