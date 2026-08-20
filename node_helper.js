@@ -109,14 +109,22 @@ module.exports = NodeHelper.create({
    * Determine whether a fetched body is a usable GeoJSON FeatureCollection.
    * @param body - the parsed response body from any SPC/WPC/CPC product fetch
    * @returns boolean, true only when `body` is a truthy object with no `error`
-   *   key and an array-typed `features` field. This is the shared response-shape
-   *   gate every WPC/CPC product fetch loop calls before handing a body to
-   *   `extractPolygons`; Phases 15-17 registry rows reuse it verbatim. A `false`
-   *   result means the caller must skip that fetch entirely — not cache it, not
-   *   evaluate it — and leave its day at the no-risk default.
+   *   key, no ArcGIS truncation flag, and an array-typed `features` field. This is
+   *   the shared response-shape gate every WPC/CPC product fetch loop calls before
+   *   handing a body to `extractPolygons`; Phases 15-17 registry rows reuse it
+   *   verbatim. A `false` result means the caller must skip that fetch entirely —
+   *   not cache it, not evaluate it — and leave its day at the no-risk default.
+   *
+   *   `exceededTransferLimit` (WR-08): buildArcGisQuery emits no resultRecordCount
+   *   and does no paging, so ArcGIS caps every query at the layer's maxRecordCount
+   *   and signals the truncation with this top-level flag on an otherwise
+   *   structurally valid FeatureCollection. If the user's polygon was among the
+   *   dropped features, evaluating such a body reports "NONE" with full confidence
+   *   and caches it — a silent false negative. A partial answer is not an answer.
    */
   _isFeatureCollection(body){
-    return !!body && typeof body === "object" && !body.error && Array.isArray(body.features);
+    return !!body && typeof body === "object" && !body.error &&
+           body.exceededTransferLimit !== true && Array.isArray(body.features);
   },
   /**
    * Extract polygon features from a GeoJSON object, mapping labels to numeric values.
