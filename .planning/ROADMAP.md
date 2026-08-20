@@ -72,7 +72,7 @@ Full details: `.planning/milestones/v1.2-ROADMAP.md`
   4. A day where the location falls outside every ERO polygon shows no ERO row — not an empty or error row (ERO-03).
   5. A network trace shows the ERO endpoint always requested with `f=geojson` (never a raw `f=json` fallback), and the same query string is issued on every poll cycle so the ETag/hash cache hits instead of re-running turf on unchanged data (DATA-01, PERF-02).
 
-**Plans:** 7 plans (5/5 original complete; 2 gap-closure plans added after verification found 1 blocking gap)
+**Plans:** 6/7 plans executed
 
 Plans:
 **Wave 1**
@@ -94,7 +94,7 @@ Plans:
 
 **Gap Closure Wave 1** *(CR-01 from 14-VERIFICATION.md; run via `/bm:execute-phase 14 --gaps-only`)*
 
-- [ ] 14-06-PLAN.md — Offline payload-resilience probe harness: reproduce CR-01 with no network and no node_modules (gap wave 1)
+- [x] 14-06-PLAN.md — Offline payload-resilience probe harness: reproduce CR-01 with no network and no node_modules (gap wave 1)
 
 **Gap Closure Wave 2** *(blocked on Gap Closure Wave 1)*
 
@@ -198,7 +198,7 @@ Phases execute in numeric order: 14 → 15 → 16 → 17 → 18 → 19
 | 11. Stale Data Indicator | v1.2 | 2/2 | Complete | 2026-04-25 |
 | 12. Proximity Backend Foundation | v1.2 | 3/3 | Complete | 2026-05-02 |
 | 13. Proximity Frontend Render | v1.2 | 3/3 | Complete | 2026-05-03 |
-| 14. Foundation & WPC Excessive Rainfall Outlook | v2.0 | 5/5 | Gaps Found | 2026-08-20 |
+| 14. Foundation & WPC Excessive Rainfall Outlook | v2.0 | 6/7 | In Progress|  |
 | 15. WPC Winter Storm Severity & Mesoscale Precipitation Discussion | v2.0 | 0/? | Not started | - |
 | 16. WPC Day 3–7 / CPC Day 8–14 Hazards Outlook | v2.0 | 0/? | Not started | - |
 | 17. NWS/WPC HeatRisk & Parallelized Fetching | v2.0 | 0/? | Not started | - |
