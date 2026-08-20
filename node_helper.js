@@ -39,7 +39,24 @@ module.exports = NodeHelper.create({
     this._cachedLon = null;
     this._updateInterval = 60;
     this._proximityWeighting = false;
-    this._products = { showExcessiveRain: false };
+    this._loggedIntervalFallback = false;
+    this._products = this._productToggles();
+  },
+
+  /**
+   * Build the per-product toggle map from the registry (WR-16).
+   * @param products - the frontend's optional `products` payload object
+   * @returns an object with one boolean per registry row, keyed by that row's `configFlag`
+   *   and defaulted to false. Driving this from PRODUCT_REGISTRY rather than a hand-written
+   *   literal is what makes the row's own "used by node_helper as this._products[configFlag]"
+   *   comment true, and means a Phase 15-17 row needs no edit here (CFG-01, D-06).
+   */
+  _productToggles(products){
+    const toggles = {};
+    for (const row of Object.values(PRODUCT_REGISTRY)) {
+      toggles[row.configFlag] = products?.[row.configFlag] === true;
+    }
+    return toggles;
   },
 
   // Called when the front-end (MMM-SPCOutlook.js) sends a socket notification
@@ -59,6 +76,8 @@ module.exports = NodeHelper.create({
       // Defensive re-default for per-product toggles (CFG-01, D-06), mirroring the
       // _updateInterval / _proximityWeighting handling above — Phases 15-17 add one
       // `=== true` line per new registry row here.
+      // WR-16: every registry row contributes its own `configFlag`, so a new product row
+      // needs no edit here — this is the read the row's own comment documents.
       // WR-13: snapshot the toggles into a local and pass them down the chain. The
       // helper-global field is written here but was not read until ~20 awaits later at the
       // ERO gate; with no in-flight guard, a second GET_SPC_DATA arriving mid-flight made
@@ -66,7 +85,7 @@ module.exports = NodeHelper.create({
       // one node_helper per module *type*, two configured instances overwrote each other's
       // on every poll. The field is still assigned for callers that reach getSpcOutlook
       // without an explicit snapshot.
-      const productToggles = { showExcessiveRain: products?.showExcessiveRain === true };
+      const productToggles = this._productToggles(products);
       this._products = productToggles;
       // CR-04: MagicMirror does not await this handler, so an unhandled rejection here
       // means sendSocketNotification is never reached and the frontend stays on
@@ -583,7 +602,7 @@ module.exports = NodeHelper.create({
     try {
       // WR-13: prefer this request's own toggle snapshot; the helper-global field is only
       // a fallback for callers (e.g. offline probes) that do not pass one.
-      const productToggles = products ?? this._products ?? { showExcessiveRain: false };
+      const productToggles = products ?? this._products ?? this._productToggles();
 
       // Part A: Location change invalidation
       const locationChanged = (lat !== this._cachedLat || lon !== this._cachedLon);
@@ -1129,9 +1148,12 @@ module.exports = NodeHelper.create({
       let day48Risk = false;
       if(day4ProbRisk > 0 || day5ProbRisk > 0 || day6ProbRisk > 0 || day7ProbRisk > 0 || day8ProbRisk > 0) day48Risk = true;
 
-      // WPC Excessive Rainfall Outlook (ERO), Days 1-5. This block never runs when
-      // showExcessiveRain is off, yet the excessiveRain payload block below is
-      // always emitted (D-05). `anyStale` is written only inside this gate (D-04).
+      // WPC Excessive Rainfall Outlook (ERO). This block never runs when the row's
+      // configFlag is off, yet the excessiveRain payload block below is always
+      // emitted (D-05). `anyStale` is written only inside this gate (D-04).
+      // WR-16: the day count, the seed objects, the loop bound and the payload block are
+      // all driven by `ero.days` — no literal day count survives outside the registry, so
+      // the row is the single place a product's span is declared.
       // ERO's `dn` map is the registry row's own (`ero.toValue`) and must never be
       // fed through fire weather's uppercase-DN-keyed value map (ERO-02). Every URL
       // comes from `ero.buildUrl` so the query string is byte-stable across polls
@@ -1149,11 +1171,16 @@ module.exports = NodeHelper.create({
       // indistinguishable from a genuine all-clear, and that false negative is the
       // one outcome this product exists to prevent (CR-03, WR-06).
       const ero = PRODUCT_REGISTRY.excessiveRain;
-      const eroTiers = { 1: "NONE", 2: "NONE", 3: "NONE", 4: "NONE", 5: "NONE" };
-      const eroValidTimes = { 1: null, 2: null, 3: null, 4: null, 5: null };
+      const eroDays = ero.days;
+      const eroTiers = {};
+      const eroValidTimes = {};
+      for (let d = 1; d <= eroDays; d++) {
+        eroTiers[d] = "NONE";
+        eroValidTimes[d] = null;
+      }
 
-      if (productToggles.showExcessiveRain) {
-        for (let d = 1; d <= 5; d++) {
+      if (productToggles[ero.configFlag]) {
+        for (let d = 1; d <= eroDays; d++) {
           try {
             const url = ero.buildUrl(d);
             const fetchResult = await this.fetchGeoJsonCached(url);
@@ -1172,7 +1199,7 @@ module.exports = NodeHelper.create({
                 // must not blank the display within one poll, so fall back to
                 // last-known-good and flag it stale. Only when there is nothing good to
                 // fall back to does the day stay at the no-risk default.
-                Log.error(`MMM-SPCOutlook excessiveRain day ${d}: response was not a usable FeatureCollection, leaving day at no risk`);
+                Log.error(`MMM-SPCOutlook ${ero.id} day ${d}: response was not a usable FeatureCollection, leaving day at no risk`);
                 anyStale = true;
                 const cached = this._geoJsonCache.get(url);
                 if (cached && cached.result && this._isWithinStaleWindow(cached.timestamp, this._updateInterval)) {
@@ -1208,9 +1235,21 @@ module.exports = NodeHelper.create({
             eroTiers[d] = ero.valueToTier[eroValue] || "NONE";
             eroValidTimes[d] = eroValidTime;
           } catch (eroErr) {
-            Log.error(`MMM-SPCOutlook excessiveRain day ${d}: fetch/parse/evaluate failed, leaving day at no risk`, eroErr);
+            Log.error(`MMM-SPCOutlook ${ero.id} day ${d}: fetch/parse/evaluate failed, leaving day at no risk`, eroErr);
           }
         }
+      }
+
+      // WR-16: built from `ero.days` rather than a hand-written five-day literal, so the
+      // registry row is the only place the product's day span is declared. Key insertion
+      // order (dayNRisk, dayNText, dayNColor, dayNValidTime) is deliberate — the probe's
+      // golden snapshots compare serialised payloads byte for byte.
+      const eroPayload = {};
+      for (let d = 1; d <= eroDays; d++) {
+        eroPayload[`day${d}Risk`] = eroTiers[d];
+        eroPayload[`day${d}Text`] = ero.tierToText[eroTiers[d]];
+        eroPayload[`day${d}Color`] = ero.tierToColor[eroTiers[d]];
+        eroPayload[`day${d}ValidTime`] = eroValidTimes[d];
       }
 
       return {
@@ -1316,13 +1355,7 @@ module.exports = NodeHelper.create({
           day8Risk: day8FireRisk,
           day8Text: fireValueToFull[day8FireRisk]
         },
-        excessiveRain: {
-          day1Risk: eroTiers[1], day1Text: ero.tierToText[eroTiers[1]], day1Color: ero.tierToColor[eroTiers[1]], day1ValidTime: eroValidTimes[1],
-          day2Risk: eroTiers[2], day2Text: ero.tierToText[eroTiers[2]], day2Color: ero.tierToColor[eroTiers[2]], day2ValidTime: eroValidTimes[2],
-          day3Risk: eroTiers[3], day3Text: ero.tierToText[eroTiers[3]], day3Color: ero.tierToColor[eroTiers[3]], day3ValidTime: eroValidTimes[3],
-          day4Risk: eroTiers[4], day4Text: ero.tierToText[eroTiers[4]], day4Color: ero.tierToColor[eroTiers[4]], day4ValidTime: eroValidTimes[4],
-          day5Risk: eroTiers[5], day5Text: ero.tierToText[eroTiers[5]], day5Color: ero.tierToColor[eroTiers[5]], day5ValidTime: eroValidTimes[5]
-        }
+        excessiveRain: eroPayload
       };
 
     } catch (err) {
