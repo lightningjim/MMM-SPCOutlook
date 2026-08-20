@@ -47,8 +47,26 @@ module.exports = NodeHelper.create({
       // _updateInterval / _proximityWeighting handling above — Phases 15-17 add one
       // `=== true` line per new registry row here.
       this._products = { showExcessiveRain: products?.showExcessiveRain === true };
-      const md = await this.getMesoscaleDiscussion(lat, lon);
-      const outlook = await this.getSpcOutlook(lat, lon, extended);
+      // CR-04: MagicMirror does not await this handler, so an unhandled rejection here
+      // means sendSocketNotification is never reached and the frontend stays on
+      // "Loading SPC Outlook..." forever — every later interval tick takes the identical
+      // path, so it never self-heals. getMesoscaleDiscussion throws on any non-2xx, on a
+      // DNS/TLS failure, on a KMZ with no KML, and on an MD KML with no features; none of
+      // those may be allowed to suppress the outlook payload.
+      let md = false;
+      try {
+        md = await this.getMesoscaleDiscussion(lat, lon);
+      } catch (err) {
+        Log.error("MMM-SPCOutlook: mesoscale discussion fetch failed, continuing without MDs", err);
+        md = false;   // matches getMesoscaleDiscussion's documented "no active MDs" return
+      }
+      let outlook;
+      try {
+        outlook = await this.getSpcOutlook(lat, lon, extended);
+      } catch (err) {
+        Log.error("MMM-SPCOutlook: outlook fetch failed", err);
+        outlook = { error: err.toString() };
+      }
       // Send the results back to your front-end module
       this.sendSocketNotification("SPC_DATA_RESULT", [outlook, md]);
     }
