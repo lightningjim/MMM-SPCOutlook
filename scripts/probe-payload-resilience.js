@@ -3,7 +3,7 @@
 //
 // Run with: node scripts/probe-payload-resilience.js
 //
-// Six scenarios feed getSpcOutlook a controlled fetchGeoJsonCached
+// Each scenario feeds getSpcOutlook a controlled fetchGeoJsonCached
 // replacement (never the real network) and assert the D-05 payload
 // contract: no `error` key, day1-day8, fireWeather, and a full 20-key
 // excessiveRain block, regardless of what the upstream host returns.
@@ -106,7 +106,11 @@ function throwingFetch() {
 // Replaces helper.fetchGeoJsonCached with a router over URL-substring
 // routes. Any URL matching no route returns the hard-failure shape, which
 // drives every unstubbed SPC/fire-weather value to its zero/no-risk
-// default. Records every URL passed so scenarios can assert on call counts.
+// default. `failed: true` mirrors what the real fetchGeoJsonCached returns
+// for a non-2xx or network error with no usable cache entry (CR-03) — the
+// flag every caller turns into the user-visible ⚠ stale badge, so a
+// no-risk reading is never mistaken for a confident all-clear.
+// Records every URL passed so scenarios can assert on call counts.
 function installFetch(helper, routes) {
   const calls = [];
   const fn = async (url) => {
@@ -116,7 +120,7 @@ function installFetch(helper, routes) {
         return handler(url);
       }
     }
-    return { data: null, cachedResult: null, stale: false };
+    return { data: null, cachedResult: null, stale: false, failed: true };
   };
   fn.calls = calls;
   helper.fetchGeoJsonCached = fn;
@@ -261,6 +265,29 @@ const scenarios = [
       assertPayloadIntact(out);
       if (out.excessiveRain.day1Risk !== "NONE") {
         throw new Error(`day1Risk expected NONE, got ${out.excessiveRain.day1Risk}`);
+      }
+    }
+  },
+  {
+    // CR-03: an ERO day that hard-fails (non-2xx / network error, no usable cache
+    // entry) resolves to "NONE". That reading must never be presentable as a
+    // confident all-clear — the payload has to carry the degrade signal the
+    // frontend renders as ⚠ Stale.
+    name: "ero-hard-fail-is-flagged",
+    run: async (helper) => {
+      resetHelper(helper);
+      resetLogs();
+      helper._products = { showExcessiveRain: true };
+      installFetch(helper, []);
+      const out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showExcessiveRain: true });
+      assertPayloadIntact(out);
+      for (let d = 1; d <= 5; d++) {
+        if (out.excessiveRain[`day${d}Risk`] !== "NONE") {
+          throw new Error(`day${d}Risk expected NONE, got ${out.excessiveRain[`day${d}Risk`]}`);
+        }
+      }
+      if (out._stale !== true) {
+        throw new Error("a hard-failed ERO fetch produced an unflagged no-risk payload (_stale !== true)");
       }
     }
   },

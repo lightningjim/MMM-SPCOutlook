@@ -329,7 +329,12 @@ module.exports = NodeHelper.create({
         Log.info('MMM-SPCOutlook: stale fallback for ' + url);
         return { data: null, cachedResult: entry.result, stale: true };
       }
-      return { data: null, cachedResult: null, stale: false };
+      // CR-03: with no usable cache entry this layer silently becomes "no risk". That is
+      // indistinguishable from a genuine all-clear, so it must be loud in the log AND
+      // flagged to the caller, which surfaces the ⚠ badge instead of a confident all-clear.
+      Log.error('MMM-SPCOutlook: unrecoverable fetch failure for ' + url + ' (network error: ' +
+                (err && err.message ? err.message : err) + ')');
+      return { data: null, cachedResult: null, stale: false, failed: true };
     }
 
     // 304 Not Modified — ETag cache hit (no body, must check before res.text())
@@ -344,7 +349,10 @@ module.exports = NodeHelper.create({
         Log.info('MMM-SPCOutlook: stale fallback for ' + url);
         return { data: null, cachedResult: entry.result, stale: true };
       }
-      return { data: null, cachedResult: null, stale: false };
+      // CR-03: see the network-error branch above — a 5xx/4xx with no usable cache entry
+      // is the most likely production failure and must never degrade silently.
+      Log.error('MMM-SPCOutlook: unrecoverable fetch failure for ' + url + ' (HTTP ' + res.status + ')');
+      return { data: null, cachedResult: null, stale: false, failed: true };
     }
 
     // HTTP 200 — read raw text
@@ -422,7 +430,7 @@ module.exports = NodeHelper.create({
     let cigProximity = null;
 
     const fetchResult = await this.fetchGeoJsonCached(url);
-    if (fetchResult.stale) stale = true;
+    if (fetchResult.stale || fetchResult.failed) stale = true;
 
     if (fetchResult.data === null && fetchResult.cachedResult !== null) {
       risk = fetchResult.cachedResult;
@@ -444,7 +452,7 @@ module.exports = NodeHelper.create({
 
     if (risk > 0) {
       const cigFetch = await this.fetchGeoJsonCached(cigUrl);
-      if (cigFetch.stale) stale = true;
+      if (cigFetch.stale || cigFetch.failed) stale = true;
       if (cigFetch.data === null && cigFetch.cachedResult !== null) {
         cig = cigFetch.cachedResult;
         if (this._proximityWeighting) {
@@ -601,7 +609,7 @@ module.exports = NodeHelper.create({
       let day1CatProximity = null;
       {
         const fetchResult = await this.fetchGeoJsonCached(day1CatURL);
-        if (fetchResult.stale) anyStale = true;
+        if (fetchResult.stale || fetchResult.failed) anyStale = true;
         if (fetchResult.data === null && fetchResult.cachedResult !== null) {
           day1RiskResult = fetchResult.cachedResult;
           if (this._proximityWeighting) {
@@ -665,7 +673,7 @@ module.exports = NodeHelper.create({
       let day2CatProximity = null;
       {
         const fetchResult = await this.fetchGeoJsonCached(day2CatURL);
-        if (fetchResult.stale) anyStale = true;
+        if (fetchResult.stale || fetchResult.failed) anyStale = true;
         if (fetchResult.data === null && fetchResult.cachedResult !== null) {
           day2RiskResult = fetchResult.cachedResult;
           if (this._proximityWeighting) {
@@ -728,7 +736,7 @@ module.exports = NodeHelper.create({
       let day3CatProximity = null;
       {
         const fetchResult = await this.fetchGeoJsonCached(day3CatURL);
-        if (fetchResult.stale) anyStale = true;
+        if (fetchResult.stale || fetchResult.failed) anyStale = true;
         if (fetchResult.data === null && fetchResult.cachedResult !== null) {
           day3RiskResult = fetchResult.cachedResult;
           if (this._proximityWeighting) {
@@ -770,7 +778,7 @@ module.exports = NodeHelper.create({
       let day3ProbRisk;
       {
         const fetchResult = await this.fetchGeoJsonCached(day3ProbURL);
-        if (fetchResult.stale) anyStale = true;
+        if (fetchResult.stale || fetchResult.failed) anyStale = true;
         if (fetchResult.data === null && fetchResult.cachedResult !== null) {
           day3ProbRisk = fetchResult.cachedResult;
         } else if (fetchResult.data === null) {
@@ -786,7 +794,7 @@ module.exports = NodeHelper.create({
       let day3CigProximity = null;
       if (day3ProbRisk > 0) {
         const fetchResult = await this.fetchGeoJsonCached(day3CigUrl);
-        if (fetchResult.stale) anyStale = true;
+        if (fetchResult.stale || fetchResult.failed) anyStale = true;
         if (fetchResult.data === null && fetchResult.cachedResult !== null) {
           day3Cig = fetchResult.cachedResult;
           if (this._proximityWeighting) {
@@ -835,7 +843,7 @@ module.exports = NodeHelper.create({
       let day1FireRisk = 0;
       {
         const fetchResult = await this.fetchGeoJsonCached(day1FwWindRHURL);
-        if (fetchResult.stale) anyStale = true;
+        if (fetchResult.stale || fetchResult.failed) anyStale = true;
         if (fetchResult.data === null && fetchResult.cachedResult !== null) {
           day1FireRisk = Math.max(day1FireRisk, fetchResult.cachedResult);
         } else if (fetchResult.data !== null) {
@@ -847,7 +855,7 @@ module.exports = NodeHelper.create({
       }
       {
         const fetchResult = await this.fetchGeoJsonCached(day1FwDryTURL);
-        if (fetchResult.stale) anyStale = true;
+        if (fetchResult.stale || fetchResult.failed) anyStale = true;
         if (fetchResult.data === null && fetchResult.cachedResult !== null) {
           day1FireRisk = Math.max(day1FireRisk, fetchResult.cachedResult);
         } else if (fetchResult.data !== null) {
@@ -862,7 +870,7 @@ module.exports = NodeHelper.create({
       let day2FireRisk = 0;
       {
         const fetchResult = await this.fetchGeoJsonCached(day2FwWindRHURL);
-        if (fetchResult.stale) anyStale = true;
+        if (fetchResult.stale || fetchResult.failed) anyStale = true;
         if (fetchResult.data === null && fetchResult.cachedResult !== null) {
           day2FireRisk = Math.max(day2FireRisk, fetchResult.cachedResult);
         } else if (fetchResult.data !== null) {
@@ -874,7 +882,7 @@ module.exports = NodeHelper.create({
       }
       {
         const fetchResult = await this.fetchGeoJsonCached(day2FwDryTURL);
-        if (fetchResult.stale) anyStale = true;
+        if (fetchResult.stale || fetchResult.failed) anyStale = true;
         if (fetchResult.data === null && fetchResult.cachedResult !== null) {
           day2FireRisk = Math.max(day2FireRisk, fetchResult.cachedResult);
         } else if (fetchResult.data !== null) {
@@ -897,7 +905,7 @@ module.exports = NodeHelper.create({
 
           {
             const fetchResult = await this.fetchGeoJsonCached(windRHUrl);
-            if (fetchResult.stale) anyStale = true;
+            if (fetchResult.stale || fetchResult.failed) anyStale = true;
             if (fetchResult.data === null && fetchResult.cachedResult !== null) {
               dayRisk = Math.max(dayRisk, fetchResult.cachedResult);
             } else if (fetchResult.data !== null) {
@@ -909,7 +917,7 @@ module.exports = NodeHelper.create({
           }
           {
             const fetchResult = await this.fetchGeoJsonCached(dryTUrl);
-            if (fetchResult.stale) anyStale = true;
+            if (fetchResult.stale || fetchResult.failed) anyStale = true;
             if (fetchResult.data === null && fetchResult.cachedResult !== null) {
               dayRisk = Math.max(dayRisk, fetchResult.cachedResult);
             } else if (fetchResult.data !== null) {
@@ -943,7 +951,7 @@ module.exports = NodeHelper.create({
         // Day 4
         {
           const fetch4 = await this.fetchGeoJsonCached(day4URL);
-          if (fetch4.stale) anyStale = true;
+          if (fetch4.stale || fetch4.failed) anyStale = true;
           if (fetch4.data === null && fetch4.cachedResult !== null) {
             day4ProbRisk = fetch4.cachedResult.probRisk;
             day4Sign = fetch4.cachedResult.sign;
@@ -963,7 +971,7 @@ module.exports = NodeHelper.create({
         // Day 5
         {
           const fetch5 = await this.fetchGeoJsonCached(day5URL);
-          if (fetch5.stale) anyStale = true;
+          if (fetch5.stale || fetch5.failed) anyStale = true;
           if (fetch5.data === null && fetch5.cachedResult !== null) {
             day5ProbRisk = fetch5.cachedResult.probRisk;
             day5Sign = fetch5.cachedResult.sign;
@@ -983,7 +991,7 @@ module.exports = NodeHelper.create({
         // Day 6
         {
           const fetch6 = await this.fetchGeoJsonCached(day6URL);
-          if (fetch6.stale) anyStale = true;
+          if (fetch6.stale || fetch6.failed) anyStale = true;
           if (fetch6.data === null && fetch6.cachedResult !== null) {
             day6ProbRisk = fetch6.cachedResult.probRisk;
             day6Sign = fetch6.cachedResult.sign;
@@ -1003,7 +1011,7 @@ module.exports = NodeHelper.create({
         // Day 7
         {
           const fetch7 = await this.fetchGeoJsonCached(day7URL);
-          if (fetch7.stale) anyStale = true;
+          if (fetch7.stale || fetch7.failed) anyStale = true;
           if (fetch7.data === null && fetch7.cachedResult !== null) {
             day7ProbRisk = fetch7.cachedResult.probRisk;
             day7Sign = fetch7.cachedResult.sign;
@@ -1023,7 +1031,7 @@ module.exports = NodeHelper.create({
         // Day 8
         {
           const fetch8 = await this.fetchGeoJsonCached(day8URL);
-          if (fetch8.stale) anyStale = true;
+          if (fetch8.stale || fetch8.failed) anyStale = true;
           if (fetch8.data === null && fetch8.cachedResult !== null) {
             day8ProbRisk = fetch8.cachedResult.probRisk;
             day8Sign = fetch8.cachedResult.sign;
@@ -1076,7 +1084,7 @@ module.exports = NodeHelper.create({
           try {
           const url = ero.buildUrl(d);
           const fetchResult = await this.fetchGeoJsonCached(url);
-          if (fetchResult.stale) anyStale = true;
+          if (fetchResult.stale || fetchResult.failed) anyStale = true;
 
           let eroValue = 0;
           let eroValidTime = null;
