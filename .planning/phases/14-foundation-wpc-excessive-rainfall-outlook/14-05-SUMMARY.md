@@ -3,7 +3,7 @@ phase: 14-foundation-wpc-excessive-rainfall-outlook
 plan: 05
 subsystem: docs
 tags: [uat, wpc-ero, fixtures, human-verification]
-status: paused
+status: complete
 
 # Dependency graph
 requires:
@@ -28,35 +28,53 @@ key-files:
   modified: []
 
 key-decisions:
-  - "Task 2 (checkpoint:human-verify, gate=blocking) NOT executed this run — plan explicitly requires it stay blocking regardless of workflow.auto_advance, because this project has no automated test framework and human observation is the only acceptance path for phase success criteria 1-4"
+  - "Task 2 (checkpoint:human-verify, gate=blocking) was held blocking regardless of workflow.auto_advance, because this project has no automated test framework and human observation is the only acceptance path for phase success criteria 1-4. The developer ran the UAT and approved on 2026-08-19."
 
-requirements-completed: []
+requirements-completed: [CFG-01, CFG-02, DATA-01, PERF-02, ERO-01, ERO-02, ERO-03]
 
 # Metrics
-duration: ~10min (Task 1 only; Task 2 pending)
+duration: ~10min (Task 1) + developer UAT pass (Task 2)
 completed: 2026-08-19
 ---
 
 # Phase 14 Plan 05: WPC ERO UAT Fixtures and Human Verification Summary
 
-**Task 1 complete: live-derived, turf-confirmed inside/outside ERO test coordinates and four ready-to-paste config scenarios written to `14-UAT-FIXTURES.md`. Task 2 (the blocking human-verification checkpoint covering all five ROADMAP Phase 14 success criteria) is PENDING — this plan is paused, not complete.**
+**Both tasks complete. Task 1 wrote live-derived, turf-confirmed inside/outside ERO test coordinates and four ready-to-paste config scenarios to `14-UAT-FIXTURES.md`. Task 2, the blocking human-verification checkpoint covering all five ROADMAP Phase 14 success criteria, was signed off by the developer on 2026-08-19.**
 
 ## Performance
 
-- **Duration:** ~10 min (Task 1 only)
-- **Completed:** Task 1 only, 2026-08-19
-- **Tasks:** 1 of 2 completed (1/2)
+- **Duration:** ~10 min (Task 1) plus the developer's UAT pass
+- **Completed:** 2026-08-19
+- **Tasks:** 2 of 2 completed (2/2)
 - **Files modified:** 1 new (`14-UAT-FIXTURES.md`)
 
-## Status: PAUSED at blocking checkpoint
+## Status: COMPLETE — checkpoint approved
 
-This plan has two tasks. Task 1 (`type="auto"`) is complete and committed. Task 2
-(`type="checkpoint:human-verify"`, `gate="blocking"`) has **not** been executed. Per the plan's
-own action text: "Do not proceed, do not mark the phase complete, and do not auto-approve — this
-checkpoint is blocking regardless of `workflow.auto_advance`." No MagicMirror display is
-reachable from this execution context, so criteria 1-4 (which require observing a live rendered
-DOM) cannot be verified by this agent without fabricating an observation. This SUMMARY records
-Task 1's real output and defers Task 2 to the developer.
+This plan has two tasks. Task 1 (`type="auto"`) derived and committed the fixtures. Task 2
+(`type="checkpoint:human-verify"`, `gate="blocking"`) was held blocking rather than auto-approved,
+per the plan's own action text: "Do not proceed, do not mark the phase complete, and do not
+auto-approve — this checkpoint is blocking regardless of `workflow.auto_advance`." The executor
+agent could not observe a live MagicMirror DOM and so did not attempt criteria 1-4.
+
+The developer ran the UAT against `14-UAT-FIXTURES.md` and responded with the plan's
+`<resume-signal>` value, "approved", on 2026-08-19. Per the resume-signal contract
+("Type \"approved\" to close the phase, or describe which of the five criteria failed"), that
+sign-off covers all five ROADMAP Phase 14 success criteria:
+
+| # | Criterion | Requirements | Result |
+|---|-----------|--------------|--------|
+| 1 | ERO rows render with `extended: false` — payload no longer forks | CFG-02 | Approved |
+| 2 | `showExcessiveRain` is independent of `extended` and defaults to false | CFG-01 | Approved |
+| 3 | Displayed tier matches the tier from ERO's own `dn` domain, and NOAA's public ERO map | ERO-01, ERO-02 | Approved |
+| 4 | Outside all polygons renders no row — clean absence, not an empty or `None` row | ERO-03 | Approved |
+| 5 | `f=geojson` on every request, byte-identical query string across polls (ETag cache hits) | DATA-01, PERF-02 | Approved |
+
+The developer reported no per-criterion failures, so no gap-closure routing was required.
+
+**Scope note on the sign-off:** the approval was given as the single "approved" signal the plan
+defines, not as five individually narrated observations. The HIGH tier remains verified
+structurally rather than by live observation — no `dn: 4` feature was live during this phase
+(see RESEARCH.md Open Question 1 and the note in `14-UAT-FIXTURES.md`).
 
 ## Task 1: Derive live inside/outside test coordinates and write the UAT fixtures
 
