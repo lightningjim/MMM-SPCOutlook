@@ -121,3 +121,12 @@ None - no external service configuration required.
 ---
 *Phase: 14-foundation-wpc-excessive-rainfall-outlook*
 *Completed: 2026-08-19*
+
+## Self-Check: PASSED
+
+- FOUND: scripts/probe-lib/module-stubs.js
+- FOUND: scripts/probe-payload-resilience.js
+- FOUND: .planning/phases/14-foundation-wpc-excessive-rainfall-outlook/14-06-SUMMARY.md
+- FOUND: 5bfc95a (Task 1 commit)
+- FOUND: 2afd3d5 (Task 2 commit)
+- FOUND: 2ee21b4 (SUMMARY commit)
