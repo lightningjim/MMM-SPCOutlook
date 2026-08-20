@@ -59,7 +59,15 @@ module.exports = NodeHelper.create({
       // Defensive re-default for per-product toggles (CFG-01, D-06), mirroring the
       // _updateInterval / _proximityWeighting handling above — Phases 15-17 add one
       // `=== true` line per new registry row here.
-      this._products = { showExcessiveRain: products?.showExcessiveRain === true };
+      // WR-13: snapshot the toggles into a local and pass them down the chain. The
+      // helper-global field is written here but was not read until ~20 awaits later at the
+      // ERO gate; with no in-flight guard, a second GET_SPC_DATA arriving mid-flight made
+      // the first chain read the second request's toggles — and because MagicMirror shares
+      // one node_helper per module *type*, two configured instances overwrote each other's
+      // on every poll. The field is still assigned for callers that reach getSpcOutlook
+      // without an explicit snapshot.
+      const productToggles = { showExcessiveRain: products?.showExcessiveRain === true };
+      this._products = productToggles;
       // CR-04: MagicMirror does not await this handler, so an unhandled rejection here
       // means sendSocketNotification is never reached and the frontend stays on
       // "Loading SPC Outlook..." forever — every later interval tick takes the identical
@@ -75,7 +83,7 @@ module.exports = NodeHelper.create({
       }
       let outlook;
       try {
-        outlook = await this.getSpcOutlook(lat, lon, extended);
+        outlook = await this.getSpcOutlook(lat, lon, extended, productToggles);
       } catch (err) {
         Log.error("MMM-SPCOutlook: outlook fetch failed", err);
         outlook = { error: err.toString() };
@@ -547,6 +555,8 @@ module.exports = NodeHelper.create({
    * @param lat - latitude of the user location
    * @param lon - longitude of the user location
    * @param extended - when true, also fetch Days 4-8 SPC outlook and Days 3-8 fire weather data
+   * @param products - optional snapshot of the per-product toggles for THIS request (WR-13);
+   *   falls back to the helper-global this._products when omitted
    * @returns object with day1 through day8 outlook data, day48Risk, and fireWeather, each containing:
    *   risk (string), text (string), color (hex string), probRisk (boolean),
    *   torRisk (number), torCig (number), hailRisk (number), hailCig (number),
@@ -562,8 +572,12 @@ module.exports = NodeHelper.create({
    *   — "NONE"/"None"/no-data color/null defaults when the toggle is off, D-05);
    *   and optional _stale (boolean) and _staleAsOf (timestamp) when serving cached data
    */
-  async getSpcOutlook(lat, lon, extended) {
+  async getSpcOutlook(lat, lon, extended, products) {
     try {
+      // WR-13: prefer this request's own toggle snapshot; the helper-global field is only
+      // a fallback for callers (e.g. offline probes) that do not pass one.
+      const productToggles = products ?? this._products ?? { showExcessiveRain: false };
+
       // Part A: Location change invalidation
       const locationChanged = (lat !== this._cachedLat || lon !== this._cachedLon);
       if (locationChanged) {
@@ -1126,7 +1140,7 @@ module.exports = NodeHelper.create({
       const eroTiers = { 1: "NONE", 2: "NONE", 3: "NONE", 4: "NONE", 5: "NONE" };
       const eroValidTimes = { 1: null, 2: null, 3: null, 4: null, 5: null };
 
-      if (this._products.showExcessiveRain) {
+      if (productToggles.showExcessiveRain) {
         for (let d = 1; d <= 5; d++) {
           try {
             const url = ero.buildUrl(d);
