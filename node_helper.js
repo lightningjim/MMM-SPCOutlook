@@ -1001,12 +1001,20 @@ module.exports = NodeHelper.create({
       // the single `ero.valueToTier` conversion deliberately placed downstream of
       // the cache-hit/fresh-data branch so both paths produce the identical tier
       // string (PERF-02).
+      // ArcGIS REST returns most failures as HTTP 200 with an `error` body and no
+      // `features`, so each day is validated and fetch/parse/evaluate is wrapped in
+      // its own try/catch — a failed day degrades to no risk instead of reaching
+      // this function's own catch and losing the whole payload. A rejected body is
+      // deliberately not written to the cache (it would pin a bad result behind a
+      // future 304) and deliberately does not set `anyStale`, since D-04 binds ERO
+      // staleness to `fetchResult.stale` only, exactly like every SPC layer.
       const ero = PRODUCT_REGISTRY.excessiveRain;
       const eroTiers = { 1: "NONE", 2: "NONE", 3: "NONE", 4: "NONE", 5: "NONE" };
       const eroValidTimes = { 1: null, 2: null, 3: null, 4: null, 5: null };
 
       if (this._products.showExcessiveRain) {
         for (let d = 1; d <= 5; d++) {
+          try {
           const url = ero.buildUrl(d);
           const fetchResult = await this.fetchGeoJsonCached(url);
           if (fetchResult.stale) anyStale = true;
@@ -1018,6 +1026,10 @@ module.exports = NodeHelper.create({
             eroValue = fetchResult.cachedResult.value;
             eroValidTime = fetchResult.cachedResult.validTime;
           } else if (fetchResult.data !== null) {
+            if (!this._isFeatureCollection(fetchResult.data)) {
+              Log.error(`MMM-SPCOutlook excessiveRain day ${d}: response was not a usable FeatureCollection, leaving day at no risk`);
+              continue;
+            }
             const polys = this.extractPolygons(fetchResult.data, ero.toValue, ero.includesFeat);
             eroValue = this.evaluatePolygons(polys, loc, catComparator);
             const firstFeature = fetchResult.data.features[0];
@@ -1036,6 +1048,9 @@ module.exports = NodeHelper.create({
           // fetch (PERF-02, D-03).
           eroTiers[d] = ero.valueToTier[eroValue] || "NONE";
           eroValidTimes[d] = eroValidTime;
+          } catch (eroErr) {
+            Log.error(`MMM-SPCOutlook excessiveRain day ${d}: fetch/parse/evaluate failed, leaving day at no risk`, eroErr);
+          }
         }
       }
 
