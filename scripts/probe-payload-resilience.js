@@ -79,6 +79,24 @@ const SPC_SLGT_BODY = {
   ]
 };
 
+// A well-formed fire-weather feature. WR-01: the fire-weather path maps labels
+// through node_helper's fireRiskToValue = { ELEV: 1, CRIT: 2, EXTM: 3 }, so routing
+// this layer to SPC_SLGT_BODY (LABEL "SLGT") produced toValue 0, dropped the feature
+// before evaluatePolygons, and made the fire-weather golden byte-identical to the
+// output with the route removed entirely — it pinned key order and nothing else.
+// "CRIT" is a label the product actually recognises, so the golden now pins a value
+// the fire-weather code path computed.
+const FIRE_CRIT_BODY = {
+  type: "FeatureCollection",
+  features: [
+    {
+      type: "Feature",
+      properties: { LABEL: "CRIT" },
+      geometry: { type: "Polygon", coordinates: [SAMPLE_RING] }
+    }
+  ]
+};
+
 // Fixed for every scenario so getSpcOutlook's location-change cache
 // invalidation never fires mid-suite.
 const PROBE_LAT = 38.9;
@@ -230,13 +248,32 @@ function forbidLog(fragment, why) {
 // Captured from a real run against the unmodified pre-fix node_helper.js
 // (see 14-06-SUMMARY.md RED baseline). Any later diff against these two
 // constants is a regression in plan 14-07's shared-code changes, not an
-// improvement — they pin the exact day1/fireWeather shape produced when
-// only the day1 categorical and day1 fire-weather wind/RH layers return a
-// well-formed SLGT feature and every other layer hard-fails.
+// improvement — they pin the exact day1/fireWeather shape produced when the
+// day1 categorical layer returns a well-formed SLGT feature, the day1
+// fire-weather wind/RH layer returns a well-formed CRIT feature, and every
+// other layer hard-fails. GOLDEN_FIRE_WEATHER was re-captured when its fixture
+// was corrected from SLGT (a label the fire-weather path maps to 0) to CRIT.
 // ---------------------------------------------------------------------
 
 const GOLDEN_DAY1 = '{"risk":"SLGT","text":"Slight","color":"f7f690","probRisk":false,"torRisk":0,"torCig":0,"hailRisk":0,"hailCig":0,"windRisk":0,"windCig":0}';
-const GOLDEN_FIRE_WEATHER = '{"day1Risk":0,"day1Text":"None","day2Risk":0,"day2Text":"None","day3Risk":0,"day3Text":"None","day4Risk":0,"day4Text":"None","day5Risk":0,"day5Text":"None","day6Risk":0,"day6Text":"None","day7Risk":0,"day7Text":"None","day8Risk":0,"day8Text":"None"}';
+const GOLDEN_FIRE_WEATHER = '{"day1Risk":2,"day1Text":"Critical","day2Risk":0,"day2Text":"None","day3Risk":0,"day3Text":"None","day4Risk":0,"day4Text":"None","day5Risk":0,"day5Text":"None","day6Risk":0,"day6Text":"None","day7Risk":0,"day7Text":"None","day8Risk":0,"day8Text":"None"}';
+
+// WR-01: a golden whose every field is the zero/no-risk default pins key order and
+// nothing else — it is satisfied just as well by deleting the fixture that was supposed
+// to produce it, which is exactly how GOLDEN_FIRE_WEATHER came to guard nothing. This
+// self-check runs before the scenarios so that class of vacuity cannot recur silently.
+const NO_RISK_VALUES = new Set([0, false, null, "NONE", "None", "afddf6"]);
+
+function assertGoldenPinsSomething(name, goldenJson) {
+  const parsed = JSON.parse(goldenJson);
+  const informative = Object.entries(parsed).filter(([, value]) => !NO_RISK_VALUES.has(value));
+  if (informative.length === 0) {
+    throw new Error(
+      `golden snapshot ${name} is entirely zero/no-risk defaults, so it pins key order and ` +
+      "nothing the product computed — give its fixture a label/value the product recognises"
+    );
+  }
+}
 
 // ---------------------------------------------------------------------
 // Scenarios
@@ -465,7 +502,7 @@ const scenarios = [
       helper._products = { showExcessiveRain: false };
       installFetch(helper, [
         ["https://www.spc.noaa.gov/products/outlook/day1otlk_cat.lyr.geojson", freshFetch(SPC_SLGT_BODY)],
-        ["https://www.spc.noaa.gov/products/fire_wx/day1fw_windrh.lyr.geojson", freshFetch(SPC_SLGT_BODY)]
+        ["https://www.spc.noaa.gov/products/fire_wx/day1fw_windrh.lyr.geojson", freshFetch(FIRE_CRIT_BODY)]
       ]);
       const originalPointInPolygon = turfStub.pointInPolygon;
       turfStub.pointInPolygon = () => true;
@@ -494,6 +531,8 @@ const scenarios = [
 async function main() {
   let passed = 0;
   let failed = 0;
+  assertGoldenPinsSomething("GOLDEN_DAY1", GOLDEN_DAY1);
+  assertGoldenPinsSomething("GOLDEN_FIRE_WEATHER", GOLDEN_FIRE_WEATHER);
   const helper = loadNodeHelper();
 
   for (const scenario of scenarios) {
