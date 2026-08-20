@@ -88,15 +88,36 @@ module.exports = NodeHelper.create({
 
   // Polygons
   /**
+   * Determine whether a fetched body is a usable GeoJSON FeatureCollection.
+   * @param body - the parsed response body from any SPC/WPC/CPC product fetch
+   * @returns boolean, true only when `body` is a truthy object with no `error`
+   *   key and an array-typed `features` field. This is the shared response-shape
+   *   gate every WPC/CPC product fetch loop calls before handing a body to
+   *   `extractPolygons`; Phases 15-17 registry rows reuse it verbatim. A `false`
+   *   result means the caller must skip that fetch entirely — not cache it, not
+   *   evaluate it — and leave its day at the no-risk default.
+   */
+  _isFeatureCollection(body){
+    return !!body && typeof body === "object" && !body.error && Array.isArray(body.features);
+  },
+  /**
    * Extract polygon features from a GeoJSON object, mapping labels to numeric values.
    * @param geojson - GeoJSON FeatureCollection containing Polygon and/or MultiPolygon features
    * @param toValue - function mapping a feature's LABEL string to a numeric value
    * @param includesFeat - predicate (label, value) => boolean; feature is included when true
-   * @returns array of { label, value, poly } objects for features that pass the predicate
+   * @returns array of { label, value, poly } objects for features that pass the predicate.
+   *   Returns an empty array rather than throwing when `geojson` is not a usable
+   *   FeatureCollection (see `_isFeatureCollection`), and silently skips
+   *   individual features lacking `properties` or `geometry`.
    */
   extractPolygons(geojson, toValue, includesFeat){
+    if (!this._isFeatureCollection(geojson)) {
+      Log.error("MMM-SPCOutlook extractPolygons: rejected a response body with no usable features array");
+      return [];
+    }
     const polygons = [];
     geojson.features.forEach(f =>{
+      if (!f || typeof f.properties !== "object" || f.properties === null || !f.geometry) return;
       const label = f.properties.LABEL || "";
       const value = toValue(label, f);
       if (!includesFeat(label, value)) return;
