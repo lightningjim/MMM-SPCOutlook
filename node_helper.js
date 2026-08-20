@@ -1078,7 +1078,7 @@ module.exports = NodeHelper.create({
 
       // WPC Excessive Rainfall Outlook (ERO), Days 1-5. This block never runs when
       // showExcessiveRain is off, yet the excessiveRain payload block below is
-      // always emitted (D-05). `anyStale` is confined strictly to this gate (D-04).
+      // always emitted (D-05). `anyStale` is written only inside this gate (D-04).
       // ERO's `dn` map is the registry row's own (`ero.toValue`) and must never be
       // fed through fire weather's uppercase-DN-keyed value map (ERO-02). Every URL
       // comes from `ero.buildUrl` so the query string is byte-stable across polls
@@ -1090,9 +1090,11 @@ module.exports = NodeHelper.create({
       // `features`, so each day is validated and fetch/parse/evaluate is wrapped in
       // its own try/catch — a failed day degrades to no risk instead of reaching
       // this function's own catch and losing the whole payload. A rejected body is
-      // deliberately not written to the cache (it would pin a bad result behind a
-      // future 304) and deliberately does not set `anyStale`, since D-04 binds ERO
-      // staleness to `fetchResult.stale` only, exactly like every SPC layer.
+      // deliberately never written to the cache (it would pin a bad result behind a
+      // future 304), but it DOES set `anyStale` — refining D-04, which bound ERO
+      // staleness to `fetchResult.stale` alone. A degrade the user cannot see is
+      // indistinguishable from a genuine all-clear, and that false negative is the
+      // one outcome this product exists to prevent (CR-03, WR-06).
       const ero = PRODUCT_REGISTRY.excessiveRain;
       const eroTiers = { 1: "NONE", 2: "NONE", 3: "NONE", 4: "NONE", 5: "NONE" };
       const eroValidTimes = { 1: null, 2: null, 3: null, 4: null, 5: null };
@@ -1100,45 +1102,58 @@ module.exports = NodeHelper.create({
       if (this._products.showExcessiveRain) {
         for (let d = 1; d <= 5; d++) {
           try {
-          const url = ero.buildUrl(d);
-          const fetchResult = await this.fetchGeoJsonCached(url);
-          if (fetchResult.stale || fetchResult.failed) anyStale = true;
+            const url = ero.buildUrl(d);
+            const fetchResult = await this.fetchGeoJsonCached(url);
+            if (fetchResult.stale || fetchResult.failed) anyStale = true;
 
-          let eroValue = 0;
-          let eroValidTime = null;
+            let eroValue = 0;
+            let eroValidTime = null;
 
-          if (fetchResult.data === null && fetchResult.cachedResult !== null) {
-            eroValue = fetchResult.cachedResult.value;
-            eroValidTime = fetchResult.cachedResult.validTime;
-          } else if (fetchResult.data !== null) {
-            if (!this._isFeatureCollection(fetchResult.data)) {
-              Log.error(`MMM-SPCOutlook excessiveRain day ${d}: response was not a usable FeatureCollection, leaving day at no risk`);
-              continue;
+            if (fetchResult.data === null && fetchResult.cachedResult !== null) {
+              eroValue = fetchResult.cachedResult.value;
+              eroValidTime = fetchResult.cachedResult.validTime;
+            } else if (fetchResult.data !== null) {
+              if (!this._isFeatureCollection(fetchResult.data)) {
+                // WR-06: refusing to cache the bad body is right; letting it erase a
+                // still-valid cached reading is not. A WPC hiccup during an active HIGH
+                // must not blank the display within one poll, so fall back to
+                // last-known-good and flag it stale. Only when there is nothing good to
+                // fall back to does the day stay at the no-risk default.
+                Log.error(`MMM-SPCOutlook excessiveRain day ${d}: response was not a usable FeatureCollection, leaving day at no risk`);
+                anyStale = true;
+                const cached = this._geoJsonCache.get(url);
+                if (cached && cached.result && this._isWithinStaleWindow(cached.timestamp, this._updateInterval)) {
+                  eroValue = cached.result.value;
+                  eroValidTime = cached.result.validTime;
+                } else {
+                  continue;
+                }
+              } else {
+                const polys = this.extractPolygons(fetchResult.data, ero.toValue, ero.includesFeat);
+                eroValue = this.evaluatePolygons(polys, loc, catComparator);
+                // CR-01/WR-10: read valid_time off the winning polygon — the one the user is
+                // actually inside at the resolved tier — never off `features[0]`, and never at
+                // all on the no-risk path (a risk-free day must not advertise a valid window).
+                // Every dereference here is guarded: a feature with absent/null `properties`
+                // must never throw away an already-computed real tier.
+                eroValidTime = eroValue > 0
+                  ? this._validTimeOfWinner(polys, loc, eroValue, ero.validTimeField)
+                  : null;
+                this._geoJsonCache.set(url, {
+                  mode: fetchResult.mode,
+                  etag: fetchResult.newEtag ?? null,
+                  hash: fetchResult.newHash ?? null,
+                  result: { value: eroValue, validTime: eroValidTime },
+                  timestamp: Date.now()
+                });
+              }
             }
-            const polys = this.extractPolygons(fetchResult.data, ero.toValue, ero.includesFeat);
-            eroValue = this.evaluatePolygons(polys, loc, catComparator);
-            // CR-01/WR-10: read valid_time off the winning polygon — the one the user is
-            // actually inside at the resolved tier — never off `features[0]`, and never at
-            // all on the no-risk path (a risk-free day must not advertise a valid window).
-            // Every dereference here is guarded: a feature with absent/null `properties`
-            // must never throw away an already-computed real tier.
-            eroValidTime = eroValue > 0
-              ? this._validTimeOfWinner(polys, loc, eroValue, ero.validTimeField)
-              : null;
-            this._geoJsonCache.set(url, {
-              mode: fetchResult.mode,
-              etag: fetchResult.newEtag ?? null,
-              hash: fetchResult.newHash ?? null,
-              result: { value: eroValue, validTime: eroValidTime },
-              timestamp: Date.now()
-            });
-          }
 
-          // Convert exactly once, after the branch closes — never inside either
-          // branch — so a cache hit produces the identical tier string as a fresh
-          // fetch (PERF-02, D-03).
-          eroTiers[d] = ero.valueToTier[eroValue] || "NONE";
-          eroValidTimes[d] = eroValidTime;
+            // Convert exactly once, after the branch closes — never inside either
+            // branch — so a cache hit produces the identical tier string as a fresh
+            // fetch (PERF-02, D-03).
+            eroTiers[d] = ero.valueToTier[eroValue] || "NONE";
+            eroValidTimes[d] = eroValidTime;
           } catch (eroErr) {
             Log.error(`MMM-SPCOutlook excessiveRain day ${d}: fetch/parse/evaluate failed, leaving day at no risk`, eroErr);
           }
