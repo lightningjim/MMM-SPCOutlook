@@ -11,7 +11,7 @@
 // contract assertion are product-agnostic.
 
 const { PRODUCT_REGISTRY } = require("../productRegistry.js");
-const { loadNodeHelper, resetHelper, resetLogs, turfStub } = require("./probe-lib/module-stubs.js");
+const { loadNodeHelper, resetHelper, resetLogs, turfStub, logCalls } = require("./probe-lib/module-stubs.js");
 
 // ---------------------------------------------------------------------
 // Fixtures
@@ -37,6 +37,21 @@ const SAMPLE_RING = [
   [-77.1, 39.0],
   [-77.1, 38.8]
 ];
+
+// A hostile leading feature (no `properties` at all) in front of a real MDT polygon.
+// The tier is resolved before the bad feature is ever dereferenced, so the correct
+// answer is MDT with the *second* feature's valid_time (CR-01, WR-10).
+const LEADING_BAD_FEATURE_BODY = {
+  type: "FeatureCollection",
+  features: [
+    { type: "Feature", geometry: { type: "Polygon", coordinates: [SAMPLE_RING] } },
+    {
+      type: "Feature",
+      properties: { dn: 3, valid_time: "2026-08-19T18:00:00Z" },
+      geometry: { type: "Polygon", coordinates: [SAMPLE_RING] }
+    }
+  ]
+};
 
 // A well-formed ERO feature: lowercase `dn` (2 -> SLGT per productRegistry's
 // eroDnToValue/eroValueToTier) plus a `valid_time` field.
@@ -184,7 +199,33 @@ function assertPayloadIntact(out) {
 }
 
 // ---------------------------------------------------------------------
-// Golden snapshot for spc-wellformed-baseline (scenario 6)
+// Log assertions (WR-04)
+//
+// loggerStub records every Log.info/Log.error into logCalls and every scenario
+// calls resetLogs(), but nothing ever read the result — so the harness looked
+// like it verified the observability guarantee while verifying nothing about
+// logging at all. These two helpers are what make a degrade path assertable:
+// requireLog proves the diagnostic an operator needs was emitted, and
+// forbidLog proves a day reached its value through the intended guard rather
+// than through a swallowed exception.
+// ---------------------------------------------------------------------
+
+function requireLog(fragments, why) {
+  const hit = logCalls.some((line) => fragments.every((f) => line.includes(f)));
+  if (!hit) {
+    throw new Error(`${why} — no log line matched [${fragments.join(", ")}]. Captured: ${JSON.stringify(logCalls)}`);
+  }
+}
+
+function forbidLog(fragment, why) {
+  const offenders = logCalls.filter((line) => line.includes(fragment));
+  if (offenders.length > 0) {
+    throw new Error(`${why}: ${offenders.join(" | ")}`);
+  }
+}
+
+// ---------------------------------------------------------------------
+// Golden snapshot for spc-wellformed-baseline (last scenario)
 //
 // Captured from a real run against the unmodified pre-fix node_helper.js
 // (see 14-06-SUMMARY.md RED baseline). Any later diff against these two
@@ -228,6 +269,15 @@ const scenarios = [
       if (helper._geoJsonCache.has(ERO_URLS[1])) {
         throw new Error("a rejected ArcGIS error body was written to _geoJsonCache");
       }
+      // WR-04: the degrade must be diagnosable from the log, per day.
+      for (let d = 1; d <= 5; d++) {
+        requireLog(
+          [`excessiveRain day ${d}`, "not a usable FeatureCollection"],
+          `a rejected ERO body on day ${d} produced no diagnostic log line`
+        );
+      }
+      // WR-03: NONE must come from the shape guard, never from a swallowed exception.
+      forbidLog("TypeError", "an ERO day resolved to NONE via an exception, not via the shape guard");
     }
   },
   {
@@ -249,6 +299,11 @@ const scenarios = [
         if (out.excessiveRain[`day${d}Risk`] !== "NONE") {
           throw new Error(`day${d}Risk expected NONE, got ${out.excessiveRain[`day${d}Risk`]}`);
         }
+        // WR-04: a contained throw is only acceptable if it is also reported.
+        requireLog(
+          [`excessiveRain day ${d}`, "fetch/parse/evaluate failed"],
+          `a contained ERO throw on day ${d} produced no diagnostic log line`
+        );
       }
     }
   },
@@ -261,10 +316,45 @@ const scenarios = [
       installFetch(helper, [
         [ERO_URLS[1], freshFetch(MALFORMED_FEATURE_BODY)]
       ]);
-      const out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false);
+      const out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showExcessiveRain: true });
       assertPayloadIntact(out);
       if (out.excessiveRain.day1Risk !== "NONE") {
         throw new Error(`day1Risk expected NONE, got ${out.excessiveRain.day1Risk}`);
+      }
+      // WR-03: "NONE" alone does not distinguish the guard path from the crash path — the
+      // pre-fix code reached this same value by throwing on features[0].properties and
+      // having the catch swallow it, so this scenario reported PASS on crashing code.
+      forbidLog("TypeError", "day1 resolved to NONE via an exception, not via the per-feature guard");
+      forbidLog("fetch/parse/evaluate failed", "day1 resolved to NONE via the catch-all, not via the per-feature guard");
+    }
+  },
+  {
+    // CR-01: the exact shape that made the crash path indistinguishable from the guard
+    // path — a leading feature with no `properties` followed by a real MDT polygon
+    // containing the user. The tier is already resolved by the time the bad feature is
+    // touched, so it must survive; reporting NONE here is a false negative.
+    name: "ero-leading-bad-feature-preserves-risk",
+    run: async (helper) => {
+      resetHelper(helper);
+      resetLogs();
+      helper._products = { showExcessiveRain: true };
+      installFetch(helper, [
+        [ERO_URLS[1], freshFetch(LEADING_BAD_FEATURE_BODY)]
+      ]);
+      const originalPointInPolygon = turfStub.pointInPolygon;
+      turfStub.pointInPolygon = () => true;
+      try {
+        const out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showExcessiveRain: true });
+        assertPayloadIntact(out);
+        if (out.excessiveRain.day1Risk !== "MDT") {
+          throw new Error(`day1Risk expected MDT, got ${out.excessiveRain.day1Risk} — a property-less leading feature discarded a real risk`);
+        }
+        if (out.excessiveRain.day1ValidTime !== "2026-08-19T18:00:00Z") {
+          throw new Error(`day1ValidTime expected the winning polygon's window, got ${JSON.stringify(out.excessiveRain.day1ValidTime)}`);
+        }
+        forbidLog("TypeError", "the MDT tier survived by luck, not by guarding the dereference");
+      } finally {
+        turfStub.pointInPolygon = originalPointInPolygon;
       }
     }
   },
