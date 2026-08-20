@@ -72,7 +72,7 @@ Full details: `.planning/milestones/v1.2-ROADMAP.md`
   4. A day where the location falls outside every ERO polygon shows no ERO row — not an empty or error row (ERO-03).
   5. A network trace shows the ERO endpoint always requested with `f=geojson` (never a raw `f=json` fallback), and the same query string is issued on every poll cycle so the ETag/hash cache hits instead of re-running turf on unchanged data (DATA-01, PERF-02).
 
-**Plans:** 5/5 plans complete
+**Plans:** 7 plans (5/5 original complete; 2 gap-closure plans added after verification found 1 blocking gap)
 
 Plans:
 **Wave 1**
@@ -91,6 +91,14 @@ Plans:
 **Wave 4** *(blocked on Wave 3 completion)*
 
 - [x] 14-05-PLAN.md — UAT fixtures + human verification of the five success criteria (wave 4)
+
+**Gap Closure Wave 1** *(CR-01 from 14-VERIFICATION.md; run via `/bm:execute-phase 14 --gaps-only`)*
+
+- [ ] 14-06-PLAN.md — Offline payload-resilience probe harness: reproduce CR-01 with no network and no node_modules (gap wave 1)
+
+**Gap Closure Wave 2** *(blocked on Gap Closure Wave 1)*
+
+- [ ] 14-07-PLAN.md — Contain hostile ERO responses: harden shared `extractPolygons`, add `_isFeatureCollection`, per-day try/catch (gap wave 2)
 
 ### Phase 15: WPC Winter Storm Severity & Mesoscale Precipitation Discussion
 
