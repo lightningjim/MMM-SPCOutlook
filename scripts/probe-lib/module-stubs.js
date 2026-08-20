@@ -120,13 +120,15 @@ function loadNodeHelper() {
   return helper;
 }
 
+// WR-09: delegate rather than duplicate. A hand-maintained copy of start()'s field
+// list drifts the moment a phase adds helper-global state (an in-flight guard, a
+// per-product cache, a rate-limit token): the new field is never reset, scenario N's
+// state bleeds into scenario N+1, and the failure surfaces as an unrelated flaky
+// assertion. start() is the single source of truth for helper-global initialisation.
+// Note this emits start()'s own log line — every scenario calls resetLogs() after
+// resetHelper(), so log assertions still see only their own scenario's output.
 function resetHelper(helper) {
-  helper._geoJsonCache = new Map();
-  helper._cachedLat = null;
-  helper._cachedLon = null;
-  helper._updateInterval = 60;
-  helper._proximityWeighting = false;
-  helper._products = { showExcessiveRain: false };
+  helper.start();
 }
 
 module.exports = {
