@@ -13,12 +13,31 @@
   // rendered correctly at startup and silently reverted on the first refresh.
   // Per-product toggles travel as one nested `products` object rather than additional flat
   // fields; Phases 15-17 add their flags here, in this one place.
+  // WR-05: config comes from the user's MagicMirror config.js and is never validated by
+  // the host. `updateInterval: 0`, a negative, or a typo like "hourly" produces 0, a
+  // negative, or NaN milliseconds, all of which setInterval clamps to ~1 ms — an unbounded
+  // poll loop against www.spc.noaa.gov and mapservices.weather.noaa.gov, and what turns
+  // CR-03's overlapping-poll race from occasional into continuous. Resolve once, here, so
+  // the timer and the value the helper is told about can never disagree.
+  resolveUpdateInterval: function() {
+    const n = Number(this.config.updateInterval);
+    if (!Number.isFinite(n) || n < 1) {
+      if (!this._loggedIntervalFallback) {
+        Log.warn("MMM-SPCOutlook: invalid updateInterval " + JSON.stringify(this.config.updateInterval) +
+                 ", defaulting to 60 minutes");
+        this._loggedIntervalFallback = true;
+      }
+      return 60;
+    }
+    return n;
+  },
+
   buildRequestPayload: function() {
     return {
       lat: this.config.lat,
       lon: this.config.lon,
       extended: this.config.extended,
-      updateInterval: this.config.updateInterval,
+      updateInterval: this.resolveUpdateInterval(),
       proximityWeighting: this.config.proximityWeighting,
       products: { showExcessiveRain: this.config.showExcessiveRain }
     };
@@ -29,8 +48,8 @@
     Log.info(`Starting module: ${this.name}`);
     Log.info("SPC-Outlook: GET_SPC_DATA - " + this.config.lat + "," + this.config.lon + "," + this.config.extended);
     this.sendSocketNotification("GET_SPC_DATA", this.buildRequestPayload());
-    // Set an interval to update every hour (3600000 milliseconds)
-    setInterval(() => {this.sendSocketNotification("GET_SPC_DATA", this.buildRequestPayload());}, this.config.updateInterval * 60000);
+    // Set an interval to update every updateInterval minutes (default 60).
+    setInterval(() => {this.sendSocketNotification("GET_SPC_DATA", this.buildRequestPayload());}, this.resolveUpdateInterval() * 60000);
   },
 
   socketNotificationReceived: function(notification, payload) {

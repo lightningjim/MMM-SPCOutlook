@@ -83,14 +83,22 @@ module.exports = NodeHelper.create({
       this._inFlight = true;
       try {
         const { lat, lon, extended, updateInterval, proximityWeighting, products } = payload;
-        if (updateInterval === undefined) {
+        // WR-05: the only check used to be `=== undefined`, so anything else was stored
+        // verbatim. `0` makes _isWithinStaleWindow compute intervalMs = 0, so
+        // `(Date.now() - timestamp) < 0` is never true and no stale fallback ever fires —
+        // every transient blip becomes a hard failure. A non-numeric value yields NaN, and
+        // `x < NaN` is likewise always false: the same silent disablement, from a typo.
+        // Validate the type and the range, and fall back to the documented default.
+        const requestedInterval = Number(updateInterval);
+        if (!Number.isFinite(requestedInterval) || requestedInterval < 1) {
           if (!this._loggedIntervalFallback) {
-            Log.info("MMM-SPCOutlook: GET_SPC_DATA missing updateInterval, defaulting to 60 minutes");
+            Log.warn("MMM-SPCOutlook: invalid updateInterval " + JSON.stringify(updateInterval) +
+                     ", defaulting to 60 minutes");
             this._loggedIntervalFallback = true;
           }
           this._updateInterval = 60;
         } else {
-          this._updateInterval = updateInterval;
+          this._updateInterval = requestedInterval;
         }
         this._proximityWeighting = proximityWeighting === true;
         // Defensive re-default for per-product toggles (CFG-01, D-06), mirroring the
