@@ -40,6 +40,12 @@ module.exports = NodeHelper.create({
     this._updateInterval = 60;
     this._proximityWeighting = false;
     this._loggedIntervalFallback = false;
+    // CR-03: overlapping polls. socketNotificationReceived is async and MagicMirror does
+    // not await it, so nothing stopped a second GET_SPC_DATA from starting while the first
+    // ~25-hop serial chain was still running. _inFlight prevents the overlap; _seq stamps
+    // every broadcast so the frontend can reject a chain that finishes out of order.
+    this._inFlight = false;
+    this._seq = 0;
     this._products = this._productToggles();
   },
 
@@ -62,53 +68,75 @@ module.exports = NodeHelper.create({
   // Called when the front-end (MMM-SPCOutlook.js) sends a socket notification
   socketNotificationReceived: async function(notification, payload) {
     if (notification === "GET_SPC_DATA") {
-      const { lat, lon, extended, updateInterval, proximityWeighting, products } = payload;
-      if (updateInterval === undefined) {
-        if (!this._loggedIntervalFallback) {
-          Log.info("MMM-SPCOutlook: GET_SPC_DATA missing updateInterval, defaulting to 60 minutes");
-          this._loggedIntervalFallback = true;
+      // CR-03: the in-flight guard the withTimeout comment above already identified as
+      // missing. Without it a poll whose wall-time exceeds updateInterval — roughly
+      // (20-26 product fetches + 1 MD index + N MD fetches) x 15 s on a degraded network —
+      // stacks a second chain behind the first. The chains then finish in whatever order
+      // the network decides, and the frontend accepted whichever landed last, so a slow
+      // chain that read SLGT at 15:58 could overwrite a fast chain that read MDT at 16:03.
+      // Nothing marks that payload stale (every fetch in it succeeded, just earlier), so
+      // the downgrade is silent — the false-negative class this project exists to prevent.
+      if (this._inFlight) {
+        Log.info("MMM-SPCOutlook: poll already in flight, skipping this tick");
+        return;
+      }
+      this._inFlight = true;
+      try {
+        const { lat, lon, extended, updateInterval, proximityWeighting, products } = payload;
+        if (updateInterval === undefined) {
+          if (!this._loggedIntervalFallback) {
+            Log.info("MMM-SPCOutlook: GET_SPC_DATA missing updateInterval, defaulting to 60 minutes");
+            this._loggedIntervalFallback = true;
+          }
+          this._updateInterval = 60;
+        } else {
+          this._updateInterval = updateInterval;
         }
-        this._updateInterval = 60;
-      } else {
-        this._updateInterval = updateInterval;
+        this._proximityWeighting = proximityWeighting === true;
+        // Defensive re-default for per-product toggles (CFG-01, D-06), mirroring the
+        // _updateInterval / _proximityWeighting handling above — Phases 15-17 add one
+        // `=== true` line per new registry row here.
+        // WR-16: every registry row contributes its own `configFlag`, so a new product row
+        // needs no edit here — this is the read the row's own comment documents.
+        // WR-13: snapshot the toggles into a local and pass them down the chain. The
+        // helper-global field is written here but was not read until ~20 awaits later at the
+        // ERO gate; with no in-flight guard, a second GET_SPC_DATA arriving mid-flight made
+        // the first chain read the second request's toggles — and because MagicMirror shares
+        // one node_helper per module *type*, two configured instances overwrote each other's
+        // on every poll. The field is still assigned for callers that reach getSpcOutlook
+        // without an explicit snapshot.
+        const productToggles = this._productToggles(products);
+        this._products = productToggles;
+        // CR-04: MagicMirror does not await this handler, so an unhandled rejection here
+        // means sendSocketNotification is never reached and the frontend stays on
+        // "Loading SPC Outlook..." forever — every later interval tick takes the identical
+        // path, so it never self-heals. getMesoscaleDiscussion throws on any non-2xx, on a
+        // DNS/TLS failure, on a KMZ with no KML, and on an MD KML with no features; none of
+        // those may be allowed to suppress the outlook payload.
+        let md = false;
+        try {
+          md = await this.getMesoscaleDiscussion(lat, lon);
+        } catch (err) {
+          Log.error("MMM-SPCOutlook: mesoscale discussion fetch failed, continuing without MDs", err);
+          md = false;   // matches getMesoscaleDiscussion's documented "no active MDs" return
+        }
+        let outlook;
+        try {
+          outlook = await this.getSpcOutlook(lat, lon, extended, productToggles);
+        } catch (err) {
+          Log.error("MMM-SPCOutlook: outlook fetch failed", err);
+          outlook = { error: err.toString() };
+        }
+        // Send the results back to your front-end module. The third element is a
+        // monotonic sequence number (CR-03): it is what lets the frontend discard a
+        // chain that finished after a newer one, so a late payload can never overwrite
+        // a fresher risk. The increment is guarded so a caller that reaches this handler
+        // without start() (offline probes) still emits a usable number.
+        this._seq = (this._seq || 0) + 1;
+        this.sendSocketNotification("SPC_DATA_RESULT", [outlook, md, this._seq]);
+      } finally {
+        this._inFlight = false;
       }
-      this._proximityWeighting = proximityWeighting === true;
-      // Defensive re-default for per-product toggles (CFG-01, D-06), mirroring the
-      // _updateInterval / _proximityWeighting handling above — Phases 15-17 add one
-      // `=== true` line per new registry row here.
-      // WR-16: every registry row contributes its own `configFlag`, so a new product row
-      // needs no edit here — this is the read the row's own comment documents.
-      // WR-13: snapshot the toggles into a local and pass them down the chain. The
-      // helper-global field is written here but was not read until ~20 awaits later at the
-      // ERO gate; with no in-flight guard, a second GET_SPC_DATA arriving mid-flight made
-      // the first chain read the second request's toggles — and because MagicMirror shares
-      // one node_helper per module *type*, two configured instances overwrote each other's
-      // on every poll. The field is still assigned for callers that reach getSpcOutlook
-      // without an explicit snapshot.
-      const productToggles = this._productToggles(products);
-      this._products = productToggles;
-      // CR-04: MagicMirror does not await this handler, so an unhandled rejection here
-      // means sendSocketNotification is never reached and the frontend stays on
-      // "Loading SPC Outlook..." forever — every later interval tick takes the identical
-      // path, so it never self-heals. getMesoscaleDiscussion throws on any non-2xx, on a
-      // DNS/TLS failure, on a KMZ with no KML, and on an MD KML with no features; none of
-      // those may be allowed to suppress the outlook payload.
-      let md = false;
-      try {
-        md = await this.getMesoscaleDiscussion(lat, lon);
-      } catch (err) {
-        Log.error("MMM-SPCOutlook: mesoscale discussion fetch failed, continuing without MDs", err);
-        md = false;   // matches getMesoscaleDiscussion's documented "no active MDs" return
-      }
-      let outlook;
-      try {
-        outlook = await this.getSpcOutlook(lat, lon, extended, productToggles);
-      } catch (err) {
-        Log.error("MMM-SPCOutlook: outlook fetch failed", err);
-        outlook = { error: err.toString() };
-      }
-      // Send the results back to your front-end module
-      this.sendSocketNotification("SPC_DATA_RESULT", [outlook, md]);
     }
   },
 

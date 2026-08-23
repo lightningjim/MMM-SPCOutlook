@@ -37,6 +37,20 @@
     if (notification === "SPC_DATA_RESULT") {
       // Store the results in a variable for display
       Log.info("SPC Outlook: SPC_DATA_RESULT Received - " + JSON.stringify(payload));
+      // CR-03: payload[2] is the helper's monotonic poll sequence. Accepting every result
+      // unconditionally meant last-writer-wins across time, so a slow chain that read SLGT
+      // several minutes ago could land after a fast chain that read MDT and silently
+      // downgrade an active risk — with no ⚠ badge, because every fetch in the late chain
+      // succeeded, just earlier. A payload with no sequence (an older helper) is still
+      // accepted, so the check can only ever reject a provably older result.
+      const seq = payload[2];
+      if (typeof seq === "number") {
+        if (seq <= (this._lastSeq ?? -1)) {
+          Log.info("SPC Outlook: discarding out-of-order SPC_DATA_RESULT (seq " + seq + " <= " + this._lastSeq + ")");
+          return;
+        }
+        this._lastSeq = seq;
+      }
       this.spcrisk = payload[0];
       this.mds = payload[1];
       this.updateDom();
