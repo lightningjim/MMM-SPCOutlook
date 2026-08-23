@@ -286,6 +286,10 @@ function eroHttpRoutes(day1Handler) {
 // Payload contract assertion
 // ---------------------------------------------------------------------
 
+// The four fields a product row's payload block emits per day. Deliberately literal —
+// this is the probe's independent statement of the contract (WR-10).
+const ERO_SUFFIXES = ["Risk", "Text", "Color", "ValidTime"];
+
 function assertPayloadIntact(out) {
   if (out === null || typeof out !== "object") {
     throw new Error("assertPayloadIntact: out is not an object");
@@ -316,12 +320,24 @@ function assertPayloadIntact(out) {
   if (typeof out.excessiveRain !== "object" || out.excessiveRain === null) {
     throw new Error("assertPayloadIntact: excessiveRain missing or not an object");
   }
+  // WR-10: node_helper derives every ERO day count from PRODUCT_REGISTRY.excessiveRain.days
+  // so that "no literal day count survives outside the registry", but this assertion
+  // hardcoded 5 days and 20 keys — so changing the single declared knob from 5 to 7 failed
+  // the probe with "excessiveRain has 28 keys, expected 20", a message that points at the
+  // payload rather than at the probe. The day count now comes from the registry; the
+  // SUFFIX list stays literal on purpose, because it is the independent oracle and must
+  // not come from the same source as the thing under test.
+  const eroDays = PRODUCT_REGISTRY.excessiveRain.days;
   const eroKeyCount = Object.keys(out.excessiveRain).length;
-  if (eroKeyCount !== 20) {
-    throw new Error(`assertPayloadIntact: excessiveRain has ${eroKeyCount} keys, expected 20`);
+  const expectedKeys = eroDays * ERO_SUFFIXES.length;
+  if (eroKeyCount !== expectedKeys) {
+    throw new Error(
+      `assertPayloadIntact: excessiveRain has ${eroKeyCount} keys, expected ${expectedKeys} ` +
+      `(${eroDays} days x ${ERO_SUFFIXES.length} fields)`
+    );
   }
-  for (let d = 1; d <= 5; d++) {
-    for (const suffix of ["Risk", "Text", "Color", "ValidTime"]) {
+  for (let d = 1; d <= eroDays; d++) {
+    for (const suffix of ERO_SUFFIXES) {
       const key = `day${d}${suffix}`;
       if (!(key in out.excessiveRain)) {
         throw new Error(`assertPayloadIntact: excessiveRain.${key} missing`);
@@ -329,7 +345,7 @@ function assertPayloadIntact(out) {
     }
   }
   const validTiers = Object.keys(PRODUCT_REGISTRY.excessiveRain.tierToText);
-  for (let d = 1; d <= 5; d++) {
+  for (let d = 1; d <= eroDays; d++) {
     const riskKey = `day${d}Risk`;
     const val = out.excessiveRain[riskKey];
     if (!validTiers.includes(val)) {
