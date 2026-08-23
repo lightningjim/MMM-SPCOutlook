@@ -53,6 +53,35 @@ const LEADING_BAD_FEATURE_BODY = {
   ]
 };
 
+// A structurally valid, empty FeatureCollection. Routing every SPC/fire-weather layer
+// to this is how a scenario isolates the layer it is actually testing: each unrouted
+// layer otherwise takes installFetch's hard-failure default, which sets anyStale and
+// makes any `_stale` assertion pass for reasons that have nothing to do with the
+// scenario's subject (WR-02).
+const EMPTY_FEATURE_COLLECTION = { type: "FeatureCollection", features: [] };
+
+// WR-08: an HTTP 200 that parses as JSON and has a `features` array — so
+// _isFeatureCollection accepts it — but whose leading feature carries a ring of two
+// positions. turf.polygon throws on it ("Each LinearRing of a Polygon must have 4 or
+// more Positions."), which is the shape a partial write at the origin or a truncated
+// proxy response produces. The trailing feature is a real SLGT polygon in the same
+// layer, so the correct outcome is a degraded-but-populated layer, never { error }.
+const TRUNCATED_RING_BODY = {
+  type: "FeatureCollection",
+  features: [
+    {
+      type: "Feature",
+      properties: { LABEL: "MDT" },
+      geometry: { type: "Polygon", coordinates: [[[-77.1, 38.8], [-76.9, 38.8]]] }
+    },
+    {
+      type: "Feature",
+      properties: { LABEL: "SLGT" },
+      geometry: { type: "Polygon", coordinates: [SAMPLE_RING] }
+    }
+  ]
+};
+
 // A well-formed ERO feature: lowercase `dn` (2 -> SLGT per productRegistry's
 // eroDnToValue/eroValueToTier) plus a `valid_time` field.
 const ERO_SLGT_BODY = {
@@ -492,6 +521,46 @@ const scenarios = [
       if (fetchFn.calls.some((url) => eroUrlValues.includes(url))) {
         throw new Error("fetchGeoJsonCached was called with an ERO URL while the toggle was off");
       }
+    }
+  },
+  {
+    // WR-08: one truncated ring in one layer must not take the whole payload down.
+    // extractPolygons handed coordinates straight to turf, which throws, and the throw
+    // escaped every per-layer guard into getSpcOutlook's shared catch — days 1-8, fire
+    // weather and the ERO disappeared together. The good polygon in the same layer must
+    // still resolve, and because a dropped polygon is a potential false negative rather
+    // than a clean read, the payload must carry the degrade signal.
+    name: "spc-truncated-ring-degrades-one-layer-not-the-payload",
+    run: async (helper) => {
+      resetHelper(helper);
+      resetLogs();
+      helper._products = { showExcessiveRain: false };
+      // Every other layer succeeds with an empty collection, so anyStale cannot come
+      // from a hard-failed fetch — the only thing that can raise it here is the dropped
+      // polygon this scenario is about (WR-02's vacuity trap, avoided deliberately).
+      installFetch(helper, [
+        ["https://www.spc.noaa.gov/products/outlook/day1otlk_cat.lyr.geojson", freshFetch(TRUNCATED_RING_BODY)],
+        [".lyr.geojson", freshFetch(EMPTY_FEATURE_COLLECTION)]
+      ]);
+      const originalPointInPolygon = turfStub.pointInPolygon;
+      turfStub.pointInPolygon = () => true;
+      let out;
+      try {
+        out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showExcessiveRain: false });
+      } finally {
+        turfStub.pointInPolygon = originalPointInPolygon;
+      }
+      assertPayloadIntact(out);
+      if (out.day1.risk !== "SLGT") {
+        throw new Error(`a truncated ring discarded the usable polygon in its own layer: expected SLGT, got ${out.day1.risk}`);
+      }
+      if (out._stale !== true) {
+        throw new Error("a layer that silently lost a polygon was presented as a confident reading (_stale !== true)");
+      }
+      requireLog(
+        ["unusable geometry", "day1otlk_cat.lyr.geojson"],
+        "a dropped polygon produced no diagnostic naming the layer that degraded"
+      );
     }
   },
   {

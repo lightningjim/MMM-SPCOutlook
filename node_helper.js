@@ -46,6 +46,10 @@ module.exports = NodeHelper.create({
     // every broadcast so the frontend can reject a chain that finishes out of order.
     this._inFlight = false;
     this._seq = 0;
+    // WR-08: monotonic count of features dropped because turf could not build their
+    // geometry. getSpcOutlook samples it across a run to decide whether the payload was
+    // assembled from complete layers.
+    this._unusableFeatureCount = 0;
     this._products = this._productToggles();
   },
 
@@ -216,8 +220,9 @@ module.exports = NodeHelper.create({
    *   product-specific properties (e.g. the ERO's `valid_time`) off the polygon the user
    *   is actually inside rather than off `features[0]` (CR-01/WR-10).
    *   Returns an empty array rather than throwing when `geojson` is not a usable
-   *   FeatureCollection (see `_isFeatureCollection`), and silently skips
-   *   individual features lacking `properties` or `geometry`.
+   *   FeatureCollection (see `_isFeatureCollection`), and skips individual features
+   *   lacking `properties` or `geometry`, or carrying geometry turf cannot build
+   *   (WR-08) — the latter is logged and counted, never thrown.
    */
   extractPolygons(geojson, toValue, includesFeat, context = "unidentified layer"){
     if (!this._isFeatureCollection(geojson)) {
@@ -231,10 +236,28 @@ module.exports = NodeHelper.create({
       const value = toValue(label, f);
       if (!includesFeat(label, value)) return;
 
+      // WR-08: _isFeatureCollection validates that `features` is an array and never
+      // inspects geometry, but turf.polygon throws on a ring with fewer than four
+      // positions, on a ring whose first and last positions differ, and on non-array
+      // coordinates. An HTTP 200 that parses as JSON and carries one truncated ring — a
+      // partial write at the origin, a truncated proxy response, a corrupted CDN object —
+      // therefore threw past every per-layer guard into getSpcOutlook's shared catch and
+      // turned the whole payload into { error }: days 1-8, fire weather and the ERO gone
+      // together, over one bad ring in one layer. Contain at the feature level, which is
+      // what this function's own doc comment already promises.
       let poly;
-      if (f.geometry.type === "Polygon") { poly = turf.polygon(f.geometry.coordinates);}
-      else if (f.geometry.type === "MultiPolygon") { poly = turf.multiPolygon(f.geometry.coordinates);}
-      else return;
+      try {
+        if (f.geometry.type === "Polygon") { poly = turf.polygon(f.geometry.coordinates);}
+        else if (f.geometry.type === "MultiPolygon") { poly = turf.multiPolygon(f.geometry.coordinates);}
+        else return;
+      } catch (err) {
+        // A dropped polygon is a potential false negative, not a clean read, so the layer
+        // must not present as confidently evaluated: count it, and let getSpcOutlook turn
+        // the count into the same ⚠ stale signal a failed fetch raises.
+        Log.error("MMM-SPCOutlook extractPolygons: skipping a feature with unusable geometry in " + context, err);
+        this._unusableFeatureCount = (this._unusableFeatureCount || 0) + 1;
+        return;
+      }
       polygons.push({ label, value, poly, feature: f });
     });
     return polygons;
@@ -657,6 +680,14 @@ module.exports = NodeHelper.create({
       // WR-13: prefer this request's own toggle snapshot; the helper-global field is only
       // a fallback for callers (e.g. offline probes) that do not pass one.
       const productToggles = products ?? this._products ?? this._productToggles();
+
+      // WR-08: sample extractPolygons' dropped-feature counter across this run. Reading a
+      // counter rather than threading a return value avoids touching ~25 call sites, and
+      // the only way it can misreport under an overlapping run is by attributing another
+      // run's dropped polygon to this payload — i.e. an extra ⚠ badge, never a missing
+      // one. (CR-03's in-flight guard makes that overlap unreachable from the socket path
+      // anyway.) Erring toward "degraded" is the safe direction for this product.
+      const unusableFeaturesAtStart = this._unusableFeatureCount || 0;
 
       // Part A: Location change invalidation
       const locationChanged = (lat !== this._cachedLat || lon !== this._cachedLon);
@@ -1305,6 +1336,11 @@ module.exports = NodeHelper.create({
         eroPayload[`day${d}Color`] = ero.tierToColor[eroTiers[d]];
         eroPayload[`day${d}ValidTime`] = eroValidTimes[d];
       }
+
+      // WR-08: a layer that lost one or more polygons to unusable geometry produced a
+      // partial answer, and a partial answer is not an answer — flag it exactly as a
+      // failed fetch is flagged, so the user sees ⚠ rather than a confident reading.
+      if ((this._unusableFeatureCount || 0) > unusableFeaturesAtStart) anyStale = true;
 
       return {
         ...(anyStale ? { _stale: true, _staleAsOf: Date.now() } : {}),

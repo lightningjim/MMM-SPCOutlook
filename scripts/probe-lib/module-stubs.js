@@ -29,10 +29,38 @@ const nodeHelperStub = {
   create: (obj) => obj
 };
 
+// WR-08: real turf.polygon/multiPolygon throw on a ring with fewer than four positions,
+// on a ring whose first and last positions differ, and on non-array coordinates — with
+// these exact messages (verified against @turf/turf directly). A stub that accepts any
+// coordinates at all cannot exercise the containment those throws demand, so it silently
+// certified a code path that collapses the whole payload in production.
+function assertRing(ring) {
+  if (!Array.isArray(ring) || ring.length < 4) {
+    throw new Error("Each LinearRing of a Polygon must have 4 or more Positions.");
+  }
+  const first = ring[0];
+  const last = ring[ring.length - 1];
+  if (!Array.isArray(first) || !Array.isArray(last) ||
+      first[0] !== last[0] || first[1] !== last[1]) {
+    throw new Error("First and last Position are not equivalent.");
+  }
+}
+
 const turfStub = {
   point: (coords) => ({ type: "Point", coordinates: coords }),
-  polygon: (coords) => ({ __stubPoly: coords }),
-  multiPolygon: (coords) => ({ __stubPoly: coords }),
+  polygon: (coords) => {
+    if (!Array.isArray(coords)) throw new Error("Each LinearRing of a Polygon must have 4 or more Positions.");
+    coords.forEach(assertRing);
+    return { __stubPoly: coords };
+  },
+  multiPolygon: (coords) => {
+    if (!Array.isArray(coords)) throw new Error("Each LinearRing of a Polygon must have 4 or more Positions.");
+    coords.forEach((poly) => {
+      if (!Array.isArray(poly)) throw new Error("Each LinearRing of a Polygon must have 4 or more Positions.");
+      poly.forEach(assertRing);
+    });
+    return { __stubPoly: coords };
+  },
   // Delegates rather than hardcoding a result — scenarios flip
   // turfStub.pointInPolygon to simulate the user standing inside a polygon.
   pointInPolygon: () => false,
