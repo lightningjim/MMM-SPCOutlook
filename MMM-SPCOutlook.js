@@ -191,13 +191,14 @@
       if (this.spcrisk._stale) {
         let staleSuffix = "";
         const asOf = this.spcrisk._staleAsOf;
+        // WR-04: _staleAsOf is now the oldest cached reading that contributed to the
+        // payload, so this renders the real age of the data rather than the age of the
+        // payload object. It is null on a hard failure with nothing cached to age, which
+        // this guard handles by showing the badge with no age suffix. The former
+        // `delta < 0` "just now" branch was unreachable — helper and renderer share one
+        // process clock in MagicMirror, so asOf is always in the past.
         if (typeof asOf === "number" && isFinite(asOf)) {
-          const delta = Date.now() - asOf;
-          if (delta < 0) {
-            staleSuffix = " — just now";
-          } else {
-            staleSuffix = " — " + moment(asOf).fromNow();
-          }
+          staleSuffix = " — " + moment(asOf).fromNow();
         }
         wrapper.innerHTML += "<span style=\"color:#FFCC00\">⚠ Stale" + staleSuffix + "</span><br/>";
       }

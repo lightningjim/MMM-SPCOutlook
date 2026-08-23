@@ -584,6 +584,11 @@ const scenarios = [
       if (out._stale !== true) {
         throw new Error("a hard-failed ERO fetch produced an unflagged no-risk payload (_stale !== true)");
       }
+      // WR-04: a hard failure has no cached reading to age, so the payload must say so
+      // rather than claim the data is as fresh as the moment of assembly.
+      if (out._staleAsOf !== null) {
+        throw new Error(`a hard failure with nothing cached reported _staleAsOf ${JSON.stringify(out._staleAsOf)}, expected null`);
+      }
 
       // Negative control: identical routing, ERO toggle off. If _stale is still set, the
       // staleness came from somewhere other than the ERO and the assertion above is
@@ -697,6 +702,14 @@ const scenarios = [
         const entry = helper._geoJsonCache.get(ERO_URLS[1]);
         if (!entry || entry.result.value !== 2) {
           throw new Error(`the rejected body overwrote the cached reading: ${JSON.stringify(entry && entry.result)}`);
+        }
+        // WR-04: the badge has to age the DATA, not the payload object. _staleAsOf must be
+        // the timestamp of the cached reading being served, not the moment of assembly.
+        if (out._staleAsOf !== entry.timestamp) {
+          throw new Error(
+            `_staleAsOf is not the age of the served reading: got ${out._staleAsOf}, cached reading is from ${entry.timestamp} ` +
+            `(off by ${out._staleAsOf - entry.timestamp} ms — stamping assembly time makes the badge read "a few seconds ago" forever)`
+          );
         }
       } finally {
         turfStub.pointInPolygon = originalPointInPolygon;

@@ -50,6 +50,8 @@ module.exports = NodeHelper.create({
     // geometry. getSpcOutlook samples it across a run to decide whether the payload was
     // assembled from complete layers.
     this._unusableFeatureCount = 0;
+    // WR-04: oldest cached timestamp contributing to the payload under assembly.
+    this._oldestStaleAt = null;
     this._products = this._productToggles();
   },
 
@@ -474,6 +476,31 @@ module.exports = NodeHelper.create({
   },
 
   /**
+   * Record the age of a cached reading that is being served in place of a fresh fetch.
+   * @param entry - the _geoJsonCache entry whose `result` is about to be returned
+   *
+   *   WR-04: `_staleAsOf: Date.now()` recorded when the payload was *assembled*, not how
+   *   old the data in it is — measured against the real getSpcOutlook with every layer
+   *   failing, `Date.now() - _staleAsOf` was 1 ms, so `moment(asOf).fromNow()` rendered
+   *   "a few seconds ago" on every stale render whether the reading was two minutes or
+   *   fifty-nine minutes old. A freshness indicator that always reports maximum freshness
+   *   while flagging staleness is worse than none. Keeping the OLDEST contributing
+   *   timestamp is the honest summary of a payload assembled from several layers.
+   *
+   *   Called only from the paths that return `stale: true`; an ETag/hash cache hit is
+   *   upstream confirming the bytes are unchanged, which is a fresh reading, not a stale
+   *   one. A hard failure has no entry to age, so the field stays null and the frontend's
+   *   existing `typeof asOf === "number"` guard omits the suffix.
+   */
+  _noteStaleEntry(entry) {
+    if (!entry || typeof entry.timestamp !== "number") return;
+    if (this._oldestStaleAt === null || this._oldestStaleAt === undefined ||
+        entry.timestamp < this._oldestStaleAt) {
+      this._oldestStaleAt = entry.timestamp;
+    }
+  },
+
+  /**
    * Fetch a GeoJSON URL with ETag/hash caching, returning parsed data or cached result on hit/error.
    * @param url - GeoJSON endpoint URL to fetch
    * @returns object with { data, cachedResult, stale, mode, newEtag, newHash } — data is null on cache hit or error
@@ -493,6 +520,7 @@ module.exports = NodeHelper.create({
       // Network error
       if (entry && this._isWithinStaleWindow(entry.timestamp, this._updateInterval)) {
         Log.info('MMM-SPCOutlook: stale fallback for ' + url);
+        this._noteStaleEntry(entry);
         return { data: null, cachedResult: entry.result, stale: true };
       }
       // CR-03: with no usable cache entry this layer silently becomes "no risk". That is
@@ -520,6 +548,7 @@ module.exports = NodeHelper.create({
     if (!res.ok) {
       if (entry && this._isWithinStaleWindow(entry.timestamp, this._updateInterval)) {
         Log.info('MMM-SPCOutlook: stale fallback for ' + url);
+        this._noteStaleEntry(entry);
         return { data: null, cachedResult: entry.result, stale: true };
       }
       // CR-03: see the network-error branch above — a 5xx/4xx with no usable cache entry
@@ -543,6 +572,7 @@ module.exports = NodeHelper.create({
       Log.error('MMM-SPCOutlook: rejected an unusable response body for ' + url + ' (' + reason + '); not caching');
       if (entry && entry.result !== null && entry.result !== undefined &&
           this._isWithinStaleWindow(entry.timestamp, this._updateInterval)) {
+        this._noteStaleEntry(entry);
         return { data: null, cachedResult: entry.result, stale: true, failed: true };
       }
       return { data: null, cachedResult: null, stale: false, failed: true };
@@ -707,6 +737,12 @@ module.exports = NodeHelper.create({
       // one. (CR-03's in-flight guard makes that overlap unreachable from the socket path
       // anyway.) Erring toward "degraded" is the safe direction for this product.
       const unusableFeaturesAtStart = this._unusableFeatureCount || 0;
+
+      // WR-04: reset per run, then let every stale/cached acceptance inside
+      // fetchGeoJsonCached lower it via _noteStaleEntry. Same reasoning as the counter
+      // above for why this is helper state rather than a value threaded through ~25 call
+      // sites; the in-flight guard (CR-03) is what keeps a second run from interleaving.
+      this._oldestStaleAt = null;
 
       // Part A: Location change invalidation
       const locationChanged = (lat !== this._cachedLat || lon !== this._cachedLon);
@@ -1357,7 +1393,9 @@ module.exports = NodeHelper.create({
       if ((this._unusableFeatureCount || 0) > unusableFeaturesAtStart) anyStale = true;
 
       return {
-        ...(anyStale ? { _stale: true, _staleAsOf: Date.now() } : {}),
+        // WR-04: the oldest cached reading that contributed to this payload, or null when
+        // the degrade was a hard failure with nothing cached to age.
+        ...(anyStale ? { _stale: true, _staleAsOf: this._oldestStaleAt } : {}),
         "day48Risk": day48Risk,
           day1: {
            "risk": day1Risk,
