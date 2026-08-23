@@ -11,7 +11,9 @@
 // contract assertion are product-agnostic.
 
 const { PRODUCT_REGISTRY } = require("../productRegistry.js");
-const { loadNodeHelper, resetHelper, resetLogs, turfStub, logCalls } = require("./probe-lib/module-stubs.js");
+const {
+  loadNodeHelper, loadFrontendModule, renderDom, resetHelper, resetLogs, turfStub, logCalls
+} = require("./probe-lib/module-stubs.js");
 
 // ---------------------------------------------------------------------
 // Fixtures
@@ -954,6 +956,48 @@ const scenarios = [
       }
       if (withoutSign.day4.risk !== "ENH") {
         throw new Error(`45% without SIGN must stay ENH, got ${withoutSign.day4.risk}`);
+      }
+    }
+  },
+  {
+    // CR-01: the regression that survived two review rounds because the suite asserted on
+    // the payload and stopped before the render. Every layer fails, so every value is
+    // "NONE" — the same value a genuine all-clear produces — and getDom's no-risk
+    // short-circuit used to win, putting "No Severe Weather Risk" on the wall during a
+    // total NOAA/DNS/Wi-Fi outage with no visible difference from a quiet day. The
+    // payload half of this guarantee is asserted by ero-hard-fail-is-flagged and was
+    // already true then; only the render tells you whether the user can see it.
+    name: "frontend-total-outage-still-shows-the-outage",
+    run: async (helper) => {
+      resetHelper(helper);
+      resetLogs();
+      helper._products = { showExcessiveRain: true };
+      installFetch(helper, []);   // every layer hard-fails
+      const out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showExcessiveRain: true });
+      assertPayloadIntact(out);
+      if (out._stale !== true) {
+        throw new Error("precondition: a total outage produced an unflagged payload, so the render assertion below proves nothing");
+      }
+
+      const frontend = loadFrontendModule();
+      const config = { lat: PROBE_LAT, lon: PROBE_LON, extended: false, updateInterval: 60,
+                       proximityWeighting: false, showExcessiveRain: true };
+      const rendered = renderDom(frontend, { config, spcrisk: out });
+      if (rendered === "No Severe Weather Risk") {
+        throw new Error("a total outage rendered as a confident all-clear — the degrade signal never reached the screen");
+      }
+      if (!rendered.includes("Stale")) {
+        throw new Error(`a degraded payload rendered with no stale badge: ${rendered}`);
+      }
+
+      // Control: a genuine all-clear must still short-circuit to the plain line, or the
+      // assertion above is satisfied by the gate simply never firing.
+      const allClear = Object.assign({}, out);
+      delete allClear._stale;
+      delete allClear._staleAsOf;
+      const cleanRender = renderDom(frontend, { config, spcrisk: allClear });
+      if (cleanRender !== "No Severe Weather Risk") {
+        throw new Error(`control: a genuine all-clear no longer renders the no-risk line, it rendered: ${cleanRender}`);
       }
     }
   },

@@ -11,6 +11,8 @@
 
 const Module = require("module");
 const path = require("path");
+const fs = require("fs");
+const vm = require("vm");
 
 const logCalls = [];
 
@@ -175,9 +177,50 @@ function resetHelper(helper) {
   helper.start();
 }
 
+// CR-01: the suite asserted on the payload and stopped there, which is exactly how a
+// total outage came to render as a confident "No Severe Weather Risk" while
+// ero-hard-fail-is-flagged reported the guarantee as met — `_stale: true` was in the
+// payload and the branch that renders it was unreachable. MMM-SPCOutlook.js is a browser
+// module: it calls Module.register at top level and reads Log, moment and document off
+// the global scope, so it is loaded into a vm context with those four supplied rather
+// than required. Still dependency-free: vm and fs are core.
+function loadFrontendModule() {
+  const source = fs.readFileSync(path.join(__dirname, "..", "..", "MMM-SPCOutlook.js"), "utf-8");
+  let captured = null;
+  const sandbox = {
+    Module: { register: (_name, definition) => { captured = definition; } },
+    Log: loggerStub,
+    // Deterministic: the badge's exact wording is MagicMirror's business, its presence
+    // is the probe's.
+    moment: (_ts) => ({ fromNow: () => "PROBE_AGE" }),
+    document: { createElement: () => ({ innerHTML: "", textContent: "" }) },
+    setInterval: () => 0,
+    console
+  };
+  vm.createContext(sandbox);
+  vm.runInContext(source, sandbox, { filename: "MMM-SPCOutlook.js" });
+  if (!captured) {
+    throw new Error("MMM-SPCOutlook.js did not call Module.register — the frontend probe cannot run");
+  }
+  return captured;
+}
+
+// Render a payload through the real getDom and return the resulting markup/text.
+function renderDom(frontend, { config, spcrisk, mds = false }) {
+  const ctx = Object.create(frontend);
+  ctx.config = config;
+  ctx.spcrisk = spcrisk;
+  ctx.mds = mds;
+  ctx.updateDom = () => {};
+  const wrapper = frontend.getDom.call(ctx);
+  return wrapper.innerHTML || wrapper.textContent || "";
+}
+
 module.exports = {
   installStubs,
   loadNodeHelper,
+  loadFrontendModule,
+  renderDom,
   resetHelper,
   resetLogs,
   turfStub,
