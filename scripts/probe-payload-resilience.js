@@ -23,13 +23,6 @@ const ARCGIS_ERROR_BODY = {
   error: { code: 400, message: "Unable to complete operation", details: [] }
 };
 
-// Structurally a FeatureCollection, but the one feature it carries is
-// individually hostile (null properties/geometry).
-const MALFORMED_FEATURE_BODY = {
-  type: "FeatureCollection",
-  features: [{ type: "Feature", properties: null, geometry: null }]
-};
-
 const SAMPLE_RING = [
   [-77.1, 38.8],
   [-76.9, 38.8],
@@ -37,6 +30,22 @@ const SAMPLE_RING = [
   [-77.1, 39.0],
   [-77.1, 38.8]
 ];
+
+// Structurally a FeatureCollection, but its one feature has `properties: null`.
+// WR-03: this fixture used to carry `geometry: null` as well, which made the scenario
+// vacuous — the `!f.geometry` clause of node_helper.js's per-feature guard dropped the
+// feature before the `properties` clause it claims to test was ever the reason for the
+// rejection. Deleting the properties half of that guard left the scenario green. The
+// geometry is real and the scenario sets pointInPolygon true, so `properties: null` is
+// now the only thing wrong with this feature and the only thing that can reject it.
+const MALFORMED_FEATURE_BODY = {
+  type: "FeatureCollection",
+  features: [{
+    type: "Feature",
+    properties: null,
+    geometry: { type: "Polygon", coordinates: [SAMPLE_RING] }
+  }]
+};
 
 // A hostile leading feature (no `properties` at all) in front of a real MDT polygon.
 // The tier is resolved before the bad feature is ever dereferenced, so the correct
@@ -402,7 +411,17 @@ const scenarios = [
       installFetch(helper, [
         [ERO_URLS[1], freshFetch(MALFORMED_FEATURE_BODY)]
       ]);
-      const out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showExcessiveRain: true });
+      // WR-03: the feature carries a real geometry and the user is inside it, so if the
+      // per-feature `properties` guard did not reject it the tier would resolve rather
+      // than staying NONE. Without this the fixture's null geometry decided the outcome.
+      const originalPointInPolygon = turfStub.pointInPolygon;
+      turfStub.pointInPolygon = () => true;
+      let out;
+      try {
+        out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showExcessiveRain: true });
+      } finally {
+        turfStub.pointInPolygon = originalPointInPolygon;
+      }
       assertPayloadIntact(out);
       if (out.excessiveRain.day1Risk !== "NONE") {
         throw new Error(`day1Risk expected NONE, got ${out.excessiveRain.day1Risk}`);
@@ -412,6 +431,22 @@ const scenarios = [
       // having the catch swallow it, so this scenario reported PASS on crashing code.
       forbidLog("TypeError", "day1 resolved to NONE via an exception, not via the per-feature guard");
       forbidLog("fetch/parse/evaluate failed", "day1 resolved to NONE via the catch-all, not via the per-feature guard");
+      // WR-03: every assertion above is negative, so all of them are satisfied just as
+      // well by the ERO product not existing — disabling the whole ERO loop left this
+      // scenario green. This positive control, run against the same helper and the same
+      // location so nothing else changes, proves the loop that rejected the malformed
+      // feature is the same live loop that resolves a good one.
+      installFetch(helper, [[ERO_URLS[1], freshFetch(ERO_SLGT_BODY)]]);
+      turfStub.pointInPolygon = () => true;
+      let control;
+      try {
+        control = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showExcessiveRain: true });
+      } finally {
+        turfStub.pointInPolygon = originalPointInPolygon;
+      }
+      if (control.excessiveRain.day1Risk !== "SLGT") {
+        throw new Error(`control: a well-formed ERO body resolved to ${control.excessiveRain.day1Risk}, not SLGT — the ERO loop is not running, so the rejection above proved nothing`);
+      }
     }
   },
   {
