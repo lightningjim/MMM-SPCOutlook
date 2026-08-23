@@ -1297,40 +1297,35 @@ module.exports = NodeHelper.create({
               eroValue = fetchResult.cachedResult.value;
               eroValidTime = fetchResult.cachedResult.validTime;
             } else if (fetchResult.data !== null) {
-              if (!this._isFeatureCollection(fetchResult.data)) {
-                // WR-06: refusing to cache the bad body is right; letting it erase a
-                // still-valid cached reading is not. A WPC hiccup during an active HIGH
-                // must not blank the display within one poll, so fall back to
-                // last-known-good and flag it stale. Only when there is nothing good to
-                // fall back to does the day stay at the no-risk default.
-                Log.error(`MMM-SPCOutlook ${ero.id} day ${d}: response was not a usable FeatureCollection, leaving day at no risk`);
-                anyStale = true;
-                const cached = this._geoJsonCache.get(url);
-                if (cached && cached.result && this._isWithinStaleWindow(cached.timestamp, this._updateInterval)) {
-                  eroValue = cached.result.value;
-                  eroValidTime = cached.result.validTime;
-                } else {
-                  continue;
-                }
-              } else {
-                const polys = this.extractPolygons(fetchResult.data, ero.toValue, ero.includesFeat, url);
-                eroValue = this.evaluatePolygons(polys, loc, catComparator);
-                // CR-01/WR-10: read valid_time off the winning polygon — the one the user is
-                // actually inside at the resolved tier — never off `features[0]`, and never at
-                // all on the no-risk path (a risk-free day must not advertise a valid window).
-                // Every dereference here is guarded: a feature with absent/null `properties`
-                // must never throw away an already-computed real tier.
-                eroValidTime = eroValue > 0
-                  ? this._validTimeOfWinner(polys, loc, eroValue, ero.validTimeField)
-                  : null;
-                this._geoJsonCache.set(url, {
-                  mode: fetchResult.mode,
-                  etag: fetchResult.newEtag ?? null,
-                  hash: fetchResult.newHash ?? null,
-                  result: { value: eroValue, validTime: eroValidTime },
-                  timestamp: Date.now()
-                });
-              }
+              // WR-01: no second shape check here. fetchGeoJsonCached has twelve
+              // `return { data ... }` sites and exactly two carry a non-null `data`,
+              // each immediately preceded by an `_isFeatureCollection` gate, so
+              // `data !== null` already implies a usable FeatureCollection. The branch
+              // that used to sit here could not execute in production, and it was a
+              // second, divergent implementation of a policy rejectBody already owns:
+              // rejectBody requires `entry.result !== null && !== undefined`, this copy
+              // required `cached.result` to be truthy, so a legitimately cached `{ value: 0 }`
+              // would have been treated differently by the two. The stale-fallback
+              // guarantee ("a WPC hiccup during an active HIGH must not blank the
+              // display") is delivered by rejectBody at the fetch layer, which is where
+              // ero-rejected-body-serves-last-known-good now exercises it.
+              const polys = this.extractPolygons(fetchResult.data, ero.toValue, ero.includesFeat, url);
+              eroValue = this.evaluatePolygons(polys, loc, catComparator);
+              // CR-01/WR-10: read valid_time off the winning polygon — the one the user is
+              // actually inside at the resolved tier — never off `features[0]`, and never at
+              // all on the no-risk path (a risk-free day must not advertise a valid window).
+              // Every dereference here is guarded: a feature with absent/null `properties`
+              // must never throw away an already-computed real tier.
+              eroValidTime = eroValue > 0
+                ? this._validTimeOfWinner(polys, loc, eroValue, ero.validTimeField)
+                : null;
+              this._geoJsonCache.set(url, {
+                mode: fetchResult.mode,
+                etag: fetchResult.newEtag ?? null,
+                hash: fetchResult.newHash ?? null,
+                result: { value: eroValue, validTime: eroValidTime },
+                timestamp: Date.now()
+              });
             }
 
             // Convert exactly once, after the branch closes — never inside either

@@ -393,13 +393,22 @@ const scenarios = [
       resetHelper(helper);
       resetLogs();
       helper._products = { showExcessiveRain: true };
-      installFetch(helper, [
-        ["https://www.spc.noaa.gov/products/outlook/day1otlk_cat.lyr.geojson", freshFetch(SPC_SLGT_BODY)],
-        [ERO_URLS[1], freshFetch(ARCGIS_ERROR_BODY)],
-        [ERO_URLS[2], freshFetch(ARCGIS_ERROR_BODY)],
-        [ERO_URLS[3], freshFetch(ARCGIS_ERROR_BODY)],
-        [ERO_URLS[4], freshFetch(ARCGIS_ERROR_BODY)],
-        [ERO_URLS[5], freshFetch(ARCGIS_ERROR_BODY)]
+      // WR-01: this scenario used to stub fetchGeoJsonCached and hand the ERO loop
+      // `{ data: ARCGIS_ERROR_BODY }` — a shape the real function cannot emit, because
+      // both of its data-bearing returns are gated by _isFeatureCollection. It therefore
+      // asserted a log line production never produces, and it pinned the dead branch in
+      // place: deleting that branch turned this scenario red for the wrong reason. It now
+      // serves the same body over the HTTP seam, so the rejection happens where it really
+      // happens (rejectBody) and the assertion names the line production really emits.
+      const arcgisError = () => httpResponse({ body: ARCGIS_ERROR_BODY, etag: "ero-err" });
+      installHttp(helper, [
+        ["day1otlk_cat.lyr.geojson", () => httpResponse({ body: SPC_SLGT_BODY, etag: "spc-v1" })],
+        [ERO_URLS[1], arcgisError],
+        [ERO_URLS[2], arcgisError],
+        [ERO_URLS[3], arcgisError],
+        [ERO_URLS[4], arcgisError],
+        [ERO_URLS[5], arcgisError],
+        [".lyr.geojson", () => httpResponse({ body: EMPTY_FEATURE_COLLECTION, etag: "empty-v1" })]
       ]);
       const originalPointInPolygon = turfStub.pointInPolygon;
       turfStub.pointInPolygon = () => true;
@@ -427,10 +436,14 @@ const scenarios = [
       if (helper._geoJsonCache.has(ERO_URLS[1])) {
         throw new Error("a rejected ArcGIS error body was written to _geoJsonCache");
       }
-      // WR-04: the degrade must be diagnosable from the log, per day.
+      if (out._stale !== true) {
+        throw new Error("five rejected ERO bodies produced an unflagged payload (_stale !== true)");
+      }
+      // WR-04: the degrade must be diagnosable from the log, per day. WR-01: this is the
+      // line the real fetchGeoJsonCached emits for this body, named per URL.
       for (let d = 1; d <= 5; d++) {
         requireLog(
-          [`excessiveRain day ${d}`, "not a usable FeatureCollection"],
+          ["rejected an unusable response body for", ERO_URLS[d], "not a usable FeatureCollection"],
           `a rejected ERO body on day ${d} produced no diagnostic log line`
         );
       }
