@@ -338,12 +338,30 @@ module.exports = NodeHelper.create({
     const MDURLs = this.parseNetworkLinks(ActiveKML);
     if(MDURLs.length == 0) return false;
     const MDArray = [];
+    // CR-02: contain per MD. ActiveMD.kmz is an index whose member KMZs are fetched
+    // seconds to minutes later, so an MD that expires in that window returns 404 and
+    // fetchBinBuffer throws. Unconstrained, that throw escaped the whole function into
+    // socketNotificationReceived's catch, which reports "no active MDs" — one expired
+    // link silently discarded every MD that DID cover the user, and it is most likely
+    // during an outbreak, when N is largest and MDs churn fastest. The same applied to
+    // a KMZ with no matching KML member, a features-less body, and a missing `name`
+    // (which pushed `undefined` and rendered as "undefined in effect.").
     for(const MDURL of MDURLs){
-      const MDKMZ = await this.fetchBinBuffer(MDURL);
-      const MDKML = this.extractKmlFromKmz(MDKMZ, this.kmzToKmlfilename(MDURL));
-      const MDgj = this.kmlToGeoJson(MDKML);
-      const MDApplies = this.checkInPolygon(MDgj, lat, lon);
-      if(MDApplies) MDArray.push(MDgj.features[0].properties.name);
+      try {
+        const MDKMZ = await this.fetchBinBuffer(MDURL);
+        const MDKML = this.extractKmlFromKmz(MDKMZ, this.kmzToKmlfilename(MDURL));
+        const MDgj = this.kmlToGeoJson(MDKML);
+        // The containing feature, not features[0] — see checkInPolygon.
+        const hit = this.checkInPolygon(MDgj, lat, lon);
+        const name = hit && hit.properties && hit.properties.name;
+        if (name) {
+          MDArray.push(name);
+        } else if (hit) {
+          Log.error("MMM-SPCOutlook: MD covers the location but carries no name: " + MDURL);
+        }
+      } catch (err) {
+        Log.error("MMM-SPCOutlook: skipping unreadable MD " + MDURL, err);
+      }
     }
     Log.info("SPC-Outlook MDArray: " + MDArray);
     if (MDArray.length == 0) return false;
@@ -1364,22 +1382,39 @@ module.exports = NodeHelper.create({
     }
   },
 
+  /**
+   * Find the feature whose polygon contains the given location.
+   * @param geojson - a GeoJSON FeatureCollection (or anything, including junk)
+   * @param lat - latitude of the user location
+   * @param lon - longitude of the user location
+   * @returns the FIRST feature whose geometry contains the point, or null when the body
+   *   is unusable or no feature contains it.
+   *
+   *   CR-02: this returns the containing feature rather than a boolean because its one
+   *   caller needs the *winning* polygon's `name`, not `features[0]`'s — `features[0]` is
+   *   whichever polygon the server serialised first, which is precisely the anti-pattern
+   *   `_validTimeOfWinner` exists to eliminate for the ERO. It also no longer iterates
+   *   `geojson.features` unguarded: a body carrying no features array threw
+   *   "geojson.features is not iterable" out of the MD loop and discarded every other
+   *   active MD, and a null array element threw on `.geometry`.
+   */
   checkInPolygon(geojson, lat, lon){
     const pt = turf.point([lon, lat]);
+    if (!geojson || !Array.isArray(geojson.features)) return null;
     for (const feature of geojson.features) {
-      if (!feature.geometry) continue;
+      if (!feature || !feature.geometry) continue;
 
       const geomType = feature.geometry.type;
       if (geomType === "Polygon") {
         const poly = turf.polygon(feature.geometry.coordinates);
-        if (turf.booleanPointInPolygon(pt, poly)) return true;
+        if (turf.booleanPointInPolygon(pt, poly)) return feature;
       }
       else if (geomType === "MultiPolygon") {
         const multiPoly = turf.multiPolygon(feature.geometry.coordinates);
-        if (turf.booleanPointInPolygon(pt, multiPoly)) return true;
+        if (turf.booleanPointInPolygon(pt, multiPoly)) return feature;
       }
     }
-    return false;
+    return null;
   },
 
 });
