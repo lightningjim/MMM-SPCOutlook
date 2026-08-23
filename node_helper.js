@@ -30,6 +30,14 @@ const valueToFullRisk = {
 const valueToRisk = {
         1: "TSTM", 2: "MRGL", 3: "SLGT", 4: "ENH", 5: "MDT", 6: "HIGH"
       };
+// WR-06: the MD member URLs are not ours — they are hrefs harvested from a KML we
+// downloaded, so anyone able to influence that document (an upstream compromise, a
+// transparent proxy, a hostile DNS answer, a captive portal) chooses what this host
+// fetches next, including RFC1918 addresses, which from a home-network Pi is the
+// interesting target. productRegistry.js already refuses any baseUrl that is not
+// https://mapservices.weather.noaa.gov/ (buildArcGisQuery); this applies the same rule
+// to the older path that feeds the same render.
+const MD_HOST_PREFIX = "https://www.spc.noaa.gov/";
 
 module.exports = NodeHelper.create({
   start: function() {
@@ -174,7 +182,10 @@ module.exports = NodeHelper.create({
   },
 
   async fetchBinBuffer(url){
-    const res = await this._fetch(url, withTimeout());
+    // WR-06: node-fetch follows redirects by default, so a 302 on an allowlisted URL
+    // would walk straight off the allowlist. Refuse instead — the throw is contained per
+    // MD by getMesoscaleDiscussion's per-iteration catch.
+    const res = await this._fetch(url, withTimeout({ redirect: "error" }));
     if(!res.ok) throw new Error(`Failed to fetch ${url}: ${res.status}`);
     return Buffer.from(await res.arrayBuffer());
   },
@@ -195,7 +206,11 @@ module.exports = NodeHelper.create({
   parseNetworkLinks(kmlText) {
     const doc = new DOMParser().parseFromString(kmlText, "text/xml");
     const nodes = select("//k:NetworkLink/k:Link/k:href/text()", doc);
-    const MDS = nodes.map(n => n.nodeValue.trim());
+    // WR-06: a text node with no nodeValue threw here and, before the per-MD containment,
+    // took every active MD with it.
+    const MDS = nodes
+      .map(n => (n && typeof n.nodeValue === "string" ? n.nodeValue.trim() : ""))
+      .filter(href => href !== "");
     return MDS;
   },
 
@@ -415,7 +430,14 @@ module.exports = NodeHelper.create({
     const ActiveURL = "https://www.spc.noaa.gov/products/md/ActiveMD.kmz"
     const ActiveKMZ = await this.fetchBinBuffer(ActiveURL);
     const ActiveKML = this.extractKmlFromKmz(ActiveKMZ, "ActiveMD.kml");
-    const MDURLs = this.parseNetworkLinks(ActiveKML);
+    // WR-06: allowlist before fetching. A refusal is loud: an off-host href in an SPC
+    // product is either an upstream problem or an attack, and either way an operator
+    // needs to see it.
+    const MDURLs = this.parseNetworkLinks(ActiveKML).filter((u) => {
+      if (typeof u === "string" && u.startsWith(MD_HOST_PREFIX)) return true;
+      Log.error("MMM-SPCOutlook: refusing off-host NetworkLink href " + JSON.stringify(u));
+      return false;
+    });
     if(MDURLs.length == 0) return false;
     const MDArray = [];
     // CR-02: contain per MD. ActiveMD.kmz is an index whose member KMZs are fetched
