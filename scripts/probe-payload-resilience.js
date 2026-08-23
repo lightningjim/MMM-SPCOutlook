@@ -486,10 +486,18 @@ const scenarios = [
     // frontend renders as ⚠ Stale.
     name: "ero-hard-fail-is-flagged",
     run: async (helper) => {
+      // WR-02: `installFetch(helper, [])` routed EVERY url to the hard-failure shape, so
+      // every SPC categorical, hazard, CIG and fire-weather layer set anyStale long before
+      // the ERO loop ran and the closing assertion said nothing about the ERO. Deleting
+      // the ERO's own `if (fetchResult.stale || fetchResult.failed) anyStale = true` left
+      // the suite at 8 passed, 0 failed; so did disabling the ERO loop entirely. Every
+      // non-ERO layer now succeeds with an empty collection, so anyStale can only
+      // originate in the ERO loop — the ERO URLs are ArcGIS query URLs and carry no
+      // ".lyr.geojson", so they alone fall through to the hard-failure default.
       resetHelper(helper);
       resetLogs();
       helper._products = { showExcessiveRain: true };
-      installFetch(helper, []);
+      installFetch(helper, [[".lyr.geojson", freshFetch(EMPTY_FEATURE_COLLECTION)]]);
       const out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showExcessiveRain: true });
       assertPayloadIntact(out);
       for (let d = 1; d <= 5; d++) {
@@ -499,6 +507,19 @@ const scenarios = [
       }
       if (out._stale !== true) {
         throw new Error("a hard-failed ERO fetch produced an unflagged no-risk payload (_stale !== true)");
+      }
+
+      // Negative control: identical routing, ERO toggle off. If _stale is still set, the
+      // staleness came from somewhere other than the ERO and the assertion above is
+      // vacuous no matter what it says.
+      resetHelper(helper);
+      resetLogs();
+      helper._products = { showExcessiveRain: false };
+      installFetch(helper, [[".lyr.geojson", freshFetch(EMPTY_FEATURE_COLLECTION)]]);
+      const off = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showExcessiveRain: false });
+      assertPayloadIntact(off);
+      if (off._stale) {
+        throw new Error("staleness came from a non-ERO layer — the ERO assertion above is vacuous");
       }
     }
   },
