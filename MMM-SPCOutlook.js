@@ -119,6 +119,13 @@
     } else if (this.spcrisk.error) {
       wrapper.textContent = "Error: " + this.spcrisk.error;
     } else if (
+      // CR-01: a degraded read is never an all-clear. When a fetch failure zeroes a layer
+      // its value becomes "NONE" — the same value a genuine all-clear produces — so without
+      // this term a total NOAA/DNS/Wi-Fi outage satisfies the whole gate below and renders
+      // as a confident "No Severe Weather Risk". The ⚠ badge lives in the final else, so the
+      // one branch that can show the degrade was unreachable in exactly the case the whole
+      // failed/anyStale/_stale chain exists for. Staleness must disqualify the short-circuit.
+      !this.spcrisk._stale &&
       this.spcrisk.day1.risk == "NONE" &&
       this.spcrisk.day2.risk == "NONE" &&
       this.spcrisk.day3.risk == "NONE" &&
@@ -161,6 +168,11 @@
         }
         wrapper.innerHTML += "<span style=\"color:#FFCC00\">⚠ Stale" + staleSuffix + "</span><br/>";
       }
+      // CR-01: everything rendered from here on is actual content. A degraded payload whose
+      // every value is "NONE" now reaches this branch (see the gate above) and would
+      // otherwise render as a bare badge with nothing under it, so the marker lets the tail
+      // of this branch say *what* is unconfirmed rather than leaving a dangling warning.
+      const contentMarker = wrapper.innerHTML;
       if(this.mds) {
         for(const MD of this.mds){
           wrapper.innerHTML += "<span style=\"color: #0059E0\">" + escapeHtml(MD) + " in effect.</span><br/>"
@@ -232,6 +244,15 @@
               this.spcrisk.excessiveRain["day" + d + "Text"] + "</span><br/>";
           }
         }
+      }
+      // CR-01: a stale payload with no renderable risk must not present as a bare ⚠ badge.
+      // "unconfirmed" rather than "last known good" because the two cases are not
+      // distinguishable here: the values may be a still-fresh cached reading served by
+      // rejectBody's stale fallback, or the no-risk defaults left by a hard failure with
+      // nothing to fall back to. Either way the one thing the display can honestly assert
+      // is that this all-clear was not confirmed against upstream.
+      if (wrapper.innerHTML === contentMarker) {
+        wrapper.innerHTML += "No Severe Weather Risk (unconfirmed)";
       }
     }
     return wrapper;
