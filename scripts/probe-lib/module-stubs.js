@@ -140,10 +140,21 @@ function installStubs() {
   };
 }
 
+// WR-09: the real implementations of the two members scenarios stub, captured before any
+// scenario can replace them. helper.start() resets helper-global *state*, but a stub
+// written onto the helper object is not state — it survived every later resetHelper, so a
+// scenario that stubbed the HTTP seam still ran against the previous scenario's
+// fetchGeoJsonCached stub and never reached the code it meant to test.
+const ORIGINAL_SEAMS = new WeakMap();
+
 function loadNodeHelper() {
   installStubs();
   const nodeHelperPath = path.join(__dirname, "..", "..", "node_helper.js");
   const helper = require(nodeHelperPath);
+  ORIGINAL_SEAMS.set(helper, {
+    fetchGeoJsonCached: helper.fetchGeoJsonCached,
+    _fetch: helper._fetch
+  });
   helper.start();
   return helper;
 }
@@ -156,6 +167,11 @@ function loadNodeHelper() {
 // Note this emits start()'s own log line — every scenario calls resetLogs() after
 // resetHelper(), so log assertions still see only their own scenario's output.
 function resetHelper(helper) {
+  const originals = ORIGINAL_SEAMS.get(helper);
+  if (originals) {
+    helper.fetchGeoJsonCached = originals.fetchGeoJsonCached;
+    helper._fetch = originals._fetch;
+  }
   helper.start();
 }
 

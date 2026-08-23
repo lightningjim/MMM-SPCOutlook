@@ -135,8 +135,13 @@ const FIRE_CRIT_BODY = {
   ]
 };
 
-// Fixed for every scenario so getSpcOutlook's location-change cache
-// invalidation never fires mid-suite.
+// WR-09: this pair used to be documented as "fixed for every scenario so getSpcOutlook's
+// location-change cache invalidation never fires mid-suite", which was false and hid a
+// coverage hole. resetHelper delegates to helper.start(), which sets _cachedLat = null,
+// so locationChanged is true on the FIRST getSpcOutlook call of every scenario and the
+// cache is cleared there. What the fixed coordinates actually buy is that a scenario's
+// SECOND and later calls do not invalidate — which is what makes a warm-cache scenario
+// (ero-rejected-body-serves-last-known-good) possible at all.
 const PROBE_LAT = 38.9;
 const PROBE_LON = -77.0;
 
@@ -196,6 +201,64 @@ function installFetch(helper, routes) {
   fn.calls = calls;
   helper.fetchGeoJsonCached = fn;
   return fn;
+}
+
+// ---------------------------------------------------------------------
+// HTTP stubbing (WR-09)
+//
+// installFetch above replaces fetchGeoJsonCached itself, which means everything
+// *inside* it — the 304-with-no-entry guard, rejectBody's stale fallback, parseBody's
+// contained JSON.parse, the ETag/hash mode split, _isWithinStaleWindow — is executed by
+// no scenario at all. Those are the phase's headline fixes, and the only branch that
+// seam could reach was one the real function cannot emit (WR-01). installHttp stubs one
+// layer lower, at node_helper's _fetch transport seam, so scenarios drive the real
+// fetchGeoJsonCached against a controlled HTTP response.
+// ---------------------------------------------------------------------
+
+// Minimal stand-in for a node-fetch Response: only the members fetchGeoJsonCached and
+// fetchBinBuffer actually touch.
+function httpResponse({ status = 200, body, text, etag = null }) {
+  const rawText = text !== undefined ? text : JSON.stringify(body);
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    text: async () => rawText,
+    arrayBuffer: async () => Buffer.from(rawText),
+    headers: { get: (name) => (String(name).toLowerCase() === "etag" ? etag : null) }
+  };
+}
+
+// Router over URL-substring routes, installed on helper._fetch. A URL matching no route
+// gets a 503, which is the real function's "unrecoverable fetch failure" path rather
+// than a fabricated return shape. Records the request headers so a scenario can prove an
+// If-None-Match was actually sent.
+function installHttp(helper, routes) {
+  const calls = [];
+  helper._fetch = async (url, options) => {
+    calls.push({ url, headers: (options && options.headers) || {} });
+    for (const [matcher, handler] of routes) {
+      if (url.includes(matcher)) return handler(url, options);
+    }
+    return httpResponse({ status: 503, text: "service unavailable" });
+  };
+  helper._fetch.calls = calls;
+  return helper._fetch;
+}
+
+// Routes for the HTTP-seam scenarios: ERO day 1 is the subject, every other ERO day and
+// every SPC/fire-weather layer answers 200 with an empty collection. Nothing else may
+// hard-fail, or anyStale would be set by a layer the scenario is not testing and its
+// `_stale` assertion would be vacuous (WR-02's trap).
+function eroHttpRoutes(day1Handler) {
+  const okEmpty = () => httpResponse({ body: EMPTY_FEATURE_COLLECTION, etag: "empty-v1" });
+  return [
+    [ERO_URLS[1], day1Handler],
+    [ERO_URLS[2], okEmpty],
+    [ERO_URLS[3], okEmpty],
+    [ERO_URLS[4], okEmpty],
+    [ERO_URLS[5], okEmpty],
+    [".lyr.geojson", okEmpty]
+  ];
 }
 
 // ---------------------------------------------------------------------
@@ -576,6 +639,119 @@ const scenarios = [
       const eroUrlValues = Object.values(ERO_URLS);
       if (fetchFn.calls.some((url) => eroUrlValues.includes(url))) {
         throw new Error("fetchGeoJsonCached was called with an ERO URL while the toggle was off");
+      }
+    }
+  },
+  {
+    // WR-09: the phase's stated CR-02/WR-06 guarantee — "a WPC hiccup during an active
+    // HIGH must not blank the display" — is delivered by rejectBody's stale fallback
+    // inside the real fetchGeoJsonCached, which until now no scenario executed. This
+    // drives the real function through the _fetch seam: warm the cache from a genuine
+    // HTTP 200, then serve the documented ArcGIS failure (an error object inside a 200)
+    // under a different ETag so the cache-hit short-circuit cannot mask the test.
+    name: "ero-rejected-body-serves-last-known-good",
+    run: async (helper) => {
+      resetHelper(helper);
+      resetLogs();
+      helper._products = { showExcessiveRain: true };
+      const originalPointInPolygon = turfStub.pointInPolygon;
+      turfStub.pointInPolygon = () => true;
+      try {
+        installHttp(helper, eroHttpRoutes(() => httpResponse({ body: ERO_SLGT_BODY, etag: "ero-v1" })));
+        const warm = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showExcessiveRain: true });
+        assertPayloadIntact(warm);
+        if (warm.excessiveRain.day1Risk !== "SLGT") {
+          throw new Error(`warm-up: a well-formed ERO body over real HTTP resolved to ${warm.excessiveRain.day1Risk}, not SLGT`);
+        }
+        if (warm._stale) {
+          throw new Error("warm-up: an all-200 poll was flagged stale, so the degrade assertion below would be vacuous");
+        }
+        resetLogs();
+
+        installHttp(helper, eroHttpRoutes(() => httpResponse({ body: ARCGIS_ERROR_BODY, etag: "ero-v2" })));
+        const out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showExcessiveRain: true });
+        assertPayloadIntact(out);
+        if (out.excessiveRain.day1Risk !== "SLGT") {
+          throw new Error(`a WPC hiccup blanked an active tier: expected the cached SLGT, got ${out.excessiveRain.day1Risk}`);
+        }
+        if (out._stale !== true) {
+          throw new Error("last-known-good was served without the stale flag");
+        }
+        requireLog(
+          ["rejected an unusable response body for", ERO_URLS[1], "not a usable FeatureCollection"],
+          "the degrade was not diagnosable from the log"
+        );
+        const entry = helper._geoJsonCache.get(ERO_URLS[1]);
+        if (!entry || entry.result.value !== 2) {
+          throw new Error(`the rejected body overwrote the cached reading: ${JSON.stringify(entry && entry.result)}`);
+        }
+      } finally {
+        turfStub.pointInPolygon = originalPointInPolygon;
+      }
+    }
+  },
+  {
+    // WR-09: parseBody's contained JSON.parse. SPC and WPC both answer with HTML error
+    // pages under a 200 during an outage; an uncontained JSON.parse there reaches
+    // getSpcOutlook's shared catch and nulls the entire payload.
+    name: "ero-unparseable-body-serves-last-known-good",
+    run: async (helper) => {
+      resetHelper(helper);
+      resetLogs();
+      helper._products = { showExcessiveRain: true };
+      const originalPointInPolygon = turfStub.pointInPolygon;
+      turfStub.pointInPolygon = () => true;
+      try {
+        installHttp(helper, eroHttpRoutes(() => httpResponse({ body: ERO_SLGT_BODY, etag: "ero-v1" })));
+        await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showExcessiveRain: true });
+        resetLogs();
+
+        installHttp(helper, eroHttpRoutes(() => httpResponse({
+          text: "<html><body>503 Service Unavailable</body></html>",
+          etag: "ero-v2"
+        })));
+        const out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showExcessiveRain: true });
+        assertPayloadIntact(out);
+        if (out.excessiveRain.day1Risk !== "SLGT") {
+          throw new Error(`an HTML error page blanked an active tier: expected the cached SLGT, got ${out.excessiveRain.day1Risk}`);
+        }
+        if (out._stale !== true) {
+          throw new Error("last-known-good was served without the stale flag");
+        }
+        requireLog(
+          ["rejected an unusable response body for", ERO_URLS[1], "unparseable body"],
+          "an unparseable body produced no diagnostic naming the URL"
+        );
+      } finally {
+        turfStub.pointInPolygon = originalPointInPolygon;
+      }
+    }
+  },
+  {
+    // WR-09 / WR-14: a proxy can answer 304 to a request that carried no If-None-Match.
+    // Without the guard the entry.result dereference throws into getSpcOutlook's shared
+    // catch and nulls the whole payload over one layer. No scenario could reach this
+    // while fetchGeoJsonCached itself was the seam.
+    name: "ero-304-with-no-cache-entry-is-a-hard-failure",
+    run: async (helper) => {
+      resetHelper(helper);
+      resetLogs();
+      helper._products = { showExcessiveRain: true };
+      installHttp(helper, eroHttpRoutes(() => httpResponse({ status: 304, text: "" })));
+      const out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showExcessiveRain: true });
+      assertPayloadIntact(out);
+      if (out.excessiveRain.day1Risk !== "NONE") {
+        throw new Error(`a bodyless 304 with no cache entry produced a tier out of nothing: ${out.excessiveRain.day1Risk}`);
+      }
+      if (out._stale !== true) {
+        throw new Error("an unusable 304 was presented as a confident reading (_stale !== true)");
+      }
+      requireLog(
+        ["received 304 with no cache entry for", ERO_URLS[1]],
+        "the 304-with-no-entry guard did not report itself"
+      );
+      if (helper._geoJsonCache.has(ERO_URLS[1])) {
+        throw new Error("an unusable 304 was written to _geoJsonCache");
       }
     }
   },

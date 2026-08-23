@@ -152,8 +152,27 @@ module.exports = NodeHelper.create({
     }
   },
 
+  /**
+   * The single transport seam for every outbound request in this file.
+   * @param url - the URL to fetch
+   * @param options - fetch options, normally the result of withTimeout()
+   * @returns the fetch Response
+   *
+   *   WR-09: `fetch` above is a module-scoped const wrapping a dynamic import, so nothing
+   *   outside this module could replace it. The offline probe therefore had to stub
+   *   `fetchGeoJsonCached` wholesale, which meant the 304-with-no-entry guard, rejectBody's
+   *   stale fallback, parseBody's contained JSON.parse, the ETag/hash mode split and
+   *   _isWithinStaleWindow — this phase's headline resilience work — were executed by no
+   *   scenario at all, and the only branch the probe could reach was one the real function
+   *   cannot emit. Routing every request through one overridable method puts the seam at
+   *   the HTTP response instead of at the function that interprets it.
+   */
+  _fetch(url, options){
+    return fetch(url, options);
+  },
+
   async fetchBinBuffer(url){
-    const res = await fetch(url, withTimeout());
+    const res = await this._fetch(url, withTimeout());
     if(!res.ok) throw new Error(`Failed to fetch ${url}: ${res.status}`);
     return Buffer.from(await res.arrayBuffer());
   },
@@ -439,7 +458,7 @@ module.exports = NodeHelper.create({
 
   async fetchGeoJson(url){
     try {
-      const result = await fetch(url, withTimeout());
+      const result = await this._fetch(url, withTimeout());
       if(!result.ok) throw new Error(`HTTP ${result.status} fetching ${url}`);
       const data = await result.json();
       return data;
@@ -469,7 +488,7 @@ module.exports = NodeHelper.create({
 
     let res;
     try {
-      res = await fetch(url, withTimeout({ headers }));
+      res = await this._fetch(url, withTimeout({ headers }));
     } catch (err) {
       // Network error
       if (entry && this._isWithinStaleWindow(entry.timestamp, this._updateInterval)) {
