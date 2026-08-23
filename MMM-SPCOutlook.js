@@ -8,11 +8,6 @@
     showExcessiveRain: false    // WPC Excessive Rainfall Outlook toggle; every new product flag defaults to false
   },
 
-  // WR-15: single source of truth for the GET_SPC_DATA payload. It was previously written
-  // out twice — on startup and inside the interval — so a flag added to only one copy
-  // rendered correctly at startup and silently reverted on the first refresh.
-  // Per-product toggles travel as one nested `products` object rather than additional flat
-  // fields; Phases 15-17 add their flags here, in this one place.
   // WR-05: config comes from the user's MagicMirror config.js and is never validated by
   // the host. `updateInterval: 0`, a negative, or a typo like "hourly" produces 0, a
   // negative, or NaN milliseconds, all of which setInterval clamps to ~1 ms — an unbounded
@@ -32,6 +27,11 @@
     return n;
   },
 
+  // WR-15: single source of truth for the GET_SPC_DATA payload. It was previously written
+  // out twice — on startup and inside the interval — so a flag added to only one copy
+  // rendered correctly at startup and silently reverted on the first refresh.
+  // Per-product toggles travel as one nested `products` object rather than additional flat
+  // fields; Phases 15-17 add their flags here, in this one place.
   buildRequestPayload: function() {
     return {
       lat: this.config.lat,
