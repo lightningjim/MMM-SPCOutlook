@@ -804,8 +804,16 @@ module.exports = NodeHelper.create({
         initial: 0,
         comparator: (best, val) => Math.max(best, val)
       };
-      // Part B: sigComparator — fixes latent ReferenceError in extended mode
-      const sigComparator = { initial: false, comparator: (best, val) => true };
+      // Part B: sigComparator — fixes latent ReferenceError in extended mode.
+      // WR-11: the comparator used to be `(best, val) => true`, discarding both of its
+      // arguments. It produced the right answer only because evaluatePolygons happens to
+      // invoke the comparator solely inside its booleanPointInPolygon hit branch — an
+      // incidental property of the caller, not a stated contract. It now honours its own
+      // accumulator, and the SIGN lists it consumes carry numeric values (below), so
+      // `value` is a number at every extractPolygons call site as computeProximity
+      // (comparator.comparator(currentValue, value)) and _validTimeOfWinner
+      // (item.value !== winningValue) both assume.
+      const sigComparator = { initial: false, comparator: (best, val) => best || val === 1 };
 
       // The Python script has “risk_to_value” and “value_to_risk” logic:
       const riskToValue = {
@@ -1223,7 +1231,7 @@ module.exports = NodeHelper.create({
           } else {
             const gj = fetch4.data;
             const day4RiskPoly = this.extractPolygons(gj, label => label === "" ? 0 : parseFloat(label), (label, val) => val > 0, day4URL);
-            const day4SignPoly  = this.extractPolygons(gj, label => label, (label, val) => label === "SIGN", day4URL + " (SIGN)");
+            const day4SignPoly  = this.extractPolygons(gj, (label) => (label === "SIGN" ? 1 : 0), (label, val) => val > 0, day4URL + " (SIGN)");
             day4ProbRisk = this.evaluatePolygons(day4RiskPoly, loc, percComparator);
             day4Sign = day4ProbRisk > 0 ? this.evaluatePolygons(day4SignPoly, loc, sigComparator) : false;
             this._geoJsonCache.set(day4URL, { mode: fetch4.mode, etag: fetch4.newEtag ?? null, hash: fetch4.newHash ?? null, result: { probRisk: day4ProbRisk, sign: day4Sign }, timestamp: Date.now() });
@@ -1243,7 +1251,7 @@ module.exports = NodeHelper.create({
           } else {
             const gj = fetch5.data;
             const day5RiskPoly = this.extractPolygons(gj, label => label === "" ? 0 : parseFloat(label), (label, val) => val > 0, day5URL);
-            const day5SignPoly  = this.extractPolygons(gj, label => label, (label, val) => label === "SIGN", day5URL + " (SIGN)");
+            const day5SignPoly  = this.extractPolygons(gj, (label) => (label === "SIGN" ? 1 : 0), (label, val) => val > 0, day5URL + " (SIGN)");
             day5ProbRisk = this.evaluatePolygons(day5RiskPoly, loc, percComparator);
             day5Sign = day5ProbRisk > 0 ? this.evaluatePolygons(day5SignPoly, loc, sigComparator) : false;
             this._geoJsonCache.set(day5URL, { mode: fetch5.mode, etag: fetch5.newEtag ?? null, hash: fetch5.newHash ?? null, result: { probRisk: day5ProbRisk, sign: day5Sign }, timestamp: Date.now() });
@@ -1263,7 +1271,7 @@ module.exports = NodeHelper.create({
           } else {
             const gj = fetch6.data;
             const day6RiskPoly = this.extractPolygons(gj, label => label === "" ? 0 : parseFloat(label), (label, val) => val > 0, day6URL);
-            const day6SignPoly  = this.extractPolygons(gj, label => label, (label, val) => label === "SIGN", day6URL + " (SIGN)");
+            const day6SignPoly  = this.extractPolygons(gj, (label) => (label === "SIGN" ? 1 : 0), (label, val) => val > 0, day6URL + " (SIGN)");
             day6ProbRisk = this.evaluatePolygons(day6RiskPoly, loc, percComparator);
             day6Sign = day6ProbRisk > 0 ? this.evaluatePolygons(day6SignPoly, loc, sigComparator) : false;
             this._geoJsonCache.set(day6URL, { mode: fetch6.mode, etag: fetch6.newEtag ?? null, hash: fetch6.newHash ?? null, result: { probRisk: day6ProbRisk, sign: day6Sign }, timestamp: Date.now() });
@@ -1283,7 +1291,7 @@ module.exports = NodeHelper.create({
           } else {
             const gj = fetch7.data;
             const day7RiskPoly = this.extractPolygons(gj, label => label === "" ? 0 : parseFloat(label), (label, val) => val > 0, day7URL);
-            const day7SignPoly  = this.extractPolygons(gj, label => label, (label, val) => label === "SIGN", day7URL + " (SIGN)");
+            const day7SignPoly  = this.extractPolygons(gj, (label) => (label === "SIGN" ? 1 : 0), (label, val) => val > 0, day7URL + " (SIGN)");
             day7ProbRisk = this.evaluatePolygons(day7RiskPoly, loc, percComparator);
             day7Sign = day7ProbRisk > 0 ? this.evaluatePolygons(day7SignPoly, loc, sigComparator) : false;
             this._geoJsonCache.set(day7URL, { mode: fetch7.mode, etag: fetch7.newEtag ?? null, hash: fetch7.newHash ?? null, result: { probRisk: day7ProbRisk, sign: day7Sign }, timestamp: Date.now() });
@@ -1303,7 +1311,7 @@ module.exports = NodeHelper.create({
           } else {
             const gj = fetch8.data;
             const day8RiskPoly = this.extractPolygons(gj, label => label === "" ? 0 : parseFloat(label), (label, val) => val > 0, day8URL);
-            const day8SignPoly  = this.extractPolygons(gj, label => label, (label, val) => label === "SIGN", day8URL + " (SIGN)");
+            const day8SignPoly  = this.extractPolygons(gj, (label) => (label === "SIGN" ? 1 : 0), (label, val) => val > 0, day8URL + " (SIGN)");
             day8ProbRisk = this.evaluatePolygons(day8RiskPoly, loc, percComparator);
             day8Sign = day8ProbRisk > 0 ? this.evaluatePolygons(day8SignPoly, loc, sigComparator) : false;
             this._geoJsonCache.set(day8URL, { mode: fetch8.mode, etag: fetch8.newEtag ?? null, hash: fetch8.newHash ?? null, result: { probRisk: day8ProbRisk, sign: day8Sign }, timestamp: Date.now() });

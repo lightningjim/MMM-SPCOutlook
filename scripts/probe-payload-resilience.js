@@ -138,6 +138,31 @@ const SPC_SLGT_BODY = {
   ]
 };
 
+// WR-11: a Day 4-8 probability layer carrying both a 45% polygon and a SIGN polygon.
+// percToRisk promotes 45% from ENH to MDT only when `sign` is true, so this is the one
+// place the SIGN list's value type and its comparator change the user-visible answer.
+const DAY4_45PCT_SIGN_BODY = {
+  type: "FeatureCollection",
+  features: [
+    {
+      type: "Feature",
+      properties: { LABEL: "0.45" },
+      geometry: { type: "Polygon", coordinates: [SAMPLE_RING] }
+    },
+    {
+      type: "Feature",
+      properties: { LABEL: "SIGN" },
+      geometry: { type: "Polygon", coordinates: [SAMPLE_RING] }
+    }
+  ]
+};
+
+// The same layer with no SIGN polygon: 45% must stay ENH.
+const DAY4_45PCT_NO_SIGN_BODY = {
+  type: "FeatureCollection",
+  features: [DAY4_45PCT_SIGN_BODY.features[0]]
+};
+
 // A well-formed fire-weather feature. WR-01: the fire-weather path maps labels
 // through node_helper's fireRiskToValue = { ELEV: 1, CRIT: 2, EXTM: 3 }, so routing
 // this layer to SPC_SLGT_BODY (LABEL "SLGT") produced toValue 0, dropped the feature
@@ -886,6 +911,50 @@ const scenarios = [
         ["unusable geometry", "day1otlk_cat.lyr.geojson"],
         "a dropped polygon produced no diagnostic naming the layer that degraded"
       );
+    }
+  },
+  {
+    // WR-11: the Day 4-8 SIGN lists now carry numeric values and sigComparator honours
+    // its accumulator. Nothing about the user-visible answer may move: SIGN present and
+    // containing the user promotes 45% from ENH to MDT, SIGN absent leaves it ENH.
+    name: "spc-day4-sign-promotes-45pct-to-mdt",
+    run: async (helper) => {
+      const runDay4 = async (body) => {
+        resetHelper(helper);
+        resetLogs();
+        helper._products = { showExcessiveRain: false };
+        installFetch(helper, [
+          ["day4prob.lyr.geojson", freshFetch(body)],
+          [".lyr.geojson", freshFetch(EMPTY_FEATURE_COLLECTION)]
+        ]);
+        const originalPointInPolygon = turfStub.pointInPolygon;
+        turfStub.pointInPolygon = () => true;
+        try {
+          return await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, true, { showExcessiveRain: false });
+        } finally {
+          turfStub.pointInPolygon = originalPointInPolygon;
+        }
+      };
+
+      const withSign = await runDay4(DAY4_45PCT_SIGN_BODY);
+      assertPayloadIntact(withSign);
+      if (withSign.day4.probRisk !== 0.45) {
+        throw new Error(`day4 probRisk expected 0.45, got ${withSign.day4.probRisk}`);
+      }
+      if (withSign.day4.sign !== true) {
+        throw new Error(`a SIGN polygon containing the user did not set day4.sign (got ${JSON.stringify(withSign.day4.sign)})`);
+      }
+      if (withSign.day4.risk !== "MDT") {
+        throw new Error(`45% with SIGN must promote to MDT, got ${withSign.day4.risk}`);
+      }
+
+      const withoutSign = await runDay4(DAY4_45PCT_NO_SIGN_BODY);
+      if (withoutSign.day4.sign !== false) {
+        throw new Error(`day4.sign is true with no SIGN polygon in the layer (got ${JSON.stringify(withoutSign.day4.sign)}) — a false positive on the extended outlook`);
+      }
+      if (withoutSign.day4.risk !== "ENH") {
+        throw new Error(`45% without SIGN must stay ENH, got ${withoutSign.day4.risk}`);
+      }
     }
   },
   {
