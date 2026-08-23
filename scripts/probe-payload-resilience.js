@@ -104,6 +104,27 @@ const ERO_SLGT_BODY = {
   ]
 };
 
+// WR-07: two polygons of the SAME winning tier both containing the user — routine at a
+// tier boundary, and the ArcGIS layer does return multi-part tiers. The first-serialised
+// one carries `valid_time: null`, which ArcGIS emits freely. The correct answer is the
+// second polygon's window; reporting null is the very `features[0]`-ordering dependence
+// _validTimeOfWinner exists to eliminate.
+const ERO_SAME_TIER_NULL_VALID_TIME_BODY = {
+  type: "FeatureCollection",
+  features: [
+    {
+      type: "Feature",
+      properties: { dn: 2, valid_time: null },
+      geometry: { type: "Polygon", coordinates: [SAMPLE_RING] }
+    },
+    {
+      type: "Feature",
+      properties: { dn: 2, valid_time: "2026-08-20T00:00:00Z" },
+      geometry: { type: "Polygon", coordinates: [SAMPLE_RING] }
+    }
+  ]
+};
+
 // A well-formed SPC categorical/fire-weather feature — exercises the
 // shared extractPolygons on the pre-existing LABEL-keyed path.
 const SPC_SLGT_BODY = {
@@ -552,6 +573,36 @@ const scenarios = [
         forbidLog("TypeError", "the MDT tier survived by luck, not by guarding the dereference");
       } finally {
         turfStub.pointInPolygon = originalPointInPolygon;
+      }
+    }
+  },
+  {
+    // WR-07: the winning-polygon scan must not abort on the first same-tier polygon that
+    // carries no usable valid_time. Both polygons here are the winning tier and both
+    // contain the user; only the second has a window.
+    name: "ero-same-tier-null-valid-time-falls-through",
+    run: async (helper) => {
+      resetHelper(helper);
+      resetLogs();
+      helper._products = { showExcessiveRain: true };
+      installFetch(helper, [[ERO_URLS[1], freshFetch(ERO_SAME_TIER_NULL_VALID_TIME_BODY)]]);
+      const originalPointInPolygon = turfStub.pointInPolygon;
+      turfStub.pointInPolygon = () => true;
+      let out;
+      try {
+        out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showExcessiveRain: true });
+      } finally {
+        turfStub.pointInPolygon = originalPointInPolygon;
+      }
+      assertPayloadIntact(out);
+      if (out.excessiveRain.day1Risk !== "SLGT") {
+        throw new Error(`day1Risk expected SLGT, got ${out.excessiveRain.day1Risk}`);
+      }
+      if (out.excessiveRain.day1ValidTime !== "2026-08-20T00:00:00Z") {
+        throw new Error(
+          `day1ValidTime expected the second winning polygon's window, got ${JSON.stringify(out.excessiveRain.day1ValidTime)} — ` +
+          "the scan aborted on the first polygon's null valid_time instead of trying the next"
+        );
       }
     }
   },

@@ -335,8 +335,18 @@ module.exports = NodeHelper.create({
       if (!item || item.value !== winningValue || !item.poly) continue;
       if (!turf.booleanPointInPolygon(loc, item.poly)) continue;
       const props = item.feature && item.feature.properties;
-      if (!props || typeof props !== "object") return null;
-      return props[field] ?? null;
+      // WR-07: both of these used to be `return null`, which ended the scan. When the user
+      // is inside two polygons of the same winning tier — routine at a tier boundary, and
+      // the ArcGIS layer does return multi-part tiers — and the first-serialised one
+      // carries `valid_time: null` (ArcGIS emits null-valued fields freely), the second
+      // polygon's real window was never consulted. That is exactly the `features[0]`
+      // ordering dependence this function exists to eliminate. Keep looking instead.
+      // The properties check is unreachable today (extractPolygons already drops any
+      // feature whose properties is not a non-null object) but is kept as a guard rather
+      // than removed, because `continue` costs nothing and the helper is shared.
+      if (!props || typeof props !== "object") continue;
+      const v = props[field];
+      if (v !== undefined && v !== null) return v;
     }
     return null;
   },
