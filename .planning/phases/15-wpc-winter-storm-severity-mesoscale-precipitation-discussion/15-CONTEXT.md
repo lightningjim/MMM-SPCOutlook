@@ -100,6 +100,20 @@ cross-source merge/precedence (Phase 18), the getDom() rewrite (Phase 19).
   the ERO-03 precedent that absence is silence — not an empty row, not a "None" row. Limited is
   a genuine WPC-issued impact level; suppressing it would hide a real active forecast.
 
+  **AMENDED 2026-08-23 (post-research, user-confirmed).** Research established that WPC's live
+  WSSI renderer domain contains **no `LIMITED` value**. The real, live-verified domain is
+  `WINTER WEATHER AREA → MINOR → MODERATE → MAJOR → EXTREME` (all caps in the payload, field
+  name `impact`). "Limited" in D-09's original wording was a placeholder for a tier that does
+  not exist. Resolution:
+
+  - **`MINOR` and above renders a row** — `MINOR`, `MODERATE`, `MAJOR`, `EXTREME`.
+  - **`WINTER WEATHER AREA` renders nothing**, in the same bucket as no-polygon and the
+    original `None`. WPC's own service description states this tier is "not anticipated to
+    impact daily life," so rendering it would over-alert on a large share of in-season days.
+  - The `absence is silence` principle (ERO-03) is unchanged; only the floor moved.
+  - Any probe fixture or code path asserting on the literal string `"LIMITED"` is wrong by
+    construction — no live payload can ever produce it.
+
 ### Verification approach
 
 - **D-10:** Phase 15 is verified by **probe scenarios plus live MPD UAT**, not by live WSSI UAT.
