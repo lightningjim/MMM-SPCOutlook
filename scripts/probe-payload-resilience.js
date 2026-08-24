@@ -3355,6 +3355,7 @@ const scenarios = [
         }
         // And the frontend, driven by the REAL emissions, must advance across them.
         const liveCtx = Object.create(frontend);
+        liveCtx.config = { lat: PROBE_LAT, lon: PROBE_LON };
         liveCtx.updateDom = () => {};
         frontend.socketNotificationReceived.call(liveCtx, "SPC_DATA_RESULT", emitted[0]);
         frontend.socketNotificationReceived.call(liveCtx, "SPC_DATA_RESULT", emitted[1]);
@@ -3424,6 +3425,98 @@ const scenarios = [
             );
           }
         }
+      }
+    }
+  }
+  ,{
+    // MagicMirror runs ONE node_helper per module type and sendSocketNotification
+    // broadcasts to EVERY frontend instance of that type, while the sequence guard is
+    // location-agnostic — so an instance configured for one city accepted and rendered the
+    // outlook computed for another, with nothing on screen saying so. The in-flight guard
+    // made it deterministic rather than occasional: the second instance's request at the
+    // same tick is dropped, so it only ever receives the other instance's answer.
+    name: "a-payload-is-only-rendered-by-the-instance-that-asked-for-it",
+    run: async (helper) => {
+      const frontend = loadFrontendModule();
+      const norman = Object.create(frontend);
+      norman.config = { lat: PROBE_LAT, lon: PROBE_LON };
+      let normanRenders = 0;
+      norman.updateDom = () => { normanRenders++; };
+
+      const boston = { lat: 42.36, lon: -71.06 };
+      const ownEpoch = 12345;
+
+      // The other instance's outlook, broadcast to this one.
+      frontend.socketNotificationReceived.call(norman, "SPC_DATA_RESULT",
+        [{ marker: "boston" }, 1, { epoch: ownEpoch, lat: boston.lat, lon: boston.lon }]);
+      if (norman.spcrisk !== undefined || normanRenders !== 0) {
+        throw new Error(
+          `an outlook computed for ${boston.lat},${boston.lon} was rendered by an instance configured for ` +
+          `${PROBE_LAT},${PROBE_LON}: ${JSON.stringify(norman.spcrisk)}. The viewer is watching another ` +
+          "city's tornado risk with nothing on screen saying so."
+        );
+      }
+
+      // Positive control: its OWN payload must still arrive, or the check above is
+      // satisfied by rejecting everything.
+      frontend.socketNotificationReceived.call(norman, "SPC_DATA_RESULT",
+        [{ marker: "norman" }, 2, { epoch: ownEpoch, lat: PROBE_LAT, lon: PROBE_LON }]);
+      if (!norman.spcrisk || norman.spcrisk.marker !== "norman" || normanRenders !== 1) {
+        throw new Error(`an instance rejected its own payload: ${JSON.stringify(norman.spcrisk)}`);
+      }
+
+      // A foreign payload must not advance this instance's sequence bookkeeping either —
+      // if it did, a broadcast for another location could silently suppress this
+      // instance's own next result.
+      frontend.socketNotificationReceived.call(norman, "SPC_DATA_RESULT",
+        [{ marker: "boston-ahead" }, 99, { epoch: ownEpoch, lat: boston.lat, lon: boston.lon }]);
+      frontend.socketNotificationReceived.call(norman, "SPC_DATA_RESULT",
+        [{ marker: "norman-next" }, 3, { epoch: ownEpoch, lat: PROBE_LAT, lon: PROBE_LON }]);
+      if (norman.spcrisk.marker !== "norman-next") {
+        throw new Error(
+          "a foreign broadcast advanced this instance's sequence guard, so its own next payload was discarded: " +
+          JSON.stringify(norman.spcrisk)
+        );
+      }
+
+      // A payload with no address at all (version skew with a helper that predates this)
+      // must still be accepted rather than dropped for lacking one.
+      frontend.socketNotificationReceived.call(norman, "SPC_DATA_RESULT",
+        [{ marker: "unaddressed" }, 4, { epoch: ownEpoch }]);
+      if (norman.spcrisk.marker !== "unaddressed") {
+        throw new Error("an unaddressed payload was rejected; the address check no longer fails open on version skew");
+      }
+
+      // And the helper must actually put the requester's coordinates on the wire, plus say
+      // so when a second distinct location appears — the two ends of this are otherwise
+      // pinned only by a comment, and the frontend's check fails OPEN on a missing address.
+      const emitted = [];
+      const realGetSpcOutlook = helper.getSpcOutlook;
+      try {
+        resetHelper(helper);
+        resetLogs();
+        helper.sendSocketNotification = (_n, sent) => { emitted.push(sent); };
+        helper.getSpcOutlook = async () => ({ marker: "emit-probe" });
+        const request = (lat, lon) => helper.socketNotificationReceived("GET_SPC_DATA", {
+          lat, lon, extended: false, updateInterval: 60, proximityWeighting: false, products: {}
+        });
+        await request(PROBE_LAT, PROBE_LON);
+        if (!emitted[0] || !emitted[0][2] || emitted[0][2].lat !== PROBE_LAT || emitted[0][2].lon !== PROBE_LON) {
+          throw new Error(
+            `the helper emitted no requester address (${JSON.stringify(emitted[0] && emitted[0][2])}), so every ` +
+            "frontend instance accepts every payload again"
+          );
+        }
+        await request(boston.lat, boston.lon);
+        requireLog(
+          ["a second MMM-SPCOutlook instance is configured for", "42.36,-71.06"],
+          "a second configured location produced no warning — the second instance simply never updates, " +
+          "and nothing in the log says why"
+        );
+      } finally {
+        helper.getSpcOutlook = realGetSpcOutlook;
+        delete helper.sendSocketNotification;
+        resetHelper(helper);
       }
     }
   }

@@ -93,6 +93,26 @@
       // generations explicitly is what keeps this from becoming a guess about how large
       // a backwards jump is "really" a restart.
       const meta = payload[2] && typeof payload[2] === "object" ? payload[2] : null;
+      // MagicMirror runs ONE node_helper per module type and sendSocketNotification
+      // broadcasts to EVERY frontend instance of that type, while the sequence guard below
+      // is entirely location-agnostic. An instance configured for Norman OK therefore
+      // accepted and rendered the outlook computed for an instance configured for Boston
+      // MA — a viewer watching the wrong city's tornado risk with nothing on screen saying
+      // so, which is the worst failure this module can produce. The helper echoes the
+      // requesting instance's own coordinates back, so a payload can only be consumed by
+      // the instance that asked for it. Checked before the generation/sequence bookkeeping
+      // below: another instance's payload must not advance this instance's guard either.
+      if (meta && meta.lat !== undefined && meta.lon !== undefined &&
+          (meta.lat !== this.config.lat || meta.lon !== this.config.lon)) {
+        if (!this._loggedForeignPayload) {
+          this._loggedForeignPayload = true;
+          Log.warn("MMM-SPCOutlook: discarding a payload addressed to " + meta.lat + "," + meta.lon +
+                   " — this instance is configured for " + this.config.lat + "," + this.config.lon +
+                   ". MagicMirror shares one node_helper across every instance of a module type, so " +
+                   "only one location is polled; multiple instances at distinct coordinates are not supported.");
+        }
+        return;
+      }
       const epoch = meta && typeof meta.epoch === "number" ? meta.epoch : null;
       if (epoch !== null && epoch !== this._lastEpoch) {
         if (this._lastEpoch !== undefined) {

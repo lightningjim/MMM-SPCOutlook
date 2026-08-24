@@ -163,6 +163,12 @@ module.exports = NodeHelper.create({
     // that stamped the same millisecond would leave the display frozen exactly as before,
     // and nothing would say so.
     this._epoch = Math.floor(Math.random() * Number.MAX_SAFE_INTEGER);
+    // The first location this helper was asked about, and whether a second distinct one
+    // has already been reported. MagicMirror runs ONE node_helper per module *type*, so two
+    // configured MMM-SPCOutlook instances share this object and this cache. See
+    // _noteRequestLocation.
+    this._requestLocation = null;
+    this._loggedMultiInstance = false;
     // WR-08: monotonic count of features dropped because turf could not build their
     // geometry. getSpcOutlook samples it across a run to decide whether the payload was
     // assembled from complete layers.
@@ -617,9 +623,51 @@ module.exports = NodeHelper.create({
     return { ctx: { number, hazardType } };
   },
 
+  /**
+   * Record which location this helper is serving, and say so loudly the first time a
+   * second distinct one appears.
+   * @param payload - the GET_SPC_DATA payload, whose lat/lon are the requester's config
+   *
+   *   MagicMirror runs one node_helper per module TYPE and sendSocketNotification
+   *   broadcasts to every frontend instance of that type, so two configured
+   *   MMM-SPCOutlook instances share this object, this _geoJsonCache and this in-flight
+   *   guard. Both ends now carry the requester's coordinates (see the emit below and the
+   *   frontend's address check) so a payload computed for Boston can no longer be
+   *   rendered by an instance configured for Norman — a user watching the wrong city's
+   *   tornado risk has no way to tell, which makes it the worst failure this module has.
+   *
+   *   What the address check cannot fix is that the in-flight guard drops the second
+   *   instance's request outright, so that instance receives nothing rather than
+   *   something wrong. Making the guard per-location would let two chains interleave, and
+   *   several helper-globals (_oldestStaleAt, _unusableFeatureCount, _cachedLat/_cachedLon
+   *   and the shared cache the location change clears) are correct only because the guard
+   *   makes interleaving unreachable. So multiple instances at distinct coordinates are
+   *   not supported, it is said here in the log and in README.md, and this warning is what
+   *   turns a silently wrong display into a diagnosable configuration error.
+   */
+  _noteRequestLocation(payload) {
+    if (!payload) return;
+    const key = payload.lat + "," + payload.lon;
+    if (this._requestLocation === null || this._requestLocation === undefined) {
+      this._requestLocation = key;
+      return;
+    }
+    if (this._requestLocation !== key && !this._loggedMultiInstance) {
+      this._loggedMultiInstance = true;
+      Log.warn("MMM-SPCOutlook: a second MMM-SPCOutlook instance is configured for " + key +
+               " while this helper is already serving " + this._requestLocation +
+               ". MagicMirror runs one node_helper per module type, so only the first location is " +
+               "polled; the other instance will not update. Multiple instances at distinct " +
+               "coordinates are not supported.");
+    }
+  },
+
   // Called when the front-end (MMM-SPCOutlook.js) sends a socket notification
   socketNotificationReceived: async function(notification, payload) {
     if (notification === "GET_SPC_DATA") {
+      // Before the in-flight guard, which would otherwise drop a second instance's request
+      // without ever seeing where it was for.
+      this._noteRequestLocation(payload);
       // CR-03: the in-flight guard the withTimeout comment above already identified as
       // missing. Without it a poll whose wall-time exceeds updateInterval — roughly
       // (20-26 product fetches + 1 MD index + N MD fetches) x 15 s on a degraded network —
@@ -699,8 +747,17 @@ module.exports = NodeHelper.create({
         // restart, which resets the counter to 0 under a browser that never reloaded,
         // froze the display permanently. `?? null` keeps a caller that reaches this handler
         // without start() (offline probes) emitting a well-formed payload.
+        //
+        // `lat`/`lon` are the REQUESTER's coordinates, echoed verbatim from the request that
+        // produced this outlook. sendSocketNotification broadcasts to every frontend
+        // instance of this module type, and the sequence guard is location-agnostic, so
+        // without this an instance configured for one city accepted and rendered the
+        // outlook computed for another — silently, with no way for the viewer to tell.
+        // Echoed rather than reformatted so the frontend's comparison is against the exact
+        // values it sent (see _noteRequestLocation).
         this._seq = (this._seq || 0) + 1;
-        this.sendSocketNotification("SPC_DATA_RESULT", [outlook, this._seq, { epoch: this._epoch ?? null }]);
+        this.sendSocketNotification("SPC_DATA_RESULT",
+                                    [outlook, this._seq, { epoch: this._epoch ?? null, lat, lon }]);
       } finally {
         this._inFlight = false;
       }
