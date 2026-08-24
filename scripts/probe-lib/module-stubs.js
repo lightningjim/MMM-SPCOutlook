@@ -273,8 +273,11 @@ function makeKmzBuffer(entries) {
       `(missing: ${missingKmlDeps.join(", ")}). Run npm ci.`
     );
   }
+  // adm-zip sorts entries alphabetically by entryName unless noSort is set; without it
+  // the write/read round trip silently reorders entries and a fixture cannot prove
+  // entry-scan behaviour at all.
   const RealZip = REAL_KML_DEPS["adm-zip"];
-  const zip = new RealZip();
+  const zip = new RealZip(undefined, { noSort: true });
   for (const [entryName, contents] of Object.entries(entries)) {
     zip.addFile(entryName, Buffer.from(contents));
   }

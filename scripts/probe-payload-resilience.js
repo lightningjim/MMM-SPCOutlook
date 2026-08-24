@@ -22,7 +22,7 @@
 const { PRODUCT_REGISTRY } = require("../productRegistry.js");
 const {
   loadNodeHelper, loadFrontendModule, renderDom, resetHelper, resetLogs, turfStub, logCalls,
-  hasRealKmlDeps, missingKmlDeps
+  hasRealKmlDeps, missingKmlDeps, makeKmzBuffer
 } = require("./probe-lib/module-stubs.js");
 
 // ---------------------------------------------------------------------
@@ -213,6 +213,39 @@ const ERO_URLS = {
   5: PRODUCT_REGISTRY.excessiveRain.buildUrl(5)
 };
 
+// The live MPD hazard-type table, verbatim from RESEARCH.md's MPD_1118_final.kmz sample.
+// Used by harness-real-kml-deps-round-trip to pin togeojson's description-object shape
+// (RESEARCH.md Pitfall 3) as executable ground truth before any product code depends on it.
+const MPD_DESCRIPTION_TABLE_HTML =
+  "<table>" +
+  "<tr><td>FID</td><td>0</td></tr>" +
+  "<tr bgcolor=\"#D4E4F3\"><td>ValidStart</td><td>232333</td></tr>" +
+  "<tr><td>ValidEndTi</td><td>240515</td></tr>" +
+  "<tr bgcolor=\"#D4E4F3\"><td>IssueTime</td><td>734 PM EDT Sun Aug 23 2026</td></tr>" +
+  "<tr><td>MPDNumber</td><td>1118</td></tr>" +
+  "<tr bgcolor=\"#D4E4F3\"><td>Forecaster</td><td>Otto</td></tr>" +
+  "<tr><td>MPDType</td><td>Heavy rainfall, Flash flooding possible</td></tr>" +
+  "<tr bgcolor=\"#D4E4F3\"><td>WFO</td><td>PSR, TWC</td></tr>" +
+  "</table>";
+
+const MPD_KML_DOC = `<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+<Document>
+<Placemark>
+<name>MPD 1118</name>
+<description><![CDATA[${MPD_DESCRIPTION_TABLE_HTML}]]></description>
+<Polygon>
+<outerBoundaryIs>
+<LinearRing>
+<coordinates>-77.1,38.8,0 -76.9,38.8,0 -76.9,39.0,0 -77.1,39.0,0 -77.1,38.8,0</coordinates>
+</LinearRing>
+</outerBoundaryIs>
+</Polygon>
+</Placemark>
+</Document>
+</kml>
+`;
+
 // ---------------------------------------------------------------------
 // Fetch stubbing
 // ---------------------------------------------------------------------
@@ -274,14 +307,17 @@ function installFetch(helper, routes) {
 // ---------------------------------------------------------------------
 
 // Minimal stand-in for a node-fetch Response: only the members fetchGeoJsonCached and
-// fetchBinBuffer actually touch.
-function httpResponse({ status = 200, body, text, etag = null }) {
-  const rawText = text !== undefined ? text : JSON.stringify(body);
+// fetchBinBuffer actually touch. `buffer` is for KMZ/binary scenarios: when supplied,
+// arrayBuffer() resolves to that Buffer and text() resolves to its toString(). The
+// existing body/text behaviour is untouched when buffer is absent, so no shipped
+// scenario changes.
+function httpResponse({ status = 200, body, text, buffer, etag = null }) {
+  const rawText = buffer !== undefined ? buffer.toString() : (text !== undefined ? text : JSON.stringify(body));
   return {
     ok: status >= 200 && status < 300,
     status,
     text: async () => rawText,
-    arrayBuffer: async () => Buffer.from(rawText),
+    arrayBuffer: async () => (buffer !== undefined ? buffer : Buffer.from(rawText)),
     headers: { get: (name) => (String(name).toLowerCase() === "etag" ? etag : null) }
   };
 }
@@ -1036,6 +1072,68 @@ const scenarios = [
         }
       } finally {
         turfStub.pointInPolygon = originalPointInPolygon;
+      }
+    }
+  },
+  {
+    // D-10 / RESEARCH.md Pitfall 3: pins togeojson's description-object shape as
+    // executable ground truth before any MPD/SPC-MD code depends on it, and proves
+    // makeKmzBuffer's KMZ round-trips through the real fetchBinBuffer -> adm-zip ->
+    // xmldom -> togeojson chain. The description assertion is the point of the
+    // scenario — a future togeojson upgrade that flattens description back to a plain
+    // string fails here with a clear message rather than silently turning every MPD
+    // hazard type into D-06's "no hazard type" parse-miss branch.
+    name: "harness-real-kml-deps-round-trip",
+    requires: "kml-deps",
+    run: async (helper) => {
+      resetHelper(helper);
+      resetLogs();
+      // A non-.kml entry deliberately comes first: MPD's real KMZ member is a fixed
+      // doc.kml, not the first entry in the archive, so a fixture that only ever put
+      // the .kml entry first could not prove entry selection scans past it.
+      const kmzBuffer = makeKmzBuffer({
+        "style.xsl": "<xsl/>",
+        "doc.kml": MPD_KML_DOC
+      });
+      const url = "https://www.wpc.ncep.noaa.gov/kml/mpd/MPD_1118_final.kmz";
+      installHttp(helper, [[url, () => httpResponse({ buffer: kmzBuffer, etag: "mpd-v1" })]]);
+
+      const fetched = await helper.fetchBinBuffer(url);
+      if (!Buffer.isBuffer(fetched)) {
+        throw new Error("fetchBinBuffer did not return a Buffer");
+      }
+      if (fetched.length !== kmzBuffer.length) {
+        throw new Error(`fetchBinBuffer returned ${fetched.length} bytes, expected ${kmzBuffer.length}`);
+      }
+
+      // extractSoleKmlEntry does not exist in node_helper.js yet (it lands in a later
+      // plan) — this scenario proves the KMZ layer itself, opening the archive with the
+      // same real adm-zip module-stubs.js resolved.
+      const RealZip = require("adm-zip");
+      const zip = new RealZip(fetched, { noSort: true });
+      const entryNames = zip.getEntries().map((e) => e.entryName);
+      if (entryNames[0] === "doc.kml") {
+        throw new Error("fixture ordering broken: doc.kml is first, so entry-scan coverage is vacuous");
+      }
+      if (!entryNames.includes("doc.kml")) {
+        throw new Error(`KMZ round-trip lost the doc.kml entry: ${JSON.stringify(entryNames)}`);
+      }
+      const kmlText = zip.readFile(zip.getEntry("doc.kml")).toString();
+
+      const gj = helper.kmlToGeoJson(kmlText);
+      if (!gj || !Array.isArray(gj.features) || gj.features.length !== 1) {
+        throw new Error(`kmlToGeoJson did not return one feature: ${JSON.stringify(gj)}`);
+      }
+      const feature = gj.features[0];
+      const description = feature.properties && feature.properties.description;
+      if (typeof description !== "object" || description === null) {
+        throw new Error(
+          `RESEARCH.md Pitfall 3 regressed: expected properties.description to be an object, got ${typeof description} ` +
+          `(${JSON.stringify(description)})`
+        );
+      }
+      if (typeof description.value !== "string" || !description.value.includes("<td>MPDType</td>")) {
+        throw new Error(`description.value did not contain the MPDType row: ${JSON.stringify(description)}`);
       }
     }
   }
