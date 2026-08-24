@@ -335,6 +335,180 @@ const MPD_KML_DOC = `<?xml version="1.0" encoding="UTF-8"?>
 `;
 
 // ---------------------------------------------------------------------
+// Shared KMZ/KML fixture builders (plan 15-08 / 15-09)
+//
+// Give these explicit parameters rather than hardcoding one scenario's values, since
+// both this plan and plan 15-09 build fixtures from them.
+// ---------------------------------------------------------------------
+
+// SPC MD's shape: a single Placemark whose <name> is already a clean "MD 2108"-style
+// label (toEntry reads feature.properties.name directly, unlike MPD which reads its
+// label out of the description CDATA), with a Polygon using SAMPLE_RING.
+function mdKml(name) {
+  const ring = SAMPLE_RING.map(([lon, lat]) => `${lon},${lat},0`).join(" ");
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+<Document>
+<Placemark>
+<name>${name}</name>
+<Polygon>
+<outerBoundaryIs>
+<LinearRing>
+<coordinates>${ring}</coordinates>
+</LinearRing>
+</outerBoundaryIs>
+</Polygon>
+</Placemark>
+</Document>
+</kml>
+`;
+}
+
+// WPC MPD's shape: a single Placemark whose <description> is a CDATA HTML table
+// carrying the live row set (ValidStart, ValidEndTi, IssueTime, MPDNumber, Forecaster,
+// MPDType, WFO). When hazardType is null the MPDType row is omitted entirely — a
+// genuinely absent row, not an empty cell — so D-06's "no hazard type" branch is
+// exercised against the real shape it must handle. The Placemark <name> is a raw DTG
+// string like the live samples (not "MPD <number>"), so code that mistakenly labels an
+// MPD from the Placemark name instead of the description's MPDNumber field produces a
+// visibly wrong label rather than a plausible one.
+function mpdKml({ number, issueTime, validEndTi, hazardType }) {
+  const rows = [
+    ["ValidStart", "232333"],
+    ["ValidEndTi", validEndTi],
+    ["IssueTime", issueTime],
+    ["MPDNumber", number],
+    ["Forecaster", "Otto"]
+  ];
+  if (hazardType !== null && hazardType !== undefined) {
+    rows.push(["MPDType", hazardType]);
+  }
+  rows.push(["WFO", "PSR, TWC"]);
+  const tableRows = rows
+    .map(([label, value], i) => `<tr${i % 2 === 1 ? " bgcolor=\"#D4E4F3\"" : ""}><td>${label}</td><td>${value}</td></tr>`)
+    .join("");
+  const description = `<table>${tableRows}</table>`;
+  const ring = SAMPLE_RING.map(([lon, lat]) => `${lon},${lat},0`).join(" ");
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+<Document>
+<Placemark>
+<name>232333</name>
+<description><![CDATA[${description}]]></description>
+<Polygon>
+<outerBoundaryIs>
+<LinearRing>
+<coordinates>${ring}</coordinates>
+</LinearRing>
+</outerBoundaryIs>
+</Polygon>
+</Placemark>
+</Document>
+</kml>
+`;
+}
+
+// SPC's ActiveMD.kmz shape: one NetworkLink/Link/href per supplied string, verbatim and
+// unmodified — fixtures pass http:// hrefs deliberately (Pitfall 1), and this builder
+// must not "fix" them on the way in.
+function activeIndexKml(hrefs) {
+  const networkLinks = hrefs
+    .map((href) => `<NetworkLink><Link><href>${href}</href></Link></NetworkLink>`)
+    .join("\n");
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+<Document>
+${networkLinks}
+</Document>
+</kml>
+`;
+}
+
+// Thin wrapper over makeKmzBuffer that places a non-.kml entry first by default, so
+// every advisory fixture exercises extractSoleKmlEntry's scan-for-the-sole-.kml-entry
+// behaviour rather than letting a first-entry implementation pass by luck. `entries` is
+// merged onto a target object that already has "style.xsl" as its first key; because
+// Object.assign preserves each key's first-seen insertion position, a caller-supplied
+// entries object cannot displace it to a later position.
+function kmzOf(entries) {
+  const merged = Object.assign({ "style.xsl": "<xsl/>" }, entries);
+  return makeKmzBuffer(merged);
+}
+
+// Builds an installHttp route list for a kml-advisory scenario: the discovery index URL
+// to a Buffer response, each member KMZ URL to its Buffer, the listing URL (WPC MPD's
+// directory listing) to a text response, and .lyr.geojson plus every ERO/WSSI query URL
+// to 200-empty JSON. Routing every unrelated layer to 200-empty is WR-02's trap again —
+// otherwise an unrouted layer takes installHttp's hard-failure (503) default, sets
+// anyStale, and any `_stale` assertion in the scenario passes for a reason that has
+// nothing to do with the scenario's subject.
+function advisoryRoutes({ index, members = [], listing } = {}) {
+  const routes = [];
+  if (index) {
+    routes.push([index.url, () => httpResponse({ buffer: index.buffer, etag: "advisory-index-v1" })]);
+  }
+  for (const member of members) {
+    routes.push([member.url, () => httpResponse({ buffer: member.buffer, etag: "advisory-member-v1" })]);
+  }
+  if (listing) {
+    routes.push([listing.url, () => httpResponse({ text: listing.text, etag: "advisory-listing-v1" })]);
+  }
+  const okEmpty = () => httpResponse({ body: EMPTY_FEATURE_COLLECTION, etag: "empty-v1" });
+  routes.push([".lyr.geojson", okEmpty]);
+  for (const url of Object.values(ERO_URLS)) routes.push([url, okEmpty]);
+  for (const url of Object.values(WSSI_URLS)) routes.push([url, okEmpty]);
+  return routes;
+}
+
+// A payload shape in which every day/fireWeather/ERO/winterImpact value is the
+// no-risk/none default and `_stale` is absent, parameterised only by `advisories` — used
+// by frontend-advisory-only-is-not-an-all-clear to isolate the advisory term of the
+// no-risk gate from every other term. Day 4-8 carry minimal fields only: with
+// config.extended false, getDom never reads them (the `&&` chain short-circuits on
+// `this.config.extended` before evaluating anything on `this.spcrisk.day48Risk` or
+// `this.spcrisk.fireWeather.day3Risk`-`day8Risk`).
+function noRiskPayloadWithAdvisory(advisories) {
+  const dayNone = { risk: "NONE", text: "None", color: "afddf6", probRisk: false, torRisk: 0, torCig: 0, hailRisk: 0, hailCig: 0, windRisk: 0, windCig: 0 };
+  const day3None = { risk: "NONE", text: "None", color: "afddf6", probRisk: false, cig: 0 };
+  const day48None = { risk: "NONE", probRisk: false, sign: false, color: "afddf6", text: "None" };
+  const eroDay = { Risk: "NONE", Text: "None", Color: "afddf6", ValidTime: null };
+  const excessiveRain = {};
+  const winterImpact = {};
+  for (let d = 1; d <= 5; d++) {
+    excessiveRain[`day${d}Risk`] = eroDay.Risk;
+    excessiveRain[`day${d}Text`] = eroDay.Text;
+    excessiveRain[`day${d}Color`] = eroDay.Color;
+    excessiveRain[`day${d}ValidTime`] = eroDay.ValidTime;
+  }
+  for (let d = 1; d <= 3; d++) {
+    winterImpact[`day${d}Risk`] = eroDay.Risk;
+    winterImpact[`day${d}Text`] = eroDay.Text;
+    winterImpact[`day${d}Color`] = eroDay.Color;
+    winterImpact[`day${d}ValidTime`] = eroDay.ValidTime;
+  }
+  return {
+    day48Risk: false,
+    day1: { ...dayNone },
+    day2: { ...dayNone },
+    day3: { ...day3None },
+    day4: { ...day48None },
+    day5: { ...day48None },
+    day6: { ...day48None },
+    day7: { ...day48None },
+    day8: { ...day48None },
+    fireWeather: {
+      day1Risk: 0, day1Text: "None", day2Risk: 0, day2Text: "None",
+      day3Risk: 0, day3Text: "None", day4Risk: 0, day4Text: "None",
+      day5Risk: 0, day5Text: "None", day6Risk: 0, day6Text: "None",
+      day7Risk: 0, day7Text: "None", day8Risk: 0, day8Text: "None"
+    },
+    excessiveRain,
+    winterImpact,
+    advisories
+  };
+}
+
+// ---------------------------------------------------------------------
 // Fetch stubbing
 // ---------------------------------------------------------------------
 
