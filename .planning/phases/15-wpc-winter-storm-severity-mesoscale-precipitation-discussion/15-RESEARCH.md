@@ -660,9 +660,14 @@ phase's research surfaced a superseded endpoint or a documented-but-removed fiel
 reinterprets a locked decision's (D-09) literal wording against a real value domain that didn't
 exist in the decision-maker's hands at discussion time.
 
-## Open Questions
+## Open Questions (ALL RESOLVED — see resolution notes inline)
 
-1. **Does "Limited and above renders a row" (D-09) mean "Minor and above" in WPC's real domain, and
+> **Resolution status (recorded 2026-08-23 during /bm:plan-phase 15):** all three questions
+> below were answered before planning locked. Q1 was escalated to the user and confirmed; Q2
+> and Q3 were Claude's-Discretion items resolved on this research's own recommendation. The
+> plans implement these answers; the plan-checker verified that independently.
+
+1. **[RESOLVED — user-confirmed 2026-08-23: `MINOR` and above renders; `WINTER WEATHER AREA` renders nothing, same bucket as no-polygon. See the AMENDED block on D-09 in 15-CONTEXT.md.]** **Does "Limited and above renders a row" (D-09) mean "Minor and above" in WPC's real domain, and
    is `WINTER WEATHER AREA` treated as non-rendering (like `NONE`) or as the bottom rendering rung?**
    - What we know: WPC's live renderer domain is `WINTER WEATHER AREA, MINOR, MODERATE, MAJOR,
      EXTREME` — no `LIMITED` value exists anywhere in the schema or the renderer. WPC's own service
@@ -675,7 +680,7 @@ exist in the decision-maker's hands at discussion time.
      per WPC's own "not anticipated to impact daily life" framing, and confirm this reading during
      planning or plan-check rather than silently choosing.
 
-2. **What is the right pre-filter recency window for MPD directory-listing discovery, and should the
+2. **[RESOLVED — recommendation accepted: ~48h `Last-Modified` pre-filter as a fetch-count optimization ONLY; the authoritative active/inactive decision is each candidate's own `ValidEndTi`, evaluated unconditionally. The pre-filter must never be the sole inclusion gate. Implemented in 15-06.]** **What is the right pre-filter recency window for MPD directory-listing discovery, and should the
    Last-Modified pre-filter be skipped entirely in favor of always parsing every candidate's own
    `ValidEndTi`?**
    - What we know: MPD validity windows observed live ranged 3h-6h; the current-year directory has
@@ -690,7 +695,7 @@ exist in the decision-maker's hands at discussion time.
      decision from each candidate's own `ValidEndTi` unconditionally — never let the pre-filter alone
      decide inclusion/exclusion.
 
-3. **Should the retired `md` socket element leave a compatibility shim (e.g., always send `false` at
+3. **[RESOLVED — recommendation accepted: remove outright, no shim, per D-03's target shape `[outlook, seq]`. No other consumer exists in this single-instance deployment. Implemented in 15-07.]** **Should the retired `md` socket element leave a compatibility shim (e.g., always send `false` at
    index 1 for one release) or be removed outright?**
    - What we know: this is explicitly flagged as Claude's Discretion in CONTEXT.md; there are no
      other consumers of this socket notification (single-module, single-instance deployment per
