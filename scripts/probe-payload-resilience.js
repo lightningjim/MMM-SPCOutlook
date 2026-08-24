@@ -744,9 +744,6 @@ function assertPayloadIntact(out) {
       throw new Error(`assertPayloadIntact: fireWeather.day${d}Text missing`);
     }
   }
-  if (typeof out.excessiveRain !== "object" || out.excessiveRain === null) {
-    throw new Error("assertPayloadIntact: excessiveRain missing or not an object");
-  }
   // WR-10: node_helper derives every ERO day count from PRODUCT_REGISTRY.excessiveRain.days
   // so that "no literal day count survives outside the registry", but this assertion
   // hardcoded 5 days and 20 keys — so changing the single declared knob from 5 to 7 failed
@@ -754,29 +751,61 @@ function assertPayloadIntact(out) {
   // payload rather than at the probe. The day count now comes from the registry; the
   // SUFFIX list stays literal on purpose, because it is the independent oracle and must
   // not come from the same source as the thing under test.
-  const eroDays = PRODUCT_REGISTRY.excessiveRain.days;
-  const eroKeyCount = Object.keys(out.excessiveRain).length;
-  const expectedKeys = eroDays * ERO_SUFFIXES.length;
-  if (eroKeyCount !== expectedKeys) {
-    throw new Error(
-      `assertPayloadIntact: excessiveRain has ${eroKeyCount} keys, expected ${expectedKeys} ` +
-      `(${eroDays} days x ${ERO_SUFFIXES.length} fields)`
-    );
-  }
-  for (let d = 1; d <= eroDays; d++) {
-    for (const suffix of ERO_SUFFIXES) {
-      const key = `day${d}${suffix}`;
-      if (!(key in out.excessiveRain)) {
-        throw new Error(`assertPayloadIntact: excessiveRain.${key} missing`);
+  //
+  // WR-05: and it checked ONLY excessiveRain. Phase 15 added two more payload blocks that
+  // D-05 declares "always present, regardless of the toggle" — `winterImpact` and
+  // `advisories.{spcMD,mpd}` — and 25 scenarios called this function as "the D-05 payload
+  // contract" while asserting nothing about either. Deleting `winterImpact: wssiPayload`
+  // from getSpcOutlook's return object passed this oracle; so did deleting `advisories`.
+  // The loop below is registry-driven for the same reason node_helper's is: a Phase 16/17
+  // row is covered the moment it is declared, with no edit here. The registry uses
+  // `id: "excessiveRain"` / `"winterImpact"` and the payload uses those same key names, so
+  // `out[row.id]` is already the correct lookup.
+  for (const row of Object.values(PRODUCT_REGISTRY)) {
+    if (row.kind !== "arcgis-day-layers") continue;
+    const block = out[row.id];
+    if (typeof block !== "object" || block === null) {
+      throw new Error(`assertPayloadIntact: ${row.id} missing or not an object`);
+    }
+    const keyCount = Object.keys(block).length;
+    const expectedKeys = row.days * ERO_SUFFIXES.length;
+    if (keyCount !== expectedKeys) {
+      throw new Error(
+        `assertPayloadIntact: ${row.id} has ${keyCount} keys, expected ${expectedKeys} ` +
+        `(${row.days} days x ${ERO_SUFFIXES.length} fields)`
+      );
+    }
+    for (let d = 1; d <= row.days; d++) {
+      for (const suffix of ERO_SUFFIXES) {
+        const key = `day${d}${suffix}`;
+        if (!(key in block)) {
+          throw new Error(`assertPayloadIntact: ${row.id}.${key} missing`);
+        }
+      }
+    }
+    const validTiers = Object.keys(row.tierToText);
+    for (let d = 1; d <= row.days; d++) {
+      const riskKey = `day${d}Risk`;
+      const val = block[riskKey];
+      if (!validTiers.includes(val)) {
+        throw new Error(`assertPayloadIntact: ${row.id}.${riskKey} is not a valid tier (got ${JSON.stringify(val)})`);
       }
     }
   }
-  const validTiers = Object.keys(PRODUCT_REGISTRY.excessiveRain.tierToText);
-  for (let d = 1; d <= eroDays; d++) {
-    const riskKey = `day${d}Risk`;
-    const val = out.excessiveRain[riskKey];
-    if (!validTiers.includes(val)) {
-      throw new Error(`assertPayloadIntact: excessiveRain.${riskKey} is not a valid tier (got ${JSON.stringify(val)})`);
+  // D-05 again, for the advisory half: `advisories` and one array per kml-advisory row are
+  // present whether or not the product is toggled on. This is what the frontend's
+  // `[...advisories.spcMD, ...advisories.mpd]` spread relies on (WR-07), and it was
+  // asserted nowhere in the suite.
+  if (typeof out.advisories !== "object" || out.advisories === null) {
+    throw new Error("assertPayloadIntact: advisories missing or not an object");
+  }
+  for (const row of Object.values(PRODUCT_REGISTRY)) {
+    if (row.kind !== "kml-advisory") continue;
+    if (!Array.isArray(out.advisories[row.id])) {
+      throw new Error(
+        `assertPayloadIntact: advisories.${row.id} is not an array ` +
+        `(got ${JSON.stringify(out.advisories[row.id])})`
+      );
     }
   }
 }
