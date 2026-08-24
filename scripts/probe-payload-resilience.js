@@ -950,14 +950,21 @@ const scenarios = [
       resetHelper(helper);
       resetLogs();
       helper._products = { showExcessiveRain: true };
+      // WR-06/WR-02's trap: this used to route ONLY the ERO URLs, so every SPC categorical,
+      // hazard, CIG and fire-weather layer fell through to installFetch's hard-failure
+      // default and set anyStale long before the ERO loop ran. Any `_stale` assertion here
+      // would then have passed for a reason having nothing to do with the contained throw.
+      // Every non-ERO layer now succeeds with an empty collection — the ERO URLs are ArcGIS
+      // query URLs and carry no ".lyr.geojson", so they alone throw.
       installFetch(helper, [
         [ERO_URLS[1], throwingFetch()],
         [ERO_URLS[2], throwingFetch()],
         [ERO_URLS[3], throwingFetch()],
         [ERO_URLS[4], throwingFetch()],
-        [ERO_URLS[5], throwingFetch()]
+        [ERO_URLS[5], throwingFetch()],
+        [".lyr.geojson", freshFetch(EMPTY_FEATURE_COLLECTION)]
       ]);
-      const out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false);
+      const out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showExcessiveRain: true });
       assertPayloadIntact(out);
       for (let d = 1; d <= 5; d++) {
         if (out.excessiveRain[`day${d}Risk`] !== "NONE") {
@@ -968,6 +975,39 @@ const scenarios = [
           [`excessiveRain day ${d}`, "fetch/parse/evaluate failed"],
           `a contained ERO throw on day ${d} produced no diagnostic log line`
         );
+      }
+      // WR-06: "reported" meant reported to the LOG, and the log is not where the user
+      // looks. This was the only scenario exercising _runArcGisDayProduct's catch and it
+      // stopped one assertion short of the one that matters, so the suite reported PASS on
+      // a payload presenting five silently-failed ERO days as a confident all-clear — the
+      // exact outcome ero-hard-fail-is-flagged, wssi-hard-fail-is-flagged and
+      // mpd-fetch-failure-is-stale-but-zero-results-is-not all exist to prevent.
+      if (out._stale !== true) {
+        throw new Error("five contained ERO throws produced an unflagged no-risk payload (_stale !== true)");
+      }
+      // And the render-layer half, because _stale in the payload proves nothing on its own
+      // when the branch that renders it is unreachable (CR-01's original lesson).
+      const frontend = loadFrontendModule();
+      const config = {
+        lat: PROBE_LAT, lon: PROBE_LON, extended: false, updateInterval: 60,
+        proximityWeighting: false, showExcessiveRain: true, showWinterImpact: false
+      };
+      const rendered = renderDom(frontend, { config, spcrisk: out });
+      if (rendered === "No Severe Weather Risk") {
+        throw new Error("a silently-degraded ERO run rendered as a confident all-clear");
+      }
+
+      // Negative control: identical routing with the ERO toggle off. If _stale is still
+      // set, the staleness came from a layer this scenario is not testing and the
+      // assertion above is vacuous no matter what it says (WR-02's trap).
+      resetHelper(helper);
+      resetLogs();
+      helper._products = { showExcessiveRain: false };
+      installFetch(helper, [[".lyr.geojson", freshFetch(EMPTY_FEATURE_COLLECTION)]]);
+      const off = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showExcessiveRain: false });
+      assertPayloadIntact(off);
+      if (off._stale) {
+        throw new Error("staleness came from a non-ERO layer — the _stale assertion above is vacuous");
       }
     }
   },
