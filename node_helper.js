@@ -94,6 +94,21 @@ const ADVISORY_MAX_LISTING_BYTES = 4 * 1024 * 1024;
 const KMZ_MAX_KML_BYTES = 8 * 1024 * 1024;
 const KMZ_MAX_COMPRESSION_RATIO = 200;
 
+// How many poll intervals a cached reading may be old and still be served in place of a
+// failed fetch. It must be MORE than one: an entry is written when a poll produces a
+// reading, and the next poll reaches that same URL one full interval later (later still —
+// getSpcOutlook is a ~30-hop serial chain), so a window of exactly one interval has always
+// expired by the only moment it is ever consulted. At the documented 60-minute default that
+// made the stale fallback unreachable in production: a single upstream hiccup during an
+// active HIGH resolved the day to "NONE" and rendered "No Severe Weather Risk
+// (unconfirmed)" for a location that was HIGH minutes earlier — the false negative this
+// product exists to prevent, and the exact opposite of the guarantee the fallback was
+// written to deliver. Two intervals is the smallest window that survives one missed poll.
+// Serving an old reading is safe here precisely because it is never presented as current:
+// every path that returns one also sets `stale`, which raises the ⚠ badge and renders the
+// reading's real age.
+const STALE_WINDOW_INTERVALS = 2;
+
 module.exports = NodeHelper.create({
   // Exposed on the helper object (rather than kept purely module-private) so offline
   // probes can exercise the allowlist directly against the module-scope implementation
@@ -1163,7 +1178,7 @@ module.exports = NodeHelper.create({
 
   _isWithinStaleWindow(timestamp, intervalMinutes) {
     const intervalMs = (intervalMinutes ?? 60) * 60 * 1000;
-    return (Date.now() - timestamp) < intervalMs;
+    return (Date.now() - timestamp) < intervalMs * STALE_WINDOW_INTERVALS;
   },
 
   /**
@@ -1180,8 +1195,10 @@ module.exports = NodeHelper.create({
    *
    *   Called only from the paths that return `stale: true`; an ETag/hash cache hit is
    *   upstream confirming the bytes are unchanged, which is a fresh reading, not a stale
-   *   one. A hard failure has no entry to age, so the field stays null and the frontend's
-   *   existing `typeof asOf === "number"` guard omits the suffix.
+   *   one — and each of those three hit paths now stamps `entry.timestamp` with that
+   *   confirmation, so the age this reports is time-since-last-confirmed rather than
+   *   time-since-last-edit. A hard failure has no entry to age, so the field stays null and
+   *   the frontend's existing `typeof asOf === "number"` guard omits the suffix.
    */
   _noteStaleEntry(entry) {
     if (!entry || typeof entry.timestamp !== "number") return;
@@ -1232,6 +1249,15 @@ module.exports = NodeHelper.create({
         return { data: null, cachedResult: null, stale: false, failed: true };
       }
       Log.info('MMM-SPCOutlook: cache hit (ETag) for ' + url);
+      // Upstream has just confirmed these bytes are unchanged, so this reading is as fresh
+      // as a 200 carrying the same body. The entry's timestamp used to be written only on a
+      // body CHANGE, which made it the age of the last edit rather than of the last
+      // successful reading: an SPC layer that has been 304-confirmed hourly for a quiet
+      // week carried a week-old timestamp, so the stale window (above) rejected it and the
+      // next hiccup blanked the layer. Stamping the confirmation is what makes that window
+      // mean "how long since we last heard from upstream", which is the question both it
+      // and _noteStaleEntry's age badge are actually asking.
+      entry.timestamp = Date.now();
       return { data: null, cachedResult: entry.result, stale: false };
     }
 
@@ -1302,6 +1328,9 @@ module.exports = NodeHelper.create({
       // If same ETag as cached, it's a hit (server didn't send 304, but ETag matches)
       if (entry && entry.mode === 'etag' && entry.etag === newEtag) {
         Log.info('MMM-SPCOutlook: cache hit (ETag) for ' + url);
+        // A matching ETag is the same confirmation the 304 branch above records; see there
+        // for why an unrefreshed timestamp made the stale window unreachable.
+        entry.timestamp = Date.now();
         return { data: null, cachedResult: entry.result, stale: false };
       }
       // Cache miss — parse, validate the shape, and return new data
@@ -1314,6 +1343,9 @@ module.exports = NodeHelper.create({
       const newHash = crypto.createHash('sha256').update(rawText).digest('hex');
       if (entry && entry.mode === 'hash' && entry.hash === newHash) {
         Log.info('MMM-SPCOutlook: cache hit (hash) for ' + url);
+        // Identical body bytes are the same confirmation the 304 branch above records; see
+        // there for why an unrefreshed timestamp made the stale window unreachable.
+        entry.timestamp = Date.now();
         return { data: null, cachedResult: entry.result, stale: false };
       }
       // Cache miss — parse, validate the shape, and return new data

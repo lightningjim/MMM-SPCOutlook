@@ -3072,6 +3072,124 @@ const scenarios = [
       }
     }
   }
+  ,{
+    // The stale fallback is the mechanism behind the phase's stated guarantee — "a WPC
+    // hiccup during an active HIGH must not blank the display" — and every scenario that
+    // claims to prove it (ero-rejected-body-serves-last-known-good,
+    // ero-unparseable-body-serves-last-known-good, body-read-abort-is-contained-...) runs
+    // its warm-up poll and its failure poll milliseconds apart. At the shipping
+    // 60-minute cadence a cached reading is ALWAYS at least one interval old by the time
+    // the next poll can fail, so a window of exactly one interval had expired at the only
+    // moment it was ever consulted and the fallback was unreachable in production: the
+    // day resolved to NONE and the display rendered "No Severe Weather Risk
+    // (unconfirmed)" for a location that was SLGT an hour earlier.
+    //
+    // A real-elapsed-time test cannot observe this — the whole suite runs in under a
+    // second — so this scenario advances the clock by ageing the cache entry directly,
+    // which is the same state a poll an hour later sees. The negative control at the end
+    // is what keeps the fix from degrading into "serve any cached reading forever".
+    name: "an-hour-old-reading-still-survives-a-hiccup-but-a-day-old-one-does-not",
+    run: async (helper) => {
+      const INTERVAL_MIN = 60;
+      // Ages the cached reading for `url` by `minutes`, standing in for a poll that
+      // happens that much later. Asserts the entry exists first, so a routing change that
+      // stops populating the cache fails loudly here rather than making the ageing a no-op
+      // and every assertion below vacuous.
+      const ageEntry = (url, minutes) => {
+        const entry = helper._geoJsonCache.get(url);
+        if (!entry) throw new Error(`no cache entry to age for ${url} — the warm-up poll did not populate the cache`);
+        entry.timestamp = Date.now() - minutes * 60 * 1000;
+        return entry;
+      };
+      const warmUp = async () => {
+        resetHelper(helper);
+        resetLogs();
+        turfStub.pointInPolygon = () => true;
+        helper._updateInterval = INTERVAL_MIN;
+        installHttp(helper, eroHttpRoutes(() => httpResponse({ body: ERO_SLGT_BODY, etag: "ero-v1" })));
+        const warm = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showExcessiveRain: true });
+        if (warm.excessiveRain.day1Risk !== "SLGT" || warm._stale) {
+          throw new Error(
+            `warm-up did not establish an unflagged SLGT reading: risk=${warm.excessiveRain.day1Risk}, _stale=${warm._stale}`
+          );
+        }
+        resetLogs();
+      };
+
+      try {
+        // 1. One poll interval has passed (plus the seconds a ~30-hop serial chain takes to
+        //    reach this layer) and upstream now fails. The cached SLGT must still be served.
+        await warmUp();
+        const aged = ageEntry(ERO_URLS[1], INTERVAL_MIN + 5);
+        const agedTimestamp = aged.timestamp;
+        installHttp(helper, eroHttpRoutes(() => httpResponse({ status: 503, text: "service unavailable" })));
+        const out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showExcessiveRain: true });
+        assertPayloadIntact(out);
+        if (out.excessiveRain.day1Risk !== "SLGT") {
+          throw new Error(
+            `a hiccup ${INTERVAL_MIN + 5} minutes after the last reading blanked an active tier: expected the ` +
+            `cached SLGT, got ${out.excessiveRain.day1Risk}. At the shipping poll cadence EVERY cached reading ` +
+            "is at least one interval old, so a one-interval window means the fallback never fires in production."
+          );
+        }
+        if (out._stale !== true) {
+          throw new Error("the cached reading was served without the stale flag, so it renders as a confident current reading");
+        }
+        if (out._staleAsOf !== agedTimestamp) {
+          throw new Error(
+            `the ⚠ badge would report the wrong age: _staleAsOf=${out._staleAsOf}, served reading is from ${agedTimestamp}`
+          );
+        }
+
+        // 2. A 304 is upstream confirming the bytes are unchanged — a successful reading,
+        //    not a body edit. Unless it restamps the entry, the entry's age is the age of
+        //    the last CHANGE, and a layer that is 304-confirmed hourly for a quiet week
+        //    falls out of any finite window no matter how wide it is.
+        await warmUp();
+        ageEntry(ERO_URLS[1], INTERVAL_MIN + 5);
+        installHttp(helper, eroHttpRoutes(() => httpResponse({ status: 304, etag: "ero-v1" })));
+        const confirmed = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showExcessiveRain: true });
+        if (confirmed.excessiveRain.day1Risk !== "SLGT" || confirmed._stale) {
+          throw new Error(
+            `a 304 confirmation did not serve the cached reading cleanly: risk=${confirmed.excessiveRain.day1Risk}, ` +
+            `_stale=${confirmed._stale}`
+          );
+        }
+        const afterConfirm = helper._geoJsonCache.get(ERO_URLS[1]);
+        const ageAfterConfirm = Date.now() - afterConfirm.timestamp;
+        if (ageAfterConfirm > 60 * 1000) {
+          throw new Error(
+            `a 304 confirmation left the entry dated ${Math.round(ageAfterConfirm / 60000)} minutes ago — the entry ` +
+            "records the age of the last body CHANGE, not of the last successful reading, so an unchanged layer " +
+            "ages out of the stale window while upstream is answering perfectly"
+          );
+        }
+
+        // 3. Negative control. The window has to END somewhere: a reading from yesterday
+        //    must be a loud hard failure, not a silently-served all-clear. Without this,
+        //    "serve any cached reading forever" passes assertion 1.
+        await warmUp();
+        ageEntry(ERO_URLS[1], 24 * 60);
+        installHttp(helper, eroHttpRoutes(() => httpResponse({ status: 503, text: "service unavailable" })));
+        const expired = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showExcessiveRain: true });
+        assertPayloadIntact(expired);
+        if (expired.excessiveRain.day1Risk !== "NONE") {
+          throw new Error(
+            `control: a day-old reading was served as current (${expired.excessiveRain.day1Risk}); the stale window is unbounded`
+          );
+        }
+        if (expired._stale !== true) {
+          throw new Error("control: an expired-cache hard failure was not flagged stale");
+        }
+        requireLog(
+          ["unrecoverable fetch failure for", ERO_URLS[1]],
+          "control: an expired-cache hard failure produced no diagnostic naming the URL"
+        );
+      } finally {
+        resetHelper(helper);
+      }
+    }
+  }
 ];
 
 // ---------------------------------------------------------------------
