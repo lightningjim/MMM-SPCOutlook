@@ -124,6 +124,16 @@ None - no external service configuration required.
 - Live in-season WSSI confirmation remains a deferred item (already recorded in STATE.md Deferred Items per the v1.1 fire-weather precedent) — no change needed there from this plan.
 - `node_helper.js` and `MMM-SPCOutlook.js` are untouched (confirmed via `git diff --exit-code`) — the sibling agent's concurrent work on `node_helper.js` this wave is unaffected.
 
+## Self-Check: PASSED
+
+- FOUND: `scripts/probe-payload-resilience.js`
+- FOUND: `.planning/phases/15-wpc-winter-storm-severity-mesoscale-precipitation-discussion/15-05-SUMMARY.md`
+- FOUND commit `a534fd5` (Task 1)
+- FOUND commit `8e9a8b4` (Task 2)
+- FOUND commit `90840f2` (Task 3)
+- Final suite run: `node scripts/probe-payload-resilience.js` → `PROBE RESULT: 22 passed, 0 failed, 0 skipped`, exit 0
+- `git diff --exit-code productRegistry.js node_helper.js MMM-SPCOutlook.js` → clean (no residual mutation state)
+
 ---
 *Phase: 15-wpc-winter-storm-severity-mesoscale-precipitation-discussion*
 *Completed: 2026-08-24*
