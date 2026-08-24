@@ -944,6 +944,25 @@ const scenarios = [
             "— the empty-routed days were affected by day 1's body"
           );
         }
+        // D-10 mutation proof (Task 3, mutation 5): the WSSI extension of getDom's no-risk
+        // gate lives in a different file (MMM-SPCOutlook.js) from the payload logic above,
+        // so a payload-only assertion cannot catch its deletion. Render the payload and
+        // prove a genuine MINOR day does not short-circuit to the plain no-risk line.
+        const frontend = loadFrontendModule();
+        const config = {
+          lat: PROBE_LAT, lon: PROBE_LON, extended: false, updateInterval: 60,
+          proximityWeighting: false, showExcessiveRain: false, showWinterImpact: true
+        };
+        const rendered = renderDom(frontend, { config, spcrisk: out });
+        if (rendered === "No Severe Weather Risk") {
+          throw new Error(
+            "a genuine MINOR winter impact with no convective risk short-circuited to " +
+            "\"No Severe Weather Risk\" — the WSSI term of the no-risk gate is unguarded"
+          );
+        }
+        if (!rendered.includes("Winter Impact")) {
+          throw new Error(`a genuine MINOR winter impact rendered with no Winter Impact row: ${rendered}`);
+        }
       } finally {
         turfStub.pointInPolygon = originalPointInPolygon;
       }
