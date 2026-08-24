@@ -96,6 +96,14 @@ None - no external service configuration required.
 - All acceptance criteria verified by running the actual commands: both `node -e` assertion blocks exit 0 and print `OK`; `grep -c 'LIMITED' productRegistry.js` returns `0`; `node scripts/probe-payload-resilience.js` reports `15 passed, 0 failed` after both tasks; `git diff` confirms the `excessiveRain` row gained exactly the one `kind` line with no other member touched.
 - No blockers for downstream plans in this phase.
 
+## Self-Check: PASSED
+
+- FOUND: productRegistry.js
+- FOUND: .planning/phases/15-wpc-winter-storm-severity-mesoscale-precipitation-discussion/15-01-SUMMARY.md
+- FOUND commit: a51d4c6 (Task 1)
+- FOUND commit: 7d5cc81 (Task 2)
+- FOUND commit: c83cb94 (docs: summary)
+
 ---
 *Phase: 15-wpc-winter-storm-severity-mesoscale-precipitation-discussion*
 *Completed: 2026-08-24*
