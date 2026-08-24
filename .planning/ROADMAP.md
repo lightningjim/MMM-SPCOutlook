@@ -113,7 +113,38 @@ Plans:
   4. Each MPD indicator shows a hazard type pulled from the description CDATA table, not a blank or mislabeled value (MPD-03).
   5. Checked against a real or constructed cross-year-boundary MPD sample, the module does not select a stale MPD just because it carries the highest ID number (MPD-04).
 
-**Plans**: TBD
+**Plans:** 9 plans
+
+Plans:
+**Wave 1**
+
+- [ ] 15-01-PLAN.md — Registry `kind` discriminator plus the winterImpact, spcMD and mpd rows
+- [ ] 15-02-PLAN.md — Probe harness: real ZIP/KML dependencies, skip accounting, KMZ fixture builder
+
+**Wave 2**
+
+- [ ] 15-03-PLAN.md — WSSI end to end: shared arcgis-day-layers runner, payload block, render rows
+
+**Wave 3**
+
+- [ ] 15-04-PLAN.md — Shared kml-advisory pipeline and SPC MD migration, fixing the http:// allowlist defect
+- [ ] 15-05-PLAN.md — WSSI probe scenarios, mutation-proven
+
+**Wave 4**
+
+- [ ] 15-06-PLAN.md — MPD discovery: directory listing, validity window, hazard-type extraction
+
+**Wave 5**
+
+- [ ] 15-07-PLAN.md — Atomic socket migration to [outlook, seq], advisory band, no-risk gate fix
+
+**Wave 6**
+
+- [ ] 15-08-PLAN.md — KMZ fixture builders, SPC MD allowlist and frontend contract scenarios
+
+**Wave 7**
+
+- [ ] 15-09-PLAN.md — MPD scenario family, phase mutation inventory, live MPD verification checkpoint
 
 ### Phase 16: WPC Day 3–7 / CPC Day 8–14 Hazards Outlook
 
