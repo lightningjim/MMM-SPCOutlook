@@ -113,7 +113,7 @@ Plans:
   4. Each MPD indicator shows a hazard type pulled from the description CDATA table, not a blank or mislabeled value (MPD-03).
   5. Checked against a real or constructed cross-year-boundary MPD sample, the module does not select a stale MPD just because it carries the highest ID number (MPD-04).
 
-**Plans:** 5/9 plans executed
+**Plans:** 6/9 plans executed
 
 Plans:
 **Wave 1**
@@ -132,7 +132,7 @@ Plans:
 
 **Wave 4**
 
-- [ ] 15-06-PLAN.md — MPD discovery: directory listing, validity window, hazard-type extraction
+- [x] 15-06-PLAN.md — MPD discovery: directory listing, validity window, hazard-type extraction
 
 **Wave 5**
 
@@ -230,7 +230,7 @@ Phases execute in numeric order: 14 → 15 → 16 → 17 → 18 → 19
 | 12. Proximity Backend Foundation | v1.2 | 3/3 | Complete | 2026-05-02 |
 | 13. Proximity Frontend Render | v1.2 | 3/3 | Complete | 2026-05-03 |
 | 14. Foundation & WPC Excessive Rainfall Outlook | v2.0 | 7/7 | Complete | 2026-08-23 |
-| 15. WPC Winter Storm Severity & Mesoscale Precipitation Discussion | v2.0 | 5/9 | In Progress|  |
+| 15. WPC Winter Storm Severity & Mesoscale Precipitation Discussion | v2.0 | 6/9 | In Progress|  |
 | 16. WPC Day 3–7 / CPC Day 8–14 Hazards Outlook | v2.0 | 0/? | Not started | - |
 | 17. NWS/WPC HeatRisk & Parallelized Fetching | v2.0 | 0/? | Not started | - |
 | 18. Merge, Precedence & Unified Payload Schema | v2.0 | 0/? | Not started | - |
