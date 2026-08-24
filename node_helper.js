@@ -86,13 +86,29 @@ const ADVISORY_MAX_CANDIDATES = 60;
 const ADVISORY_MAX_BODY_BYTES = 8 * 1024 * 1024;
 const ADVISORY_MAX_LISTING_BYTES = 4 * 1024 * 1024;
 
-// WR-03: bounds on a KMZ's sole .kml member. Live samples are ~3 KB, so the byte cap is
-// three orders of magnitude of headroom. The ratio cap is the half that actually bounds a
-// decompression bomb: the byte cap alone reads a header field the archive's author chose,
-// while a deflate bomb is defined by an enormous inflated:compressed ratio. Live KML
-// compresses at well under 20:1.
+// Bound on a KMZ's sole .kml member. Live samples are ~3 KB, so this is three orders of
+// magnitude of headroom. It is also, with adm-zip, a bound on PEAK memory and not merely
+// on what is retained: adm-zip passes the entry's declared uncompressed size to
+// zlib.inflateRawSync as `maxOutputLength`, so inflation aborts at the declared size
+// rather than running to completion — verified against a forged archive (a 16 MB deflate
+// stream declaring 100 bytes throws "Cannot create a Buffer larger than 100 bytes"). See
+// extractSoleKmlEntry for the one input that switches that library bound off.
+//
+// A previous companion constant capped the declared:compressed ratio at 200:1 as "the
+// half that actually bounds a decompression bomb". It bounded nothing: both operands are
+// central-directory fields the archive's author chooses freely, and an attacker who wants
+// a larger inflation simply declares one — at which point the declared-size check below
+// refuses it, and if it is small enough to pass, adm-zip has clamped inflation to that
+// same small number. What the ratio did add was false-rejection surface against a
+// threshold measured on the wrong sample: it cited "live KML compresses at well under
+// 20:1", which is true of the ~3 KB member polygons but not of the SPC ActiveMD.kmz INDEX
+// this same function parses, whose sole member is a run of near-identical <NetworkLink>
+// blocks — measured here with zlib.deflateRaw level 9, 100 links is 20:1, 1000 links is
+// 25:1, and the same 1000-link index indented for readability is 66:1. A refusal there
+// throws out of the spc-active-index strategy, which returns { urls: [], failed: true } —
+// i.e. every active SPC MD disappears for that poll behind a ⚠ badge, a whole-product
+// false negative caused by upstream growth or pretty-printing rather than by an attack.
 const KMZ_MAX_KML_BYTES = 8 * 1024 * 1024;
-const KMZ_MAX_COMPRESSION_RATIO = 200;
 
 // How many poll intervals a cached reading may be old and still be served in place of a
 // failed fetch. It must be MORE than one: an entry is written when a poll produces a
@@ -778,10 +794,12 @@ module.exports = NodeHelper.create({
    *   reporting more than 32 entries, refuses an entry whose name contains a `..` segment
    *   or begins with `/` or a drive letter (zip-slip shape — the selected name is logged
    *   downstream and could otherwise be used to forge a log line), and refuses an entry
-   *   whose declared uncompressed size exceeds 8 MB (live samples are ~3 KB, so this is
-   *   three orders of magnitude of headroom and bounds a decompression bomb). Each refusal
-   *   throws with a message naming the reason, so the caller's per-candidate catch
-   *   (CR-02) logs it and moves on to the next candidate rather than losing the whole run.
+   *   whose declared uncompressed size is outside (0, 8 MB] — the upper bound because live
+   *   samples are ~3 KB, so it is three orders of magnitude of headroom, and the lower
+   *   bound because a declared size of zero is what switches adm-zip's inflation clamp
+   *   off (see the block comment at the size checks). Each refusal throws with a message
+   *   naming the reason, so the caller's per-candidate catch (CR-02) logs it and moves on
+   *   to the next candidate rather than losing the whole run.
    */
   extractSoleKmlEntry(buffer){
     const ZIPper = new ZIP(buffer);
@@ -796,29 +814,31 @@ module.exports = NodeHelper.create({
     if (name.includes("..") || name.startsWith("/") || /^[A-Za-z]:/.test(name)) {
       throw new Error(`KMZ downloaded has an unsafe entry name: ${JSON.stringify(name)}`);
     }
-    // WR-03: `entry.header.size` is the DECLARED uncompressed size from the ZIP header, a
-    // field a hostile archive sets independently of what its deflate stream actually
-    // inflates to. Checking it alone bounds only an honestly-declared bomb: declare
-    // `size: 100` on an entry that inflates to gigabytes and readFile below inflates it
-    // anyway. Three checks are needed, and the last one is the only unforgeable one:
-    //   1. the declared size, which refuses the honest case before any inflation;
-    //   2. the compression ratio, since a deflate bomb is by definition a tiny compressed
-    //      payload claiming (or producing) an enormous one — live KML compresses at well
-    //      under 20:1, so 200:1 is generous headroom and still catches the attack shape;
-    //   3. the length of the buffer that actually came out, which no header field can lie
-    //      about. adm-zip inflates into memory, so this is a bound on what is retained and
-    //      passed downstream rather than on peak allocation — the first two checks are what
-    //      keep the common cases from ever reaching it.
+    // `entry.header.size` is the DECLARED uncompressed size from the ZIP central
+    // directory, a field a hostile archive sets independently of what its deflate stream
+    // actually inflates to — but with adm-zip it is also the number the library clamps
+    // inflation to (`maxOutputLength`, see KMZ_MAX_KML_BYTES above), so bounding it bounds
+    // peak memory rather than merely bounding what is kept. Declaring a small size does
+    // not buy the attacker an unbounded inflation; it buys a refusal from zlib.
+    //
+    // With ONE exception, which is why the lower bound below exists rather than being
+    // tidiness: adm-zip applies `maxOutputLength` only when the declared size is greater
+    // than zero (methods/inflater.js), so an entry declaring ZERO bytes is inflated with
+    // no bound at all. That input passes an upper-bound check trivially, and it also
+    // passes any declared:compressed ratio test, since the ratio is zero. Measured against
+    // the installed adm-zip: a 199 KB archive — comfortably inside ADVISORY_MAX_BODY_BYTES
+    // — whose sole member declares 0 bytes inflated 200 MB into memory before adm-zip
+    // rejected it on a checksum, and at the full 8 MB body cap the same shape reaches
+    // gigabytes. On this project's target hardware (a Raspberry Pi) that is the process,
+    // and with it the whole mirror. A .kml member that declares no content is useless to
+    // us in any case: there is no KML to parse.
     const declared = entry.header && typeof entry.header.size === "number" ? entry.header.size : 0;
-    const compressed = entry.header && typeof entry.header.compressedSize === "number"
-      ? entry.header.compressedSize
-      : 0;
     if (declared > KMZ_MAX_KML_BYTES) {
       throw new Error(`KMZ downloaded has an oversized .kml entry: ${declared} bytes`);
     }
-    if (compressed > 0 && declared / compressed > KMZ_MAX_COMPRESSION_RATIO) {
-      throw new Error(`KMZ .kml entry has an implausible compression ratio ` +
-                      `(${declared}/${compressed} > ${KMZ_MAX_COMPRESSION_RATIO})`);
+    if (declared <= 0) {
+      throw new Error(`KMZ .kml entry declares ${declared} uncompressed bytes; refusing to ` +
+                      `inflate an entry whose declared size cannot bound the inflation`);
     }
 
     const buf = ZIPper.readFile(entry);

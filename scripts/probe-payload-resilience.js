@@ -2689,19 +2689,56 @@ const scenarios = [
         throw new Error(`an honestly-declared 16 MB .kml entry was accepted: ${oversizedErr && oversizedErr.message}`);
       }
 
-      // 2. Under the byte cap but bomb-shaped: 4 MB of one repeated byte compresses to a
-      //    few KB, a ratio near 1000:1. Pre-fix this passed the size check and was
-      //    inflated in full; the ratio check is what refuses it, and it refuses BEFORE
-      //    readFile allocates anything. Live KML compresses at well under 20:1, so this
-      //    cannot fire on a real WPC/SPC archive.
-      const ratioBomb = makeKmzBuffer({ "doc.kml": Buffer.alloc(4 * 1024 * 1024, 0x41).toString("latin1") });
-      let ratioErr = null;
-      try { helper.extractSoleKmlEntry(ratioBomb); } catch (err) { ratioErr = err; }
-      if (!ratioErr || !/implausible compression ratio/.test(ratioErr.message)) {
+      // 2. The one shape the declared size does NOT bound. adm-zip clamps inflation to the
+      //    declared uncompressed size (zlib's maxOutputLength) — but only when that size is
+      //    greater than zero, so an entry declaring ZERO inflates with no bound at all. The
+      //    fixture below is 200 KB on the wire, well inside ADVISORY_MAX_BODY_BYTES, and
+      //    inflates to 200 MB; adm-zip does eventually reject it on a checksum, but only
+      //    AFTER materialising all 200 MB, which on a Raspberry Pi is the whole process.
+      //    A ratio test does not see this either: the ratio of a zero declaration is zero.
+      //    Asserting the message is what proves the refusal came from the size check rather
+      //    than from adm-zip's post-inflation checksum — the difference between refusing
+      //    the bomb and detonating it first.
+      const zeroDeclared = Buffer.from(
+        makeKmzBuffer({ "doc.kml": Buffer.alloc(200 * 1024 * 1024, 0x41).toString("latin1") })
+      );
+      const zeroCd = zeroDeclared.indexOf(Buffer.from([0x50, 0x4b, 0x01, 0x02]));
+      if (zeroCd < 0) throw new Error("fixture is not a well-formed zip: no central directory header");
+      zeroDeclared.writeUInt32LE(0, zeroCd + 24);
+      let zeroErr = null;
+      try { helper.extractSoleKmlEntry(zeroDeclared); } catch (err) { zeroErr = err; }
+      if (!zeroErr || !/declares 0 uncompressed bytes/.test(zeroErr.message)) {
         throw new Error(
-          "a 4 MB entry inflating from a few KB — under the byte cap, ~1000:1 — was accepted: " +
-          `${ratioErr && ratioErr.message}. The byte cap alone does not bound a bomb.`
+          "a 200 KB archive declaring a 0-byte .kml member was not refused before inflation: " +
+          `${zeroErr && zeroErr.message}. A zero declaration switches adm-zip's maxOutputLength ` +
+          "clamp off, so the 200 MB it actually inflates to is allocated in full first."
         );
+      }
+
+      // 2b. The converse, and the reason no declared:compressed RATIO test belongs here:
+      //     the SPC ActiveMD.kmz index this same function parses is a run of near-identical
+      //     <NetworkLink> blocks and compresses far harder than the ~3 KB member polygons a
+      //     ratio threshold would be sized against. Refusing it would empty
+      //     spc-active-index's candidate list — every active MD gone for that poll, behind a
+      //     ⚠ badge, from upstream growth rather than an attack.
+      const bigIndex = kmzOf({
+        "activemd.kml": activeIndexKml(
+          Array.from({ length: 1000 }, (_, i) => `http://www.spc.noaa.gov/products/md/MD${2000 + i}.kmz`)
+        )
+      });
+      const RealZip = require("adm-zip");
+      const indexEntry = new RealZip(bigIndex).getEntries().find((e) => /\.kml$/i.test(e.entryName));
+      const indexRatio = indexEntry.header.size / indexEntry.header.compressedSize;
+      // Vacuity guard: if the fixture stops compressing hard, it stops standing for the
+      // shape a ratio threshold would misfire on and this assertion proves nothing.
+      if (!(indexRatio > 20)) {
+        throw new Error(
+          `the index fixture compresses at only ${indexRatio.toFixed(1)}:1, so it no longer represents ` +
+          "the high-ratio-but-legitimate archive this assertion exists to protect"
+        );
+      }
+      if (!helper.extractSoleKmlEntry(bigIndex).includes("NetworkLink")) {
+        throw new Error("a legitimate 1000-entry NetworkLink index did not round-trip");
       }
 
       // 3. A header that LIES: same deflate stream, central-directory uncompressed size
