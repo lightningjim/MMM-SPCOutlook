@@ -356,14 +356,27 @@ module.exports = NodeHelper.create({
       let failed = false;
       // Degenerate case: the live directory holds 1000+ entries. If WPC's listing format ever
       // changes, every timestamp becomes unparseable and the fail-open rule above would otherwise
-      // queue 1000+ KMZ fetches in one poll. Apache lists alphabetically, so the tail of document
-      // order is the highest-numbered entries — an explicitly degraded heuristic, not a selection
-      // rule — and the run is flagged stale so a truncated answer surfaces as ⚠, not as a
-      // confident list.
+      // queue 1000+ KMZ fetches in one poll. This is an explicitly degraded heuristic, not a
+      // selection rule, and the run is flagged stale so a truncated answer surfaces as ⚠ rather
+      // than as a confident list.
+      //
+      // WR-01: the tail of *document* order is not the newest. Apache sorts the listing as
+      // text, and MPD numbers run 1..1200+ within a season, so across a digit-count boundary
+      // "MPD_999_final.kmz" sorts AFTER "MPD_1200_final.kmz" — the old `slice(-N)` on document
+      // order therefore fetched the 60 LOWEST-numbered files, the oldest MPDs of the season,
+      // and never the currently active ones, in the exact scenario this branch exists for.
+      // Sorting numerically on the captured filename number first makes the tail mean what the
+      // comment always claimed. A filename that somehow reaches here without a parseable number
+      // sorts to -1, i.e. is dropped first.
       if (urls.length > ADVISORY_MAX_CANDIDATES) {
         Log.error(`MMM-SPCOutlook ${row.id}: listing format not understood, ${urls.length} ` +
-                  `candidates survived the pre-filter; truncating to the last ${ADVISORY_MAX_CANDIDATES}`);
-        urls = urls.slice(-ADVISORY_MAX_CANDIDATES);
+                  `candidates survived the pre-filter; truncating to the ${ADVISORY_MAX_CANDIDATES} ` +
+                  `highest-numbered`);
+        const numberOf = (u) => {
+          const m = MPD_FILENAME_PATTERN.exec(u.split("/").pop());
+          return m ? Number(m[1]) : -1;
+        };
+        urls = urls.sort((a, b) => numberOf(a) - numberOf(b)).slice(-ADVISORY_MAX_CANDIDATES);
         failed = true;
       }
 
@@ -406,6 +419,11 @@ module.exports = NodeHelper.create({
     // there is no cap on the advisory band, so every candidate that is fetched, contains the
     // location and is still valid is returned below.
     let candidates = urls;
+    // WR-01: this generic cap keeps the HEAD of whatever order the discovery strategy
+    // returned, which is only defensible because each strategy is responsible for handing
+    // back a meaningfully ordered list — `wpc-mpd-listing` now sorts numerically and
+    // truncates to ADVISORY_MAX_CANDIDATES itself, so for mpd this slice is a no-op rather
+    // than a second, contradictory heuristic. A future strategy must do the same.
     if (candidates.length > ADVISORY_MAX_CANDIDATES) {
       Log.error(`MMM-SPCOutlook ${row.id}: ${candidates.length} candidates exceeds the ` +
                 `${ADVISORY_MAX_CANDIDATES}-candidate cap; truncating`);

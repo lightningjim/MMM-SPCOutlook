@@ -2486,6 +2486,43 @@ const scenarios = [
         );
       }
     }
+  },
+  {
+    // WR-01: the degraded-truncation branch justified `slice(-N)` with "Apache lists
+    // alphabetically, so the tail of document order is the highest-numbered entries". That
+    // is false across a digit-count boundary, which is the directory's normal state — text
+    // order puts MPD_999 after MPD_1200. So in the exact scenario the branch exists for
+    // (listing format changed, every timestamp unparseable, 1000+ candidates admitted
+    // fail-open) it fetched the OLDEST MPDs of the season and never the active ones. The
+    // fixture below is that listing: alphabetically sorted, timestamp column absent.
+    name: "mpd-listing-truncation-keeps-the-newest-not-the-alphabetical-tail",
+    run: async (helper) => {
+      resetHelper(helper);
+      resetLogs();
+      const filenames = [];
+      for (let n = 1; n <= 1200; n++) filenames.push(`MPD_${n}_final.kmz`);
+      filenames.sort();
+      const html = "<html><body>" +
+        filenames.map((f) => `<a href="${f}">${f}</a>`).join("\n") +
+        "</body></html>";
+      installHttp(helper, [[PRODUCT_REGISTRY.mpd.discoveryUrl, () => httpResponse({ text: html })]]);
+      const result = await helper._advisoryDiscovery["wpc-mpd-listing"].call(helper, PRODUCT_REGISTRY.mpd);
+      if (result.urls.length !== 60) {
+        throw new Error(`expected truncation to the 60-candidate cap, got ${result.urls.length}`);
+      }
+      if (result.failed !== true) {
+        throw new Error("a truncated candidate list was not flagged, so the ⚠ never reaches the user");
+      }
+      const numbers = result.urls.map((u) => Number(/MPD_(\d+)_final\.kmz$/.exec(u)[1]));
+      const lowest = Math.min(...numbers);
+      if (lowest !== 1141) {
+        throw new Error(
+          `truncation kept the wrong end of the list: lowest kept number is ${lowest}, expected 1141 ` +
+          `(the 60 highest of 1..1200). Alphabetical document order yields 9..999 — the oldest ` +
+          `MPDs of the season, none of them currently active.`
+        );
+      }
+    }
   }
 ];
 
