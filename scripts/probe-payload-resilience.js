@@ -460,6 +460,60 @@ function advisoryRoutes({ index, members = [], listing } = {}) {
   return routes;
 }
 
+// ---------------------------------------------------------------------
+// MPD-specific fixture helpers (plan 15-09)
+//
+// Fixture times are computed relative to Date.now() rather than hardcoded absolute
+// dates, so the suite does not start failing on a future run date.
+// ---------------------------------------------------------------------
+
+function pad2(n) {
+  return String(n).padStart(2, "0");
+}
+
+const MPD_MONTH_ABBRS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const MPD_DOW_ABBRS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const MPD_TZ_OFFSET_HOURS = { EST: -5, EDT: -4, CST: -6, CDT: -5, MST: -7, MDT: -6, PST: -8, PDT: -7 };
+
+// Derives a live-shaped { issueTimeStr, validEndTi } pair whose ValidEndTi resolves —
+// through node_helper.js's own parseMpdValidEnd — to validEndUtcMs, with an IssueTime
+// issueBeforeMs earlier. Mirrors parseMpdValidEnd's read contract (IssueTime carries the
+// tz/month/day/year, ValidEndTi carries a bare day/hour/minute resolved against it)
+// without duplicating that parser's logic here, so a fixture and the code under test can
+// never silently drift apart.
+function mpdWindowFields(validEndUtcMs, { issueBeforeMs = 3 * 60 * 60 * 1000, tz = "EDT" } = {}) {
+  const offset = MPD_TZ_OFFSET_HOURS[tz];
+  const toLocal = (utcMs) => new Date(utcMs + offset * 60 * 60 * 1000);
+  const validLocal = toLocal(validEndUtcMs);
+  const issueLocal = toLocal(validEndUtcMs - issueBeforeMs);
+
+  const validEndTi = pad2(validLocal.getUTCDate()) + pad2(validLocal.getUTCHours()) + pad2(validLocal.getUTCMinutes());
+
+  let hour12 = issueLocal.getUTCHours() % 12;
+  if (hour12 === 0) hour12 = 12;
+  const ampm = issueLocal.getUTCHours() < 12 ? "AM" : "PM";
+  const issueTimeStr =
+    `${hour12}${pad2(issueLocal.getUTCMinutes())} ${ampm} ${tz} ${MPD_DOW_ABBRS[issueLocal.getUTCDay()]} ` +
+    `${MPD_MONTH_ABBRS[issueLocal.getUTCMonth()]} ${issueLocal.getUTCDate()} ${issueLocal.getUTCFullYear()}`;
+
+  return { issueTimeStr, validEndTi };
+}
+
+// WPC's Apache "Index of /kml/mpd/" listing shape: one <a href="MPD_<n>_final.kmz">...</a>
+// per entry, followed by its Last-Modified column — the exact shape wpc-mpd-listing's
+// ANCHOR_RE parses. `lastModified` is a Date; omit it on an entry to exercise the
+// fail-open "no timestamp" branch (never used by this plan's scenarios, but kept general).
+function mpdListingHtml(entries) {
+  const rows = entries.map(({ filename, lastModified }) => {
+    const ts = lastModified
+      ? `${lastModified.getUTCFullYear()}-${pad2(lastModified.getUTCMonth() + 1)}-${pad2(lastModified.getUTCDate())} ` +
+        `${pad2(lastModified.getUTCHours())}:${pad2(lastModified.getUTCMinutes())}`
+      : "";
+    return `<a href="${filename}">${filename}</a>             ${ts}`;
+  });
+  return `<html><head><title>Index of /kml/mpd/</title></head><body><h1>Index of /kml/mpd/</h1><pre>\n${rows.join("\n")}\n</pre></body></html>\n`;
+}
+
 // A payload shape in which every day/fireWeather/ERO/winterImpact value is the
 // no-risk/none default and `_stale` is absent, parameterised only by `advisories` — used
 // by frontend-advisory-only-is-not-an-all-clear to isolate the advisory term of the
@@ -1815,6 +1869,373 @@ const scenarios = [
       const controlRendered = renderDom(frontend, { config, spcrisk: noAdvisory });
       if (controlRendered !== "No Severe Weather Risk") {
         throw new Error(`control: a genuine all-clear with no advisories no longer renders the plain no-risk line, it rendered: ${controlRendered}`);
+      }
+    }
+  },
+  {
+    // MPD-04, the phase's headline requirement and this plan's critical-context note:
+    // WPC's live listing sorts alphabetically, so a prior-year straggler with a HIGHER
+    // number (MPD_1281) can sort after the current season's files (MPD_1118, MPD_1119) —
+    // live-reproduced on 2026-08-24, where MPD_1281_final.kmz sorted after MPD_1120. A
+    // "highest number wins" selection would pick the stale one. All three listing entries
+    // below carry FRESH Last-Modified timestamps, deliberately: they neutralise the 48h
+    // pre-filter so only node_helper.js's per-candidate ValidEndTi gate can be what rejects
+    // MPD_1281 — if the fixture instead gave MPD_1281 a stale listing timestamp, the
+    // pre-filter alone would reject it and this scenario would prove nothing about the
+    // authoritative gate (mutation 2 exists to catch exactly that vacuity trap).
+    name: "mpd-year-boundary-does-not-select-stale-highest-number",
+    requires: "kml-deps",
+    run: async (helper) => {
+      resetHelper(helper);
+      resetLogs();
+      helper._products = { showSPCMD: false, showMPD: true, showExcessiveRain: false, showWinterImpact: false };
+      const now = Date.now();
+      const stale = mpdWindowFields(now - 48 * 60 * 60 * 1000, { issueBeforeMs: 3 * 60 * 60 * 1000 });
+      const activeLow = mpdWindowFields(now + 3 * 60 * 60 * 1000, { issueBeforeMs: 60 * 60 * 1000 });
+      const activeHigh = mpdWindowFields(now + 4 * 60 * 60 * 1000, { issueBeforeMs: 30 * 60 * 1000 });
+      // Fresh for ALL three candidates — see the comment above.
+      const freshListingTime = new Date(now - 30 * 60 * 1000);
+
+      const listingText = mpdListingHtml([
+        { filename: "MPD_1281_final.kmz", lastModified: freshListingTime },
+        { filename: "MPD_1118_final.kmz", lastModified: freshListingTime },
+        { filename: "MPD_1119_final.kmz", lastModified: freshListingTime }
+      ]);
+      const staleUrl = "https://www.wpc.ncep.noaa.gov/kml/mpd/MPD_1281_final.kmz";
+      const lowUrl = "https://www.wpc.ncep.noaa.gov/kml/mpd/MPD_1118_final.kmz";
+      const highUrl = "https://www.wpc.ncep.noaa.gov/kml/mpd/MPD_1119_final.kmz";
+      const staleBuffer = kmzOf({
+        "doc.kml": mpdKml({
+          number: "1281", issueTime: stale.issueTimeStr, validEndTi: stale.validEndTi,
+          hazardType: "Heavy rainfall, Flash flooding possible"
+        })
+      });
+      const lowBuffer = kmzOf({
+        "doc.kml": mpdKml({
+          number: "1118", issueTime: activeLow.issueTimeStr, validEndTi: activeLow.validEndTi,
+          hazardType: "Heavy rainfall, Flash flooding possible"
+        })
+      });
+      const highBuffer = kmzOf({
+        "doc.kml": mpdKml({
+          number: "1119", issueTime: activeHigh.issueTimeStr, validEndTi: activeHigh.validEndTi,
+          hazardType: "Heavy snow"
+        })
+      });
+
+      installHttp(helper, advisoryRoutes({
+        listing: { url: PRODUCT_REGISTRY.mpd.discoveryUrl, text: listingText },
+        members: [
+          { url: staleUrl, buffer: staleBuffer },
+          { url: lowUrl, buffer: lowBuffer },
+          { url: highUrl, buffer: highBuffer }
+        ]
+      }));
+
+      const originalPointInPolygon = turfStub.pointInPolygon;
+      turfStub.pointInPolygon = () => true;
+      let out;
+      try {
+        out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, {
+          showSPCMD: false, showMPD: true, showExcessiveRain: false, showWinterImpact: false
+        });
+      } finally {
+        turfStub.pointInPolygon = originalPointInPolygon;
+      }
+      assertPayloadIntact(out);
+      if (out.advisories.mpd.length !== 2) {
+        throw new Error(
+          `MPD-04: expected 2 active MPDs (1118, 1119) after the stale MPD_1281 was rejected, ` +
+          `got ${out.advisories.mpd.length}: ${JSON.stringify(out.advisories.mpd)}`
+        );
+      }
+      if (out.advisories.mpd.some((e) => e.label.includes("1281"))) {
+        throw new Error(
+          `MPD-04 regression: the stale highest-numbered MPD_1281 (expired ValidEndTi, ` +
+          `fresh Last-Modified) was selected: ${JSON.stringify(out.advisories.mpd)}`
+        );
+      }
+      if (!out.advisories.mpd.some((e) => e.label.includes("1118")) ||
+          !out.advisories.mpd.some((e) => e.label.includes("1119"))) {
+        throw new Error(`MPD-04: expected both 1118 and 1119 present, got ${JSON.stringify(out.advisories.mpd)}`);
+      }
+    }
+  },
+  {
+    // MPD-02: "all concurrently active" MPDs must be returned, not just one. An assertion
+    // of `>= 1` would pass against a most-recent-only implementation, so this asserts the
+    // exact length. Also renders through the real getDom so MPD-02 is proven at the
+    // display layer, not only in the payload — a display-layer regression (e.g. a cap
+    // added inside the render loop) would not be caught by the payload assertion alone.
+    name: "mpd-multiple-concurrent-all-shown",
+    requires: "kml-deps",
+    run: async (helper) => {
+      resetHelper(helper);
+      resetLogs();
+      helper._products = { showSPCMD: false, showMPD: true, showExcessiveRain: false, showWinterImpact: false };
+      const now = Date.now();
+      const first = mpdWindowFields(now + 2 * 60 * 60 * 1000, { issueBeforeMs: 45 * 60 * 1000 });
+      const second = mpdWindowFields(now + 5 * 60 * 60 * 1000, { issueBeforeMs: 90 * 60 * 1000 });
+      const listingTime = new Date(now - 20 * 60 * 1000);
+
+      const listingText = mpdListingHtml([
+        { filename: "MPD_2201_final.kmz", lastModified: listingTime },
+        { filename: "MPD_2202_final.kmz", lastModified: listingTime }
+      ]);
+      const url1 = "https://www.wpc.ncep.noaa.gov/kml/mpd/MPD_2201_final.kmz";
+      const url2 = "https://www.wpc.ncep.noaa.gov/kml/mpd/MPD_2202_final.kmz";
+      const buf1 = kmzOf({
+        "doc.kml": mpdKml({
+          number: "2201", issueTime: first.issueTimeStr, validEndTi: first.validEndTi,
+          hazardType: "Heavy rainfall, Flash flooding possible"
+        })
+      });
+      const buf2 = kmzOf({
+        "doc.kml": mpdKml({
+          number: "2202", issueTime: second.issueTimeStr, validEndTi: second.validEndTi,
+          hazardType: "Excessive snowfall rates"
+        })
+      });
+
+      installHttp(helper, advisoryRoutes({
+        listing: { url: PRODUCT_REGISTRY.mpd.discoveryUrl, text: listingText },
+        members: [
+          { url: url1, buffer: buf1 },
+          { url: url2, buffer: buf2 }
+        ]
+      }));
+
+      const originalPointInPolygon = turfStub.pointInPolygon;
+      turfStub.pointInPolygon = () => true;
+      let out;
+      try {
+        out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, {
+          showSPCMD: false, showMPD: true, showExcessiveRain: false, showWinterImpact: false
+        });
+      } finally {
+        turfStub.pointInPolygon = originalPointInPolygon;
+      }
+      assertPayloadIntact(out);
+      if (out.advisories.mpd.length !== 2) {
+        throw new Error(
+          `MPD-02: "all concurrently active" requires both MPDs, got length ` +
+          `${out.advisories.mpd.length}: ${JSON.stringify(out.advisories.mpd)}`
+        );
+      }
+
+      const frontend = loadFrontendModule();
+      const config = {
+        lat: PROBE_LAT, lon: PROBE_LON, extended: false, updateInterval: 60,
+        proximityWeighting: false, showExcessiveRain: false, showWinterImpact: false, showMPD: true
+      };
+      const rendered = renderDom(frontend, { config, spcrisk: out });
+      if (!rendered.includes("WPC MPD 2201") || !rendered.includes("WPC MPD 2202")) {
+        throw new Error(`MPD-02: expected both MPD labels rendered at the display layer, got: ${rendered}`);
+      }
+    }
+  },
+  {
+    // MPD-03 / RESEARCH.md Pitfall 3: the hazard type must be read out of the description
+    // CDATA through togeojson's object-wrapped shape. If node_helper.js instead reads
+    // feature.properties.description as a plain string, mpdDescriptionHtml's typeof guard
+    // returns null for every MPD, and hazardType is null here even though the fixture
+    // structurally carries MPDType — a 100% parse-miss rate rather than a legitimate
+    // absent field, exactly the failure this scenario is built to catch.
+    name: "mpd-hazard-type-extracted-from-description",
+    requires: "kml-deps",
+    run: async (helper) => {
+      resetHelper(helper);
+      resetLogs();
+      helper._products = { showSPCMD: false, showMPD: true, showExcessiveRain: false, showWinterImpact: false };
+      const now = Date.now();
+      const window = mpdWindowFields(now + 3 * 60 * 60 * 1000, { issueBeforeMs: 45 * 60 * 1000 });
+      const hazardType = "Heavy rainfall, Flash flooding possible";
+      const listingText = mpdListingHtml([
+        { filename: "MPD_1305_final.kmz", lastModified: new Date(now - 15 * 60 * 1000) }
+      ]);
+      const url = "https://www.wpc.ncep.noaa.gov/kml/mpd/MPD_1305_final.kmz";
+      const buffer = kmzOf({
+        "doc.kml": mpdKml({
+          number: "1305", issueTime: window.issueTimeStr, validEndTi: window.validEndTi, hazardType
+        })
+      });
+
+      installHttp(helper, advisoryRoutes({
+        listing: { url: PRODUCT_REGISTRY.mpd.discoveryUrl, text: listingText },
+        members: [{ url, buffer }]
+      }));
+
+      const originalPointInPolygon = turfStub.pointInPolygon;
+      turfStub.pointInPolygon = () => true;
+      let out;
+      try {
+        out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, {
+          showSPCMD: false, showMPD: true, showExcessiveRain: false, showWinterImpact: false
+        });
+      } finally {
+        turfStub.pointInPolygon = originalPointInPolygon;
+      }
+      assertPayloadIntact(out);
+      if (out.advisories.mpd.length !== 1) {
+        throw new Error(`expected exactly 1 MPD entry, got ${out.advisories.mpd.length}`);
+      }
+      if (out.advisories.mpd[0].hazardType !== hazardType) {
+        throw new Error(
+          `MPD-03 / Pitfall 3: expected hazardType ${JSON.stringify(hazardType)}, got ` +
+          `${JSON.stringify(out.advisories.mpd[0].hazardType)} — check mpdDescriptionHtml's ` +
+          "object-unwrap of togeojson's description shape"
+        );
+      }
+
+      const frontend = loadFrontendModule();
+      const config = {
+        lat: PROBE_LAT, lon: PROBE_LON, extended: false, updateInterval: 60,
+        proximityWeighting: false, showExcessiveRain: false, showWinterImpact: false, showMPD: true
+      };
+      const rendered = renderDom(frontend, { config, spcrisk: out });
+      if (!rendered.includes(hazardType)) {
+        throw new Error(`MPD-03: expected the hazard type rendered at the display layer, got: ${rendered}`);
+      }
+    }
+  },
+  {
+    // D-06: an MPD with no parseable MPDType must still render — dropping it would repeat
+    // the false-negative class WR-06 already fixed for SPC MD's "covers the location but
+    // carries no name" case, and the user is inside an active precipitation discussion.
+    // The fixture omits the MPDType row entirely (a genuine absent field, not an empty
+    // cell), asserts the rendered row carries no " — " hazard-type suffix, and proves the
+    // parse-miss diagnostic naming the candidate URL was actually logged.
+    name: "mpd-missing-hazard-type-renders-without-it-logs-miss",
+    requires: "kml-deps",
+    run: async (helper) => {
+      resetHelper(helper);
+      resetLogs();
+      helper._products = { showSPCMD: false, showMPD: true, showExcessiveRain: false, showWinterImpact: false };
+      const now = Date.now();
+      const window = mpdWindowFields(now + 3 * 60 * 60 * 1000, { issueBeforeMs: 45 * 60 * 1000 });
+      const listingText = mpdListingHtml([
+        { filename: "MPD_1409_final.kmz", lastModified: new Date(now - 15 * 60 * 1000) }
+      ]);
+      const url = "https://www.wpc.ncep.noaa.gov/kml/mpd/MPD_1409_final.kmz";
+      const buffer = kmzOf({
+        "doc.kml": mpdKml({
+          number: "1409", issueTime: window.issueTimeStr, validEndTi: window.validEndTi, hazardType: null
+        })
+      });
+
+      installHttp(helper, advisoryRoutes({
+        listing: { url: PRODUCT_REGISTRY.mpd.discoveryUrl, text: listingText },
+        members: [{ url, buffer }]
+      }));
+
+      const originalPointInPolygon = turfStub.pointInPolygon;
+      turfStub.pointInPolygon = () => true;
+      let out;
+      try {
+        out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, {
+          showSPCMD: false, showMPD: true, showExcessiveRain: false, showWinterImpact: false
+        });
+      } finally {
+        turfStub.pointInPolygon = originalPointInPolygon;
+      }
+      assertPayloadIntact(out);
+      if (out.advisories.mpd.length !== 1) {
+        throw new Error(`expected exactly 1 MPD entry, got ${out.advisories.mpd.length}`);
+      }
+      if (out.advisories.mpd[0].hazardType !== null) {
+        throw new Error(
+          `D-06: expected hazardType null for an MPD with no MPDType row, got ` +
+          `${JSON.stringify(out.advisories.mpd[0].hazardType)}`
+        );
+      }
+
+      const frontend = loadFrontendModule();
+      const config = {
+        lat: PROBE_LAT, lon: PROBE_LON, extended: false, updateInterval: 60,
+        proximityWeighting: false, showExcessiveRain: false, showWinterImpact: false, showMPD: true
+      };
+      const rendered = renderDom(frontend, { config, spcrisk: out });
+      if (!rendered.includes("WPC MPD 1409 in effect.")) {
+        throw new Error(`D-06: expected "WPC MPD 1409 in effect." with no hazard-type suffix, got: ${rendered}`);
+      }
+      if (rendered.includes("WPC MPD 1409 — ")) {
+        throw new Error(`D-06: rendered row carries an em-dash hazard-type suffix it should not have: ${rendered}`);
+      }
+      requireLog(
+        ["mpd covers the location but has no parseable hazard type", url],
+        "D-06: no parse-miss diagnostic named the candidate URL for a covering MPD with no hazard type"
+      );
+    }
+  },
+  {
+    // D-04's two halves for the MPD advisory path specifically: a broken feed must show
+    // ⚠, and a clean run that legitimately finds nothing active must not. Run twice in one
+    // scenario so both halves share the same setup shape and only the one variable
+    // (whether the listing fetch succeeds) differs between them.
+    name: "mpd-fetch-failure-is-stale-but-zero-results-is-not",
+    requires: "kml-deps",
+    run: async (helper) => {
+      // First half: the listing fetch itself fails (503, installHttp's default for an
+      // unrouted URL) — a broken feed must never present as a confident "none active".
+      resetHelper(helper);
+      resetLogs();
+      helper._products = { showSPCMD: false, showMPD: true, showExcessiveRain: false, showWinterImpact: false };
+      installHttp(helper, advisoryRoutes({}));
+      let failureOut;
+      try {
+        failureOut = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, {
+          showSPCMD: false, showMPD: true, showExcessiveRain: false, showWinterImpact: false
+        });
+      } finally {
+        // no pointInPolygon override needed: the listing fetch fails before any candidate
+        // is ever fetched or checked for containment.
+      }
+      assertPayloadIntact(failureOut);
+      if (failureOut._stale !== true) {
+        throw new Error(
+          `D-04: a failed MPD listing fetch (503) did not set _stale — a broken feed must ` +
+          `show ⚠ rather than a confident "none active". Payload: ${JSON.stringify(failureOut.advisories)}`
+        );
+      }
+      if (!Array.isArray(failureOut.advisories.mpd) || failureOut.advisories.mpd.length !== 0) {
+        throw new Error(`D-04: expected an empty mpd array on a failed listing fetch, got ${JSON.stringify(failureOut.advisories.mpd)}`);
+      }
+
+      // Second half: the listing parses cleanly, one candidate is fetched and is currently
+      // valid, but pointInPolygon is left at its default false — nothing contains the
+      // user. This is the normal state most of the year and must NOT be flagged stale.
+      resetHelper(helper);
+      resetLogs();
+      helper._products = { showSPCMD: false, showMPD: true, showExcessiveRain: false, showWinterImpact: false };
+      const now = Date.now();
+      const window = mpdWindowFields(now + 3 * 60 * 60 * 1000, { issueBeforeMs: 45 * 60 * 1000 });
+      const listingText = mpdListingHtml([
+        { filename: "MPD_1512_final.kmz", lastModified: new Date(now - 15 * 60 * 1000) }
+      ]);
+      const url = "https://www.wpc.ncep.noaa.gov/kml/mpd/MPD_1512_final.kmz";
+      const buffer = kmzOf({
+        "doc.kml": mpdKml({
+          number: "1512", issueTime: window.issueTimeStr, validEndTi: window.validEndTi,
+          hazardType: "Heavy snow"
+        })
+      });
+      installHttp(helper, advisoryRoutes({
+        listing: { url: PRODUCT_REGISTRY.mpd.discoveryUrl, text: listingText },
+        members: [{ url, buffer }]
+      }));
+      // turfStub.pointInPolygon defaults to () => false — deliberately not overridden here.
+      const cleanOut = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, {
+        showSPCMD: false, showMPD: true, showExcessiveRain: false, showWinterImpact: false
+      });
+      assertPayloadIntact(cleanOut);
+      if (!Array.isArray(cleanOut.advisories.mpd) || cleanOut.advisories.mpd.length !== 0) {
+        throw new Error(`D-04: expected an empty mpd array when nothing contains the user, got ${JSON.stringify(cleanOut.advisories.mpd)}`);
+      }
+      if (cleanOut._stale === true) {
+        throw new Error(
+          "D-04: a clean run that legitimately found zero active MPDs was flagged _stale — " +
+          "\"none active\" is the normal state most of the year and must not read as a degrade."
+        );
       }
     }
   }
