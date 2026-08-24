@@ -3,7 +3,7 @@ phase: 15-wpc-winter-storm-severity-mesoscale-precipitation-discussion
 plan: 09
 subsystem: probe-harness
 tags: [testing, mpd, wssi, mutation-testing, offline-verification, d-10, checkpoint]
-status: paused
+status: complete
 
 # Dependency graph
 requires:
@@ -34,25 +34,26 @@ key-files:
 key-decisions:
   - "Mutation 1 (highest-filename-number selection) was applied at the _runKmlAdvisoryRow candidate-selection level rather than by editing _prepareMpdEntry's internals, since the plan's anti-pattern (\"select candidates by sorting filenames numerically and taking the highest\") is a selection strategy, not a currency-check rewrite; this also, as a side effect, bypassed _prepareMpdEntry's D-06 log line and put mpd-missing-hazard-type-renders-without-it-logs-miss into an unanticipated third RED — recorded honestly below rather than treated as a third predicted target."
   - "Mutation 5 produced zero RED scenarios against the five delivered mpd-* scenarios, exactly as the plan's contingency anticipated. Added the sixth scenario mpd-unparseable-validity-is-kept-not-dropped (an MPD whose IssueTime carries AKST, a real US timezone abbreviation absent from parseMpdValidEnd's fixed CONUS table) and re-ran mutation 5 against it, confirming RED."
-  - "Live MPD reconnaissance (read-only HTTPS GET against WPC's own listing and MPD_latest.kmz) was performed directly, since it requires no destructive or config-mutating action and de-risks the human checkpoint. Deciding whether the live MPD covers the operator's actual deployed lat/lon and confirming the physical display, however, requires the human — that part of Task 3 could not be completed from this worktree and the plan is paused at that checkpoint."
+  - "Live MPD reconnaissance (read-only HTTPS GET against WPC's own listing and MPD_latest.kmz) was performed directly, since it requires no destructive or config-mutating action and de-risks the human checkpoint. Deciding whether the live MPD covers the operator's actual deployed lat/lon and confirming the physical display, however, requires the human — that part of Task 3 could not be completed from this worktree and the plan was paused at that checkpoint."
+  - "Task 3's checkpoint was resolved by the human: lat/lon was temporarily set to 36.17/-115.14 (Las Vegas NV, inside MPD_1122's live polygon, confirmed by an independent point-in-polygon test), MagicMirror restarted, the row visually confirmed, and the coordinate restored afterward. Live confirmation covers the 15-07 socket migration end-to-end, MPD-03's hazard-type extraction, and D-05's single advisory band. It does NOT cover MPD-01's no-risk gate or MPD-02's concurrent-MPD rendering, since only one MPD covered the test point and other risk was on screen — both remain fixture-verified only, recorded honestly below rather than claimed as live-proven."
 
 requirements-completed: [MPD-02, MPD-03, MPD-04]
 
 # Metrics
-duration: ~50min (Tasks 1-2; Task 3 paused awaiting human)
+duration: ~50min (Tasks 1-2, offline structural work) + Task 3 resumed and completed 2026-08-24 via live human verification
 completed: 2026-08-24
 ---
 
 # Phase 15 Plan 09: MPD Scenario Family, Phase-Wide Mutation Inventory, and Live Verification Checkpoint Summary
 
-**Six `mpd-*` probe scenarios drive WPC's real Apache-listing discovery, per-candidate `ValidEndTi` validity gate, and description-CDATA hazard-type/number parsing end to end — proving MPD-04's headline requirement (a stale, higher-numbered `MPD_1281` cannot beat two genuinely current MPDs even when every listing timestamp is fresh), MPD-02's "all concurrently active" contract, MPD-03's togeojson-object hazard-type unwrap, D-06's never-drop-for-missing-hazard-type behavior, D-04's stale/not-stale distinction, and the fail-open no-false-negatives guarantee on an unparseable validity window — closing the suite at 32 scenarios, all mutation-proven, and pausing at Task 3's live-MPD human checkpoint with reconnaissance already gathered.**
+**Six `mpd-*` probe scenarios drive WPC's real Apache-listing discovery, per-candidate `ValidEndTi` validity gate, and description-CDATA hazard-type/number parsing end to end — proving MPD-04's headline requirement (a stale, higher-numbered `MPD_1281` cannot beat two genuinely current MPDs even when every listing timestamp is fresh), MPD-02's "all concurrently active" contract, MPD-03's togeojson-object hazard-type unwrap, D-06's never-drop-for-missing-hazard-type behavior, D-04's stale/not-stale distinction, and the fail-open no-false-negatives guarantee on an unparseable validity window — closing the suite at 32 scenarios, all mutation-proven — and Task 3's live-MPD human checkpoint is now resolved: the human verified `WPC MPD 1122 — Heavy rainfall, Flash flooding likely` rendering on the physical MagicMirror display against a live, independently-parsed WPC KMZ.**
 
 ## Performance
 
-- **Duration:** ~50 min for Tasks 1-2 (structural work, committed); Task 3 paused
+- **Duration:** ~50 min for Tasks 1-2 (structural work, committed); Task 3 paused, then resumed and completed 2026-08-24 upon human live verification
 - **Started:** 2026-08-24 (worktree base `aeffd82`, corrected from a stale start per the `worktree_branch_check` protocol)
-- **Completed:** Tasks 1-2 complete; Task 3 (live MPD checkpoint) paused awaiting the human
-- **Tasks:** 2/3 completed, 1 paused at a `checkpoint:human-verify` gate
+- **Completed:** All three tasks complete — Task 3's `checkpoint:human-verify` gate was approved by the human 2026-08-24 ~20:12Z
+- **Tasks:** 3/3 completed
 - **Files modified:** 1 (`scripts/probe-payload-resilience.js`)
 
 ## Accomplishments
@@ -67,7 +68,7 @@ completed: 2026-08-24
 
 1. **Task 1: Add the mpd-* scenario family** - `a982da2` (feat)
 2. **Task 2: Mutation-prove the MPD scenarios and record the phase scenario inventory** - `0fd5889` (test — the sixth scenario `mpd-unparseable-validity-is-kept-not-dropped`, a permanent addition closing mutation 5's coverage gap; the five mutation-apply/revert cycles themselves left no residual diff, confirmed by `git diff --exit-code`)
-3. **Task 3: Live MPD verification and deferred in-season WSSI record** - PAUSED at the `checkpoint:human-verify` gate (see below)
+3. **Task 3: Live MPD verification and deferred in-season WSSI record** - COMPLETE, record-only (no code changes); human live-verified against MPD_1122 on the physical display, approved 2026-08-24 (see below)
 
 ## Files Created/Modified
 
@@ -119,18 +120,44 @@ Per the plan's explicit instruction ("Do the structural/fixture work FIRST and g
 - `GET https://www.wpc.ncep.noaa.gov/kml/mpd/` (live at check time, 2026-08-24 ~13:00 UTC) confirms the exact live shape the critical-context note describes: `MPD_1281_final.kmz` (Last-Modified `2026-01-23 16:07`, a January straggler) sorts alphabetically **after** `MPD_1120_final.kmz` (Last-Modified `2026-08-24 11:03`, the current season). A "highest number wins" implementation would pick the stale one today, live-reproducing this plan's fixture design.
 - `GET https://www.wpc.ncep.noaa.gov/kml/mpd/MPD_latest.kmz` returned `content-length: 3152`, `last-modified: Mon, 24 Aug 2026 11:03:12 GMT` — matching `MPD_1120`. Its `doc.kml` decodes to: `IssueTime` "700 AM EDT Mon Aug 24 2026", `ValidEndTi` "241700" (resolves to 2026-08-24T21:00:00Z), `MPDNumber` 1120, `MPDType` "Heavy rainfall, Flash flooding possible", `WFO` "JAN, LZK, MEG, TSA" (Jackson MS / Little Rock AR / Memphis TN / Tulsa OK), polygon roughly spanning lon -90.6 to -93.4, lat 33.3 to 36.5 (Arkansas / northern Mississippi / western Tennessee / eastern Oklahoma border area). As of this check, MPD_1120 is genuinely active with roughly 8 hours remaining in its validity window.
 
-**What could not be completed from this worktree:** confirming whether MPD_1120 (or any concurrently active MPD) covers the operator's *actual deployed* `lat`/`lon` — that value lives in the runtime `config.js` on the physical MagicMirror/Raspberry Pi, not in this repository — and visually confirming the rendered `WPC MPD 1120 — Heavy rainfall, Flash flooding possible in effect.` row on the physical display both require the human. `MMM-SPCOutlook.js`'s own shipped default (`lat: 35.22, lon: -97.44`, Norman OK) is well outside this polygon's longitude range, but that default is not evidence about the operator's real configured location.
+**What could not be completed from this worktree at the time of the previous pause:** confirming whether MPD_1120 (or any concurrently active MPD) covers the operator's *actual deployed* `lat`/`lon` — that value lives in the runtime `config.js` on the physical MagicMirror/Raspberry Pi, not in this repository — and visually confirming the rendered row on the physical display both require the human.
 
-**This plan is PAUSED at Task 3's `checkpoint:human-verify` gate**, per the plan's own instruction. There IS an active MPD right now — the checkpoint cannot be pre-answered as "no active MPD" on the operator's behalf. The reconnaissance above is handed off so the operator's own verification (steps 2-6 of the plan's `<how-to-verify>`) can proceed directly to setting `lat`/`lon` inside `MPD_1120`'s polygon (e.g. `lat: 35.0, lon: -91.5`), restarting MagicMirror, and confirming the rendered row, rather than first having to rediscover whether anything is active.
+### Human live verification (Task 3, resolved)
 
-### Awaiting
+The human performed the live check and **approved** it. By the time verification occurred, `MPD_1120` (the MPD found during the earlier read-only reconnaissance above) had expired; a different MPD, `MPD_1122`, was active and used instead — WPC issues these on a rolling few-hour cadence, so this is expected drift between reconnaissance time and verification time, not a discrepancy.
 
-Reply with one of:
-- **`approved`** (optionally noting what was seen) — after confirming the `WPC MPD 1120 — Heavy rainfall, Flash flooding possible in effect.` row (or whichever MPD is active by the time you check) renders correctly, including all concurrently active MPDs if more than one covers your test point, and that any active SPC MD also renders via the `http://` allowlist fix.
-- **`no active MPD`** — if by the time you check, `MPD_1120`'s validity window (`2026-08-24T21:00:00Z`) has passed and nothing else is active. Structural verification via the 32-scenario probe suite stands in, per the v1.1 fire-weather precedent.
-- **A defect description** — any mismatch between the rendered row and the live MPD's number/hazard type.
+**Live check performed, 2026-08-24 ~20:12Z:**
+- **Configuration used:** `lat: 36.17, lon: -115.14` (Las Vegas NV — inside `MPD_1122`'s polygon, confirmed by an independent point-in-polygon test run against the live KMZ), `showMPD: true`, MagicMirror restarted. **This is not the operator's real deployed coordinate** — it was set temporarily for this verification and restored afterward.
+- **Rendered on the physical display, verbatim:**
+  ```
+  WPC MPD 1122 — Heavy rainfall, Flash flooding likely in effect.
+  ```
+  alongside `Mon (Day 1): General Thunderstorms`, `Wed (Day 3): None 0.4 (near TSTM)`, and `Excessive Rain (Day 1): Marginal`.
+- **Live product details** (parsed independently from the live KMZ, not from the rendered display, as a cross-check): `MPD_1122`, source `https://www.wpc.ncep.noaa.gov/kml/mpd/MPD_1122_final.kmz`; `ValidStart` `241834`, `ValidEndTi` `250030` → active 2026-08-24T18:34Z to 2026-08-25T00:30Z; `MPDType` `Heavy rainfall, Flash flooding likely`; `WFO` FGZ, GJT, PSR, SGX, SLC, VEF (Desert Southwest / Great Basin); Forecaster Wegman. The rendered row matches the independently-parsed number and hazard type exactly.
 
-Once you respond, a fresh executor should be spawned to: (1) record your response in this file's Task 3 section, (2) if you replied `no active MPD`, add BOTH deferred items (live in-season WSSI verification and live MPD verification) to STATE.md Deferred Items at phase close, or if you replied `approved`, add only the WSSI item; (3) if you reported a defect, apply the appropriate deviation rule and re-verify.
+**Confirmed end-to-end on real data:**
+1. **The 15-07 socket migration works in production.** The advisory reached the frontend inside `outlook.advisories` and rendered, so `[outlook, seq]` on the wire and the `payload[1]` seq read are both correct on real hardware — this was the phase's designated migration hazard (see 15-CONTEXT.md's "MIGRATION HAZARD" integration-point note) and is now live-confirmed, not merely fixture-proven.
+2. **MPD-03's hazard-type extraction from the description CDATA is real.** The rendered string "Heavy rainfall, Flash flooding likely" differs from the earlier reconnaissance's `MPD_1120` value ("...possible"), so this is a genuinely parsed, per-MPD field, not an echoed constant.
+3. **D-05's single source-prefixed advisory band renders as designed.**
+4. **The full discovery path works live end to end:** directory listing → `MPD_FILENAME_PATTERN` → `normalizeAdvisoryUrl` allowlist → KMZ fetch → KML parse → polygon hit → render.
+
+**What this does NOT prove — recorded explicitly so the successful screenshot is not read as broader than it is:**
+- Other risk was present on screen (General Thunderstorms, Marginal ERO), so `getDom`'s no-risk short-circuit never fired during this check. **MPD-01 (the frontend's advisory-only no-risk gate, 15-07 Task 2's fix for the false-negative where an advisory-only payload short-circuited to the plain no-risk line) was NOT exercised by this live render.** It remains guarded only by the fixture scenario `frontend-advisory-only-is-not-an-all-clear`.
+- **MPD-02 (two concurrently active MPDs both rendering) was not observed live** — only `MPD_1122` covered the test point. It remains guarded only by the fixture scenario `mpd-multiple-concurrent-all-shown`.
+
+**A live finding worth recording as a durable note on the discovery design:** `MPD_1122` was active at the moment of verification and its filename is `MPD_1122_final.kmz`. WPC appends `_final` when the graphic is finalized, NOT when the discussion expires — an active, currently-in-force MPD can carry `_final` in its filename. `MPD_FILENAME_PATTERN` (`/^MPD_(\d+)_final\.kmz$/`) requiring `_final` is therefore confirmed correct, and `MPD_latest.kmz` correctly failing to match the same pattern (so the same MPD is never double-counted under two filenames) is confirmed correct. Had the pattern instead been implemented on the mistaken assumption that "`_final` means expired," MPD discovery would have found nothing, ever, while still appearing healthy (empty result, no error) — this live check rules that out.
+
+### Deferred items for STATE.md (orchestrator to record at phase close)
+
+The orchestrator, not this executor, writes STATE.md. The following belong in STATE.md's Deferred Items table:
+
+1. **Live in-season WSSI confirmation** — explicitly deferred per D-10 (15-CONTEXT.md), following the v1.1 fire-weather precedent already in STATE.md. WSSI is a winter product; this verification occurred in August and is not exercisable now. Structural verification via the six `wssi-*` probe scenarios stands as the evidence in the interim.
+2. **Live MPD-02 (two concurrently active MPDs both rendering)** — not observable on demand; only one MPD covered the verification point. Fixture-verified only (`mpd-multiple-concurrent-all-shown`).
+3. **Live MPD-01 (frontend advisory-only no-risk-gate behavior)** — requires an advisory-only location with every other product reading NONE; not observed live because other risk was present on screen throughout this check. Fixture-verified only (`frontend-advisory-only-is-not-an-all-clear`).
+
+**Operational finding that corrects an optimistic assumption in D-10:** for a fixed-point module, waiting for an MPD to appear over the operator's actual configured location is NOT a viable verification strategy. MPDs are regional and live only 3-6 hours; four were issued on 2026-08-24 and none covered the operator's real location. The realistic procedure — and the one used here — is to temporarily move `lat`/`lon` into an active polygon (confirmed via an independent point-in-polygon check against the live KMZ before restarting), confirm the render, and restore the real coordinate afterward. Recommend this be documented as the standard procedure for future live checks of location-gated products (MPD, SPC MD, and any future advisory-band product).
+
+**Unused-fixture observation for code review (not fixed in this plan):** `WSSI_MODERATE_BODY`, `WSSI_MAJOR_BODY`, and `WSSI_EXTREME_BODY` are declared in `scripts/probe-payload-resilience.js` but consumed by no scenario (each has exactly one occurrence — its own declaration). D-09's rendering-floor boundary IS pinned (`wssi-winter-weather-area-renders-nothing` proves `MINOR` renders and `WINTER WEATHER AREA` does not), so this is not a hole in the floor logic itself — but the three tiers above the floor (`MODERATE`, `MAJOR`, `EXTREME`) and any per-tier palette/label differences (D-08) are unexercised by any scenario. Flagged for the phase code review; intentionally not fixed here, as Task 3 is record-keeping only and this plan's `files_modified` scope does not include adding new scenarios.
 
 ## Decisions Made
 
@@ -147,24 +174,25 @@ None beyond what the plan itself anticipated as contingencies (mutation 5's cove
 
 ## User Setup Required
 
-None yet for Tasks 1-2 (fully offline, zero network, `node_modules` real KML deps resolved successfully — `hasRealKmlDeps` was `true` throughout). Task 3 requires the operator's action described above.
+None for Tasks 1-2 (fully offline, zero network, `node_modules` real KML deps resolved successfully — `hasRealKmlDeps` was `true` throughout). Task 3 required the operator to temporarily change `lat`/`lon` and `showMPD` in their runtime config and restart MagicMirror to observe the live render, then restore their real coordinate afterward — completed by the operator 2026-08-24.
 
 ## Next Phase Readiness
 
 - The probe suite (`scripts/probe-payload-resilience.js`) is the complete Phase 15 verification standard per D-10: 32 scenarios, 0 failed, 0 skipped, offline and zero-network.
-- MPD-02, MPD-03, MPD-04, D-04, and D-06 are all structurally proven and mutation-guarded.
-- Task 3 (live MPD checkpoint) is paused, not abandoned — resume with the reconnaissance above once the operator responds.
-- STATE.md/ROADMAP.md are intentionally NOT updated by this executor (worktree mode); the orchestrator updates them after the wave completes, and Task 3's resolution (once available) determines whether one or two items land in STATE.md Deferred Items.
+- MPD-02, MPD-03, MPD-04, D-04, and D-06 are all structurally proven and mutation-guarded; MPD-03 and the 15-07 socket migration are now additionally live-confirmed against `MPD_1122` on the physical display.
+- Task 3 (live MPD checkpoint) is resolved: human-approved. Three items remain live-unverified and are handed to the orchestrator for STATE.md Deferred Items (see "Deferred items for STATE.md" above): live in-season WSSI, live MPD-02, live MPD-01 no-risk-gate.
+- STATE.md/ROADMAP.md are intentionally NOT updated by this executor (worktree mode); the orchestrator updates them after the wave completes.
 
 ## Self-Check: PASSED
 
 - `scripts/probe-payload-resilience.js` — FOUND (modified, exists)
 - Commit `a982da2` — FOUND in `git log --oneline --all`
 - Commit `0fd5889` — FOUND in `git log --oneline --all`
-- `node scripts/probe-payload-resilience.js` — re-run at self-check time: `32 passed, 0 failed, 0 skipped`, exit 0
+- `node scripts/probe-payload-resilience.js` — re-run at self-check time (post Task 3 record-keeping, no source changes made): `32 passed, 0 failed, 0 skipped`, exit 0
 - `git diff --exit-code node_helper.js MMM-SPCOutlook.js productRegistry.js scripts/probe-lib/module-stubs.js` — clean, no residual mutation state
 - Live reconnaissance (`curl` against `wpc.ncep.noaa.gov`) — confirmed reproducible, not fabricated: MPD_1281 (Jan 2026) sorts after MPD_1120 (Aug 2026) in the live listing exactly as the critical-context note describes
+- Human live verification of `MPD_1122` on the physical MagicMirror display — recorded above per the human's approved checkpoint response; this executor did not and could not independently observe the physical display, and reports the human's verbatim account rather than claiming direct observation
 
 ---
 *Phase: 15-wpc-winter-storm-severity-mesoscale-precipitation-discussion*
-*Status: PAUSED at Task 3 (checkpoint:human-verify) — 2026-08-24*
+*Status: COMPLETE — Task 3 checkpoint approved by human 2026-08-24*
