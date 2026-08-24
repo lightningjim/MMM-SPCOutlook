@@ -49,9 +49,35 @@ const eroTierToText = { NONE: "None", MRGL: "Marginal", SLGT: "Slight", MDT: "Mo
 // stores them and how MMM-SPCOutlook.js interpolates them (color:#" + ... + ").
 const eroTierToColor = { NONE: "afddf6", MRGL: "7ac687", SLGT: "f7f690", MDT: "eb7e82", HIGH: "ff81f8" };
 
+const WSSI_BASE_URL = "https://mapservices.weather.noaa.gov/vector/rest/services/outlooks/wpc_wssi/MapServer";
+
+// WSSI display day -> MapServer layer id. Live-verified: layer 0 is a Group
+// Layer (not a feature layer) and layer 4 is the Days 1-3 composite — neither
+// is a per-day feature layer, so the per-day map is 1-based, unlike ERO's
+// 0-based eroDayLayers.
+const wssiDayLayers = { 1: 1, 2: 2, 3: 3 };
+
+// Live renderer raw values (field `impact`), verbatim and ALL CAPS.
+const wssiRawToValue = { "WINTER WEATHER AREA": 1, MINOR: 2, MODERATE: 3, MAJOR: 4, EXTREME: 5 };
+
+const wssiValueToTier = { 0: "NONE", 1: "WWA", 2: "MINOR", 3: "MODERATE", 4: "MAJOR", 5: "EXTREME" };
+const wssiTierToText = {
+  NONE: "None", WWA: "Winter Weather Area", MINOR: "Minor",
+  MODERATE: "Moderate", MAJOR: "Major", EXTREME: "Extreme"
+};
+
+// Hex, no leading "#" (matches eroTierToColor convention). Values and their
+// provenance are also cited on the winterImpact row's paletteSource member
+// per D-08.
+const wssiTierToColor = {
+  NONE: "afddf6", WWA: "d2dfe7", MINOR: "faf5a3",
+  MODERATE: "f7962f", MAJOR: "e61f26", EXTREME: "7853a1"
+};
+
 const PRODUCT_REGISTRY = {
   excessiveRain: {
     id: "excessiveRain",
+    kind: "arcgis-day-layers",
     // Frontend config flag name, used by node_helper as this._products[row.configFlag].
     configFlag: "showExcessiveRain",
     baseUrl: ERO_BASE_URL,
@@ -75,9 +101,46 @@ const PRODUCT_REGISTRY = {
     // observed in either research session, so its correctness is asserted
     // structurally rather than by live observation (RESEARCH.md Open
     // Question 1).
+  },
+  winterImpact: {
+    id: "winterImpact",
+    kind: "arcgis-day-layers",
+    configFlag: "showWinterImpact",
+    baseUrl: WSSI_BASE_URL,
+    dayLayers: wssiDayLayers,
+    days: 3,
+    buildUrl: (day) => buildArcGisQuery(WSSI_BASE_URL, wssiDayLayers[day]),
+    // WSSI-02: fold BEFORE the lookup — raw field values are ALL CAPS
+    // regardless of WPC's mixed-case documentation, and this is the single
+    // place the case fold happens. `label` is unused, matching ERO's
+    // signature contract. Reads lowercase f.properties.impact.
+    toValue: (label, f) => {
+      const raw = f.properties.impact;
+      const folded = typeof raw === "string" ? raw.trim().toUpperCase() : "";
+      return wssiRawToValue[folded] || 0;
+    },
+    // D-09 AMENDED: MINOR (value 2) and above renders a row; WINTER WEATHER
+    // AREA (value 1) is filtered out here, at exactly the point a no-risk
+    // feature is, so it can never reach evaluatePolygons and can never
+    // produce a row. WPC's own service description states this tier is "not
+    // anticipated to impact daily life." Value 1 is retained in
+    // wssiValueToTier only to document the real domain — it can never
+    // surface in a payload once this filter runs.
+    includesFeat: (label, val) => val >= 2,
+    valueToTier: wssiValueToTier,
+    tierToText: wssiTierToText,
+    tierToColor: wssiTierToColor,
+    // Live field list carries both valid_time and issue_time; valid_time is
+    // the window, matching ERO's choice.
+    validTimeField: "valid_time",
+    // D-08: cite the palette's provenance in the row rather than leaving it
+    // uncited (14-REVIEW.md IN-01's complaint about ERO's palette).
+    // wssiTierToColor's hex values were read from this endpoint's
+    // drawingInfo.renderer.uniqueValueInfos.
+    paletteSource: "https://mapservices.weather.noaa.gov/vector/rest/services/outlooks/wpc_wssi/MapServer/1?f=json"
   }
-  // Future rows (WSSI, MPD, Hazards Outlook, HeatRisk) land in Phases 15-17
-  // (D-08) — not added here.
+  // Future rows (Hazards Outlook, HeatRisk) land in Phases 16-17 (D-08) —
+  // not added here.
 };
 
 module.exports = { buildArcGisQuery, PRODUCT_REGISTRY };
