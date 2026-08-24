@@ -1,140 +1,315 @@
 ---
 phase: 15-wpc-winter-storm-severity-mesoscale-precipitation-discussion
-fixed_at: 2026-08-24T22:14:00Z
+fixed_at: 2026-08-24T23:05:00Z
 review_path: .planning/phases/15-wpc-winter-storm-severity-mesoscale-precipitation-discussion/15-REVIEW.md
-iteration: 1
-findings_in_scope: 13
-fixed: 13
+iteration: 2
+findings_in_scope: 10
+fixed: 10
 skipped: 0
 status: all_fixed
 ---
 
-# Phase 15: Code Review Fix Report
+# Phase 15: Code Review Fix Report (iteration 2)
 
-**Fixed at:** 2026-08-24T22:14:00Z
+**Fixed at:** 2026-08-24T23:05:00Z
 **Source review:** `.planning/phases/15-wpc-winter-storm-severity-mesoscale-precipitation-discussion/15-REVIEW.md`
-**Iteration:** 1
+**Iteration:** 2
 
 **Summary:**
-- Findings in scope: 13 (3 Critical + 10 Warning; Info and CV-* excluded by `fix_scope: critical_warning`)
-- Fixed: 13
+- Findings in scope: 10 (2 Critical, 8 Warning; 11 Info and 3 Convention findings out of scope)
+- Fixed: 10
 - Skipped: 0
+- Probe suite: 43 passed / 0 failed before this pass, **48 passed / 0 failed / 0 skipped** after
 
-**Probe suite:** 32 passed / 0 failed / 0 skipped at start → **43 passed / 0 failed / 0 skipped** after the fixes. 11 new scenarios were added and every one of them was verified RED against the pre-fix source before being accepted (see per-finding "Proof" lines). The three findings whose defect the suite already covered but did not assert (CR-01/WR-06, WR-05) were additionally mutation-tested: re-introducing the defect now turns the suite red.
+**Method note.** Every new scenario was verified RED against the pre-fix source before the
+fix was accepted, and most were additionally mutation-tested (the fix removed one piece at a
+time, each time confirming the scenario names the right failure). The specific verification
+for each finding is recorded below. No fix was accepted on the strength of a green suite
+alone, because two of the blockers were invisible to the suite by construction.
+
+---
 
 ## Fixed Issues
 
-### CR-01: `_runArcGisDayProduct`'s per-day catch degrades to no-risk without setting `anyStale`
+### CR-01: the stale-fallback window is unreachable at the shipping poll cadence
+
+**Files modified:** `node_helper.js`, `scripts/probe-payload-resilience.js`
+**Commit:** `54df2a2`
+
+Two separate defects made the fallback unreachable, and both had to be fixed:
+
+1. The window was exactly one poll interval. A cache entry is written when a poll produces
+   a reading, and the next poll reaches that same URL one full interval later, so the
+   window had always expired at the only moment it was ever consulted. Widened to two
+   intervals (`STALE_WINDOW_INTERVALS = 2`), the smallest window that survives one missed
+   poll.
+2. `entry.timestamp` was written only on a body *change*, so a layer that had been
+   304-confirmed hourly for a quiet week carried a week-old timestamp — no finite window
+   would have helped. All three confirmation paths (304, ETag match on a 200, hash match)
+   now stamp the confirmation, which is what `_noteStaleEntry`'s own comment already said
+   an ETag/hash hit means.
+
+Serving an older reading is safe here only because every path that returns one also sets
+`stale`, so it is rendered behind the badge with its real age; the badge's age is asserted
+against the served entry's timestamp.
+
+**Verification.** New scenario `an-hour-old-reading-still-survives-a-hiccup-but-a-day-old-one-does-not`
+advances the clock by ageing the cache entry directly rather than relying on wall-clock
+elapsed time — a real-elapsed-time test cannot observe this class in a sub-second suite,
+which is exactly why the existing "WPC hiccup" scenarios all passed against the broken code.
+Three independent mutations each turn it red: reverting the window width, reverting the
+timestamp restamp, and making the window unbounded (the negative control, which keeps the
+fix from degrading into "serve any cached reading forever").
+
+### CR-02: a node_helper restart permanently freezes the frontend
+
+**Files modified:** `node_helper.js`, `MMM-SPCOutlook.js`, `scripts/probe-payload-resilience.js`
+**Commit:** `f0b13b3`
+
+The helper now stamps each broadcast with the generation its counter belongs to
+(`payload[2].epoch`), and the frontend resets `_lastSeq` when the generation changes,
+applying the out-of-order guard unchanged within a generation.
+
+Two deliberate choices differ from the review's suggested fix:
+
+- **Explicit generation, not a backwards-jump heuristic.** The review's alternative
+  (`last - seq > 1` means a restart) conflicts with an existing asserted guarantee:
+  `frontend-seq-discard-survives-socket-index-migration` replays 5/3/6 and requires seq 3 to
+  be discarded, and that is a delta of 2. Comparing generations explicitly avoids guessing
+  how large a backwards jump is "really" a restart, and leaves that scenario passing
+  untouched.
+- **A random generation id, not `Date.now()`.** The frontend only compares it for equality,
+  and a clock is the one thing not reliably distinct across a restart on this project's
+  target hardware — a Raspberry Pi has no RTC and boots with a persisted time. Two boots
+  stamping the same millisecond would have left the display frozen exactly as before, with
+  nothing saying so.
+
+A payload carrying no metadata keeps today's strict behaviour, so version skew with an older
+helper is unchanged. Residual, recorded honestly: an *older* helper (one that predates the
+epoch) still freezes the display on restart. Both ends ship in this repo, so a partial
+upgrade is not a supported state.
+
+**Verification.** New scenario `frontend-resyncs-after-a-node_helper-restart` replays 47
+polls, restarts the producer, and asserts the display advances; RED against the pre-fix
+frontend. It also drives the **real emit** and asserts the wire shape, because the two ends
+of this socket contract were otherwise pinned only by a comment and the frontend's guard
+fails *open* on a shape it does not recognise — a helper that stopped sending the stamp
+would have silently restored the freeze. Mutation-tested two ways: a constant epoch, and the
+epoch dropped from the emit.
+
+### WR-01: the "only unforgeable" post-read bound is dead code, and its scenario asserted nothing
+
+**Files modified:** `node_helper.js`, `package.json`, `scripts/probe-payload-resilience.js`
+**Commit:** `df43188`
+
+Confirmed the review's claim structurally rather than only empirically: adm-zip's
+`zipEntry.js` allocates `Buffer.alloc(centralHeader.size)` and copies the inflated result
+into it, so the returned buffer is *always* exactly the declared size — a number check 1 has
+already bounded. The post-read length check cannot fire with this library.
+
+Chose the review's second option (keep it, make the scenario name the layer that refused)
+over deleting it, because unreachability is a property of *this library version*, not of
+ZIP: a reader that returns whatever inflated would make this the only bound. The comment now
+says plainly that it is unreachable and why it is kept, `adm-zip` is pinned to an exact
+version so an upgrade is a deliberate act, and case 3 asserts the refusal is adm-zip's
+declared-size clamp by message.
+
+**Verification.** Ran the suite with `zlib.inflateRawSync` patched to ignore
+`maxOutputLength` — simulating a library that stops clamping — and the scenario fails with
+exactly the diagnostic that says the post-read check has just become load-bearing.
+
+### WR-02: the 200:1 compression-ratio threshold
+
+**Files modified:** `node_helper.js`, `scripts/probe-payload-resilience.js`
+**Commit:** `d6bfdfd`
+
+**Assessment as requested: the correct fix was removing the heuristic, not tuning it — and
+removing it exposed a real unbounded-inflation hole that the heuristic never covered.**
+
+The ratio is computed from two central-directory fields the archive's author chooses freely,
+so it bounds nothing: a larger declaration is refused by the declared-size check, and a
+declaration small enough to pass is what adm-zip then clamps inflation to (it passes the
+declared size to zlib as `maxOutputLength`). Raising the number to 1000:1 would have kept
+100% of the false-rejection surface and added 0% of security.
+
+Independently re-measured the false-rejection claim (`zlib.deflateRaw` level 9, NetworkLink
+index KML): 2.8:1 at 3 links, 10:1 at 20, **20:1 at 100**, 25:1 at 1000, 27:1 at 20 000, and
+**66:1** for the same 1000-link index indented. So the comment's stated basis ("live KML
+compresses at well under 20:1") is already false at 100 links, and the margin to 200:1 is a
+factor of three, not the orders of magnitude the comment implied. That is a secondary
+argument, though — the primary one is that the check constrains nothing.
+
+**The real bound.** Removing the ratio surfaced the input that genuinely is unbounded:
+adm-zip applies `maxOutputLength` **only when the declared size is greater than zero**
+(`methods/inflater.js`), so an entry declaring **zero** bytes is inflated with no clamp at
+all — and a zero declaration passes any ratio test too, since its ratio is zero. Measured
+against the installed adm-zip: a **199 KB** archive (comfortably inside the 8 MB body cap)
+whose sole member declares 0 bytes **inflated 200 MB into memory** before the library
+rejected it on a checksum; at the full body cap the same shape reaches gigabytes, which on a
+Raspberry Pi is the process and with it the whole mirror. A `.kml` member declaring no
+content is useless to us in any case. So the ratio check was replaced by
+`declared <= 0 -> refuse`, which is the bound that actually binds.
+
+Implementing our own bounded inflate was considered and rejected: `maxOutputLength` is
+already a true streaming bound on actual inflated bytes, so a hand-rolled
+`zlib.inflateRawSync` would duplicate the library's behaviour while adding a second
+decompression path with its own compression-method, encryption-flag and STORED-entry edge
+cases. With the lower bound in place, peak inflation is bounded by the declared size, which
+check 1 caps at 8 MB.
+
+**Verification.** Scenario case 2 now forges a zero declaration onto a 200 MB deflate stream
+and asserts the refusal comes from the size check and **not** from adm-zip's post-inflation
+checksum — the difference between refusing the bomb and detonating it first. Mutation-tested:
+removing the new lower bound turns it red with adm-zip's CRC error, proving the 200 MB was
+materialised. Case 2b asserts a 1000-entry index still round-trips, with a vacuity guard
+requiring the fixture to compress above 20:1 so it keeps standing for the shape a ratio
+threshold would misfire on.
+
+### WR-03: `PRODUCT_REGISTRY` declares each product's day span twice
+
+**Files modified:** `productRegistry.js`, `scripts/probe-payload-resilience.js`
+**Commit:** `efac5b1`
+
+`daySpanOf(dayLayers)` derives the span and validates the map at module load (contiguous
+1..N, non-negative integer layer ids), so the mismatched state is unrepresentable. Load-time
+throw rather than poll-time degrade: the registry is static source, so an invalid map is a
+bug that exists before the process ever polls, and failing on the first run is strictly
+better than a permanent silent degrade in the field.
+
+**On the prior pass's misdiagnosis.** Reproduced the 5→7 edit against the *pre-fix* registry
+and read the failures instead of assuming: four scenarios fail, and
+`ero-malformed-feature` fails with
+`MMM-SPCOutlook excessiveRain day 6: fetch/parse/evaluate failed ... buildArcGisQuery: layerId must be a non-negative integer`.
+That is the registry latching staleness, not a fixture problem. The other three
+(`ero-rejected-body-serves-last-known-good`, `body-read-abort-is-contained-...`, and the new
+CR-01 scenario) *are* fixture-side: the probe's `eroHttpRoutes` hardcodes five ERO days, so
+days 6-7 hit the unrouted 503 default. Confirmed by re-running the same extension against the
+*fixed* registry (extending `eroDayLayers` to seven entries): the `buildArcGisQuery` failure
+is gone, only the three route-list failures remain. The probe's hardcoded five-day route
+list is the same class as IN-05 and is out of scope for this pass.
+
+**Verification.** New scenario `registry-day-span-is-derived-and-cannot-outrun-its-layer-map`
+asserts `daySpanOf` rejects a gap, a map not starting at day 1, an empty map, and bad layer
+ids, and asserts the shipped invariant directly (`buildUrl(d)` must not throw for any day a
+row declares). RED pre-fix.
+
+### WR-04: two configured module instances silently render each other's location
+
+**Files modified:** `node_helper.js`, `MMM-SPCOutlook.js`, `README.md`, `scripts/probe-payload-resilience.js`
+**Commit:** `d7e104c`
+
+The helper echoes the requester's coordinates in the payload metadata and the frontend
+discards a payload addressed elsewhere — checked *before* the generation/sequence
+bookkeeping, so a foreign broadcast cannot advance this instance's guard and suppress its own
+next result either. Both ends warn once, naming both locations.
+
+**Deliberately not fixed, with reasoning.** The in-flight guard still drops the second
+instance's request, so that instance stays on "Loading" rather than showing something wrong.
+Making the guard per-location would let two chains interleave, and `_oldestStaleAt`,
+`_unusableFeatureCount`, `_cachedLat`/`_cachedLon` and the shared cache the location change
+clears are all correct *only* because the guard makes interleaving unreachable — several
+in-file comments say so explicitly. Queuing the skipped request would either double the
+network load in the degraded-network case CR-03's guard exists for (if it coalesces
+same-location ticks) or reintroduce the cache thrash. Trading a silent wrong answer for a
+visible non-answer plus two log warnings is the right direction for a product whose stated
+purpose is preventing false negatives, and the review itself offers "declare it unsupported"
+as an acceptable resolution. `README.md` now documents it.
+
+**Verification.** New scenario `a-payload-is-only-rendered-by-the-instance-that-asked-for-it`
+asserts the foreign payload is rejected, the own payload is accepted (positive control), a
+foreign payload does not advance the sequence guard, an unaddressed payload still fails open,
+and — driving the **real** helper — that the address is actually on the wire and that a
+second distinct location is logged. RED against the pre-fix source and against dropping the
+address from the emit.
+
+### WR-05: `harness-leak-setup` / `harness-leak-check` are order-coupled
+
+**Files modified:** `scripts/probe-payload-resilience.js`
+**Commit:** `246f2ae`
+
+The check now dirties the seams itself and asserts the dirt is present before cleaning it, so
+no ordering assumption is load-bearing and no assertion can pass because the thing it tests
+never happened. The assertion-free setup scenario is deleted (it always passed and inflated
+the count by one).
+
+**Verification.** Mutation-tested twice: removing `resetHelper`'s seam restore and removing
+its turf restore each turn it red, with the diagnostic naming which leak survived.
+
+### WR-06: three unreachable helper methods
 
 **Files modified:** `node_helper.js`
-**Commit:** `3622e19`
-**Applied fix:** Set `anyStale = true` in the per-day catch, independently of the `fetchResult.stale || fetchResult.failed` line above it (the throw can occur before that line runs). Follows the dominant pattern at the other seven degrade sites.
-**Proof:** Mutation-tested. With WR-06's tightened scenario in place, removing this one line turns `ero-fetch-throws` red with "five contained ERO throws produced an unflagged no-risk payload".
+**Commit:** `0578bd2`
 
-### CR-02: response body read outside `fetchGeoJsonCached`'s error containment
+`kmzToKmlfilename`, `extractKmlFromKmz` and `fetchGeoJson` deleted after confirming no caller
+anywhere in the repository (including the probe suite). A comment at each site records what
+was removed and why — for `fetchGeoJson` the danger was its *name*: a future caller reaching
+for the obviously-named function instead of `fetchGeoJsonCached` would reintroduce the whole
+silent-degradation class in one line. `extractSoleKmlEntry`'s docblock no longer refers to a
+function that no longer exists.
 
-**Files modified:** `node_helper.js`, `scripts/probe-payload-resilience.js`
-**Commit:** `7756cdc`
-**Applied fix:** Wrapped `await res.text()` in its own try/catch that takes the same stale-fallback → hard-failure path the network-error branch already owns. Added `httpBodyReadFailure()` to the harness (a response whose headers arrive and whose body then rejects — a shape no existing fixture could produce, since every prior failure fixture rejects at connect or answers non-2xx) and the scenario `body-read-abort-is-contained-not-a-payload-collapse`.
-**Proof:** The review's PoC reproduced verbatim against the real `getSpcOutlook` — pre-fix, a day-1 categorical layer rejecting on `text()` yielded `payload keys: error / error: Error: ECONNRESET while reading body`; post-fix the full 15-key payload survives with `_stale: true`. The new scenario is RED pre-fix.
+**Verification.** Re-grepped for callers across all non-`node_modules` `.js` files; full
+suite green. No new scenario: a "this method does not exist" assertion would go red on a
+legitimate future re-introduction routed through `fetchGeoJsonCached`, which is exactly what
+the comment invites.
 
-### CR-03: an empty `MPDNumber` cell silently drops an active MPD covering the user
-
-**Files modified:** `node_helper.js`, `scripts/probe-payload-resilience.js`
-**Commit:** `26821dd`
-**Applied fix:** Changed `_prepareMpdEntry`'s guard from `number === null` to "not a string, or blank after trim" — the condition `toEntry`'s `if (!number) return null` actually applies — and used the exported `MPD_FILENAME_PATTERN` for the filename fallback rather than a second inline copy of the same regex. Added the probe fixture the review noted was missing (`mpdKml({ number: "" })` emits `<td>MPDNumber</td><td></td>`; the builder previously only ever omitted the row).
-**Beyond the review's fix snippet:** also set `anyStale = true` on `_runKmlAdvisoryRow`'s "covers the location but carries no name" drop. The review's Issue text names this as part of the harm ("and does not set `anyStale`, so the user sees no advisory and no ⚠") but its Fix section did not include it. An advisory that *does* contain the user and is then discarded is a degrade by the same reasoning as the seven other sites; leaving it silent keeps it indistinguishable from "none active". This also affects the `spcMD` row, which shares the code path.
-**Proof:** New scenario `mpd-empty-number-cell-falls-back-to-filename-not-dropped` is RED pre-fix ("an active MPD covering the user was dropped for an empty MPDNumber cell, got 0 entries"). Its control half drives a genuinely unlabellable candidate and asserts the drop now sets `_stale`.
-**Status:** fixed: requires human verification — specifically the added `anyStale` on the unlabellable-advisory drop, which is a deliberate extension beyond the review's stated fix and changes when the ⚠ badge appears for `spcMD` as well as `mpd`.
-
-### WR-01: the MPD listing's degraded truncation kept the oldest candidates
+### WR-07: `spc-active-index` violates the ordering contract the truncation cap depends on
 
 **Files modified:** `node_helper.js`, `scripts/probe-payload-resilience.js`
-**Commit:** `67d608a`
-**Applied fix:** Sort numerically on the captured MPD filename number before `slice(-N)` in `wpc-mpd-listing`'s degraded-truncation branch, and corrected the comment that claimed alphabetical document order puts the highest numbers last. Added a note at the sibling `slice(0, N)` in `_runKmlAdvisoryRow` explaining why the two ends no longer contradict each other (each discovery strategy now owns its own ordering; for `mpd` the generic cap is a no-op).
-**Proof:** PoC against the real discovery strategy with a 1200-entry alphabetically sorted listing — pre-fix it kept numbers **9 … 999** (the oldest MPDs of the season); post-fix it keeps **1141 … 1200**. New scenario `mpd-listing-truncation-keeps-the-newest-not-the-alphabetical-tail` is RED pre-fix.
+**Commit:** `ac43a10`
 
-### WR-02: `fetchBinBuffer` had no response-size bound; the listing's bound ran post-hoc
+The strategy now sorts by MD number and truncates to the highest-numbered itself, mirroring
+`wpc-mpd-listing`, so the downstream cap is a no-op for both shipped strategies. The contract
+comment is restated to match what the code does, including why keeping the head there and the
+tail here is not a contradiction.
 
-**Files modified:** `node_helper.js`, `scripts/probe-payload-resilience.js`
-**Commit:** `4c45744`
-**Applied fix:** `fetchBinBuffer(url, maxBytes = ADVISORY_MAX_BODY_BYTES)` now passes node-fetch's streaming `size` cap (the only layer that bounds *memory*), refuses an oversized declared `Content-Length` before reading, and re-checks the buffer that actually arrived. Passed `size: ADVISORY_MAX_LISTING_BYTES` on the listing fetch too. Hoisted both limits to named module constants next to `ADVISORY_MAX_CANDIDATES`, carrying their justification comments (also closes part of IN-09, which was out of scope on its own).
-**Proof:** New scenario `advisory-member-body-is-size-bounded` asserts all three layers plus a positive control, and is RED pre-fix.
+**Verification.** New scenario drives the strategy with a 70-entry index in ascending
+document order and asserts the surviving set is the 60 *highest*-numbered, flagged
+`failed: true`, with a diagnostic naming the drop count; plus a control that an ordinary
+3-entry index is neither truncated nor flagged and comes back ordered. RED pre-fix (all 70
+candidates survived, unflagged).
 
-### WR-03: the KMZ 8 MB bound trusted an attacker-declared header field
+### WR-08: the XSS-escaping guarantee is asserted by no scenario
 
-**Files modified:** `node_helper.js`, `scripts/probe-payload-resilience.js`
-**Commit:** `c0dfa1e`
-**Applied fix:** `extractSoleKmlEntry` now checks the declared size, then the declared/compressed ratio against `KMZ_MAX_COMPRESSION_RATIO` (200:1), then the length of the buffer that actually inflated — the only unforgeable one. Both limits hoisted to named constants.
-**Proof:** New scenario `kmz-decompression-bomb-is-refused` asserts three refusals against real adm-zip archives plus a round-trip control; RED pre-fix on the ratio case ("a 4 MB entry inflating from a few KB — under the byte cap, ~1000:1 — was accepted").
-**Correction to the review's threat model, recorded for the reader:** the review states that with a forged `size: 100` header, "`ZIPper.readFile(entry)` inflates it anyway". Verified against the installed adm-zip 0.5.16, that is **not** the case — it sizes its output buffer from the declared value and throws `Cannot create a Buffer larger than 100 bytes`. So the pre-fix code was already contained (by luck, via the library) against the *lying*-header bomb, and genuinely exposed to the *honest* high-ratio bomb under the byte cap. The fix covers both and the scenario pins the library behaviour so a future adm-zip upgrade that drops it turns the suite red rather than silently reopening the hole.
-**Status:** fixed: requires human verification — the 200:1 ratio threshold is a judgement call. Live KML compresses well under 20:1 so there is an order of magnitude of headroom, but a future legitimately-large, highly-repetitive KML is the shape that would trip it.
+**Files modified:** `scripts/probe-payload-resilience.js`, `scripts/probe-lib/module-stubs.js`
+**Commit:** `348fab7`
 
-### WR-04: `checkInPolygon` built turf geometry unguarded
+New scenario renders hostile text through all three remote-sourced fields (SPC label, MPD
+label, MPD hazard type) and asserts each of the five characters `escapeHtml` claims to
+handle, with a count guard so it cannot pass because the advisory failed to render at all.
+The DOM stub's limitation is now recorded where the stub is defined: it is a plain object
+whose `innerHTML` is never parsed, so the assertion is string-level and cannot prove that
+what reaches a real browser is inert — closing that gap needs a real DOM.
 
-**Files modified:** `node_helper.js`, `scripts/probe-payload-resilience.js`
-**Commit:** `ccd325f`
-**Applied fix:** Per-feature try/catch around `turf.polygon`/`turf.multiPolygon`, logging and incrementing `_unusableFeatureCount` (so the drop surfaces as ⚠ through `getSpcOutlook`'s existing sampling) then continuing — matching `extractPolygons`.
-**Proof:** New scenario `checkinpolygon-contains-unusable-geometry-per-feature` is RED pre-fix ("one malformed feature aborted the whole scan (Each LinearRing of a Polygon must have 4 or more Positions.)").
-**Reachability note recorded in the scenario comment:** I could not construct an end-to-end KML fixture that reaches this throw. `@tmcw/togeojson` normalises rings on the way out — it auto-closes a 4-position ring and emits `geometry: null` for anything shorter (both verified directly), so the existing `!feature.geometry` guard catches every malformed-ring KML today. The finding is therefore a genuine containment gap in a helper documented as accepting "anything, including junk", but not a currently-reachable production path through the MPD/MD chain. The scenario asserts against the primitive for that reason, and says so.
+**Verification.** Mutation-tested: replacing `escapeHtml`'s body with `(value) => String(value)`
+turns it red, which is the exact mutation the review showed leaves the suite at 43/0.
 
-### WR-05: the shared payload oracle validated only the ERO block
-
-**Files modified:** `scripts/probe-payload-resilience.js`
-**Commit:** `ff6bdd2`
-**Applied fix:** `assertPayloadIntact` now iterates `PRODUCT_REGISTRY`: every `arcgis-day-layers` row's block is checked for presence, exact key count (`row.days × ERO_SUFFIXES.length`), per-day key presence and tier validity; `advisories` must be an object carrying an array per `kml-advisory` row. `ERO_SUFFIXES` stays literal as the independent oracle.
-**Proof:** Mutation-tested. Deleting `winterImpact: wssiPayload` from `getSpcOutlook`'s return object took the suite from 43/0 to 7 passed / 31 failed; deleting `advisories: advisories` did the same. Both mutations passed the pre-fix oracle.
-
-### WR-06: `ero-fetch-throws` asserted the log but not the staleness
-
-**Files modified:** `scripts/probe-payload-resilience.js`
-**Commit:** `bd616e3`
-**Applied fix:** Added the `out._stale !== true` assertion, the render-layer proof via `loadFrontendModule`/`renderDom`, and a toggle-off negative control. **Also corrected the scenario's routing**, which was the more important half: it routed only the ERO URLs, so every SPC/fire-weather layer fell through `installFetch`'s hard-failure default and set `anyStale` before the ERO loop ran — a `_stale` assertion added on top of that routing would have been vacuous. Non-ERO layers now answer 200-empty, so `anyStale` can only originate in the contained throw (WR-02's trap, applied here).
-**Proof:** Mutation-tested both ways. With the original routing, removing CR-01's `anyStale = true` still passed 38/38; with the corrected routing it fails with the intended message.
-
-### WR-07: the frontend spread `advisories.spcMD`/`advisories.mpd` unguarded
-
-**Files modified:** `MMM-SPCOutlook.js`, `scripts/probe-payload-resilience.js`
-**Commit:** `12d01fe` (later folded into `enabledAdvisories()` by WR-09's commit `cfd98d1`)
-**Applied fix:** Guarded each key with `Array.isArray` so an absent or junk inner key contributes nothing, matching the tolerance the no-risk gate 30 lines above already documented.
-**Proof:** New scenario `frontend-tolerates-a-half-populated-advisories-object` reproduces the review's PoC exactly — RED pre-fix with `TypeError: advisories.mpd is not iterable` — and also covers the mirror shape and a non-array value.
-
-### WR-08: registry-driven backend, hardcoded frontend
-
-**Files modified:** `MMM-SPCOutlook.js`, `scripts/probe-payload-resilience.js`
-**Commit:** `57d57dc`
-**Applied fix:** Took the review's option (b) — derive the span from the block's own keys — so no backend payload change was needed. Added `dayRiskCount(block)` and `blockHasRisk(block)`; the five ERO and three WSSI terms in the no-risk gate collapse to one call each, and the two hardcoded render loops collapse to a single `renderDayBlock(label, block)`. No literal day count remains in the frontend. The new helpers use strict `!==` against `"NONE"`, which incidentally closes IN-08's `color:#undefined` trap for these blocks.
-**Proof:** New scenario `frontend-follows-the-payload-day-span-not-a-hardcoded-one` drives a 7-day ERO block with the risk on day 7 and asserts it both disqualifies the no-risk short-circuit and renders; RED pre-fix. Additionally verified end-to-end by flipping `PRODUCT_REGISTRY.excessiveRain.days` from 5 to 7 and re-running: the three resulting failures are all fixture-side (the probe's own route lists and the layer-id map only define 5 ERO days) — no failure came from the frontend, and the generalised `assertPayloadIntact` accepted the 28-key payload.
-
-### WR-09: advisory rows rendered without consulting their config toggles
-
-**Files modified:** `MMM-SPCOutlook.js`, `scripts/probe-payload-resilience.js`
-**Commit:** `cfd98d1`
-**Applied fix:** Added `ADVISORY_SOURCES = { spcMD: "showSPCMD", mpd: "showMPD" }` — the single place the frontend names the registry's `kml-advisory` rows, since a browser-context module cannot `require` the registry — and `enabledAdvisories()`, which filters by toggle and by `Array.isArray`. Both the no-risk gate term and the render band now call it, so the two can no longer disagree about either the toggle or the version-skew tolerance.
-**Proof:** New scenario `frontend-advisory-band-respects-its-config-toggles` is RED pre-fix ("advisories rendered with both toggles off"), and asserts the gate agrees with the render (both off ⇒ a genuine `"No Severe Weather Risk"`, not a band-less "(unconfirmed)").
-**Behaviour change worth noting to the user:** a payload carrying advisories that the *frontend* config disables is now neither rendered nor counted by the gate. This is the intended defence-in-depth for the multi-instance `_products` overwrite the review describes, but it is a user-visible change in that scenario.
-
-### WR-10: probe harness state bled between scenarios
-
-**Files modified:** `scripts/probe-lib/module-stubs.js`, `scripts/probe-payload-resilience.js`
-**Commit:** `4880b37`
-**Applied fix:** `ORIGINAL_SEAMS` now snapshots the whole helper surface (`{ ...helper }`) and `resetHelper` restores it wholesale with `Object.assign`; added `TURF_DEFAULTS` so `resetHelper` also resets `turfStub.pointInPolygon`. The 20 hand-rolled `try/finally` pairs were **left in place** rather than deleted as the review suggests — they now restore to the same default, so they are harmless belt-and-braces, and removing 20 blocks across the file is churn with no behavioural gain and real merge risk.
-**Proof:** A deliberate pair of scenarios (`harness-leak-setup-deliberately-dirties-the-seams` / `harness-leak-check-resethelper-restores-every-seam`) — the only way to test a leak that by definition escapes its own scenario. The check scenario is RED pre-fix ("a previous scenario's fetchBinBuffer stub survived resetHelper").
+---
 
 ## Skipped Issues
 
 None.
 
-## Out of scope (not attempted)
+---
 
-`fix_scope` was `critical_warning`, so the 9 Info findings (IN-01 … IN-09) and the 3 convention findings (CV-01 … CV-03) were not addressed as such. Three were incidentally closed or partly closed by in-scope work:
+## Notes for the verifier
 
-- **CV-01** is the same line as CR-01 and is now resolved.
-- **IN-09** (inline magic numbers) is partly closed: `ADVISORY_MAX_BODY_BYTES`, `ADVISORY_MAX_LISTING_BYTES`, `KMZ_MAX_KML_BYTES` and `KMZ_MAX_COMPRESSION_RATIO` are now named module constants. `KMZ_MAX_ENTRIES` (32), `MPD_DESCRIPTION_MAX_BYTES` (512 KB) and `MPD_LISTING_FRESH_WINDOW_MS` (48 h) remain inline.
-- **IN-08** (loose equality) is closed for the ERO/WSSI blocks via WR-08's `renderDayBlock`/`blockHasRisk`, which use `!==`. The `day1`/`day2`/`day3` and proximity comparisons elsewhere in `getDom` still use `==`/`!=`.
+- **Requires human verification (logic, not syntax):** `CR-01`'s widened window is a policy
+  choice — two intervals tolerates exactly one missed poll. The reading is always rendered
+  behind the stale badge with its true age, and the negative control pins that the window
+  still ends, but whether two intervals is the right tolerance for this product is a
+  judgement call worth confirming.
+- **`WR-04` is a partial fix by design.** The dangerous half (wrong location rendered
+  silently) is closed; the starvation half (second instance never updates) is now documented
+  as unsupported rather than fixed. See the reasoning above before treating it as complete.
+- **Out of scope but observed while working:** the probe's `eroHttpRoutes` / `wssiRoutes`
+  hardcode five- and three-day route lists, the same class as IN-05. Any future day-span
+  extension will produce three spurious failures there until those are registry-driven.
+- **`package.json` now pins `adm-zip` to an exact `0.5.16`.** The repo has no committed
+  lockfile, and `WR-01`'s comment and scenario both depend on that version's inflation
+  clamp; the scenario turns red if a future version stops clamping.
 
 ---
 
-_Fixed: 2026-08-24T22:14:00Z_
+_Fixed: 2026-08-24T23:05:00Z_
 _Fixer: Claude (gsd-code-fixer)_
-_Iteration: 1_
+_Iteration: 2_
