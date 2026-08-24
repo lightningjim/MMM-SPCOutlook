@@ -3075,26 +3075,51 @@ const scenarios = [
     // pointInPolygon was reset by nobody — twenty scenarios save and restore it by hand, and
     // one omission bleeds `() => true` into every later scenario, silently making every
     // polygon contain the user. Neither leak had an assertion; both surfaced, if at all, as
-    // an unrelated flaky failure elsewhere in the file. This scenario deliberately leaves
-    // both dirty and the NEXT one proves resetHelper cleaned them, which is the only way to
-    // test a leak that by definition escapes its own scenario.
-    name: "harness-leak-setup-deliberately-dirties-the-seams",
-    run: async (helper) => {
-      resetHelper(helper);
-      resetLogs();
-      // A seam outside the old curated list.
-      helper.fetchBinBuffer = async () => { throw new Error("LEAKED fetchBinBuffer stub"); };
-      helper.checkInPolygon = () => { throw new Error("LEAKED checkInPolygon stub"); };
-      // And the turf stub, left flipped exactly as a missing `finally` would leave it.
-      turfStub.pointInPolygon = () => true;
-    }
-  },
-  {
+    // an unrelated flaky failure elsewhere in the file.
+    //
+    // This used to be two scenarios: a setup one that dirtied the seams and asserted
+    // nothing (so it always passed, and inflated the reported count by one) and this one,
+    // which depended on being IMMEDIATELY next. Nothing enforced or recorded that ordering.
+    // Any scenario inserted between them calls resetHelper at its own start, cleans both
+    // leaks, and leaves this one passing vacuously — it never asserted that the seams were
+    // dirty on entry, which is the same vacuity class the rest of the suite guards against
+    // deliberately, left unguarded where it is structurally hardest to see. Dirtying the
+    // seams here, and asserting the dirt is present before cleaning it, makes the scenario
+    // self-contained: no ordering assumption is load-bearing and no assertion can pass
+    // because the thing it tests never happened.
     name: "harness-leak-check-resethelper-restores-every-seam",
     run: async (helper) => {
       resetHelper(helper);
       resetLogs();
-      // 1. The seams the previous scenario stubbed must be the real implementations again.
+
+      // A seam outside the old curated list, plus the turf stub left flipped exactly as a
+      // missing `finally` would leave it.
+      helper.fetchBinBuffer = async () => { throw new Error("LEAKED fetchBinBuffer stub"); };
+      helper.checkInPolygon = () => { throw new Error("LEAKED checkInPolygon stub"); };
+      turfStub.pointInPolygon = () => true;
+
+      // Precondition: the dirt is actually present. Without this the assertions below pass
+      // whenever the stubbing silently failed to take — the vacuity the two-scenario
+      // arrangement could not rule out.
+      let dirtied = null;
+      try { await helper.fetchBinBuffer("https://www.wpc.ncep.noaa.gov/kml/mpd/MPD_1_final.kmz"); }
+      catch (err) { dirtied = err; }
+      if (!dirtied || !/LEAKED fetchBinBuffer stub/.test(dirtied.message)) {
+        throw new Error("setup did not dirty fetchBinBuffer, so the restoration assertion below proves nothing");
+      }
+      dirtied = null;
+      try { helper.checkInPolygon({ type: "FeatureCollection", features: [] }, PROBE_LAT, PROBE_LON); }
+      catch (err) { dirtied = err; }
+      if (!dirtied || !/LEAKED checkInPolygon stub/.test(dirtied.message)) {
+        throw new Error("setup did not dirty checkInPolygon, so the restoration assertion below proves nothing");
+      }
+      if (turfStub.pointInPolygon({}, {}) !== true) {
+        throw new Error("setup did not dirty the turf stub, so the restoration assertion below proves nothing");
+      }
+
+      resetHelper(helper);
+      resetLogs();
+      // 1. The seams stubbed above must be the real implementations again.
       let leaked = null;
       try {
         await helper.fetchBinBuffer("https://www.wpc.ncep.noaa.gov/kml/mpd/MPD_1_final.kmz");
@@ -3103,15 +3128,15 @@ const scenarios = [
       }
       if (leaked && /LEAKED fetchBinBuffer stub/.test(leaked.message)) {
         throw new Error(
-          "a previous scenario's fetchBinBuffer stub survived resetHelper — every seam " +
-          "outside the old curated two-entry list bleeds into every later scenario"
+          "a fetchBinBuffer stub survived resetHelper — every seam outside the old curated " +
+          "two-entry list bleeds into every later scenario"
         );
       }
       let hit;
       try {
         hit = helper.checkInPolygon({ type: "FeatureCollection", features: [] }, PROBE_LAT, PROBE_LON);
       } catch (err) {
-        throw new Error(`a previous scenario's checkInPolygon stub survived resetHelper: ${err.message}`);
+        throw new Error(`a checkInPolygon stub survived resetHelper: ${err.message}`);
       }
       if (hit !== null) {
         throw new Error(`checkInPolygon on an empty collection returned ${JSON.stringify(hit)}, not null`);
