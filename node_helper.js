@@ -394,6 +394,10 @@ module.exports = NodeHelper.create({
     const { urls, failed } = await strategy.call(this, row);
     let anyStale = failed;
 
+    // ADVISORY_MAX_CANDIDATES bounds how many KMZs are *fetched* per poll — a resource control
+    // only. It must never be repurposed into a cap on how many entries are *returned*: per D-07
+    // there is no cap on the advisory band, so every candidate that is fetched, contains the
+    // location and is still valid is returned below.
     let candidates = urls;
     if (candidates.length > ADVISORY_MAX_CANDIDATES) {
       Log.error(`MMM-SPCOutlook ${row.id}: ${candidates.length} candidates exceeds the ` +
@@ -405,7 +409,11 @@ module.exports = NodeHelper.create({
     const entries = [];
     // CR-02: contain per candidate. An index is fetched, then its member KMZs are
     // fetched seconds to minutes later, so a member that expires in that window
-    // 404s. One unreadable advisory must never discard its siblings.
+    // 404s. One unreadable advisory must never discard its siblings. Looping over every
+    // candidate here (rather than stopping at the first hit) is what satisfies MPD-02's "all
+    // concurrently active" requirement — checkInPolygon's single containing-feature return per
+    // candidate is sufficient because the live MPD KMZ carries a single Polygon Placemark; the
+    // multi-advisory collection happens at this loop's level, not inside checkInPolygon.
     for (const url of candidates) {
       try {
         const buffer = await this.fetchBinBuffer(url);
@@ -414,7 +422,18 @@ module.exports = NodeHelper.create({
         // The containing feature, not features[0] — see checkInPolygon.
         const hit = this.checkInPolygon(gj, lat, lon);
         if (!hit) continue;
-        const entry = row.toEntry(hit, {});
+
+        // MPD-04/MPD-03/D-06: mpd is the only kml-advisory row needing a per-candidate validity
+        // gate and description-CDATA labelling; spcMD supplies no ctx and keeps today's
+        // behaviour unchanged (its toEntry reads feature.properties.name directly).
+        let ctx = {};
+        if (row.id === "mpd") {
+          const prepared = this._prepareMpdEntry(hit, url);
+          if (prepared.drop) continue;
+          ctx = prepared.ctx;
+        }
+
+        const entry = row.toEntry(hit, ctx);
         if (entry === null) {
           Log.error(`MMM-SPCOutlook: ${row.id} covers the location but carries no name: ${url}`);
           continue;
@@ -430,6 +449,63 @@ module.exports = NodeHelper.create({
     }
 
     return { entries, anyStale };
+  },
+
+  /**
+   * MPD-only hook for `_runKmlAdvisoryRow`'s per-candidate loop: applies MPD-04's validity gate
+   * and reads MPD-03's hazard-type/number labels out of the description CDATA. `row.id ===
+   * "mpd"` branches into this rather than every `kml-advisory` row carrying it, so `spcMD` is
+   * structurally unaffected.
+   * @param feature - the containing feature `checkInPolygon` returned for this candidate
+   * @param url - the candidate's fetch URL, used only for diagnostic logging
+   * @returns `{ drop: true, reason }` to discard the candidate, or `{ ctx }` where `ctx.number`
+   *   and `ctx.hazardType` feed `PRODUCT_REGISTRY.mpd.toEntry(feature, ctx)`.
+   */
+  _prepareMpdEntry(feature, url) {
+    const html = this.mpdDescriptionHtml(feature);
+    const issueTime = this.extractMpdField(html, "IssueTime");
+    const validEndTi = this.extractMpdField(html, "ValidEndTi");
+    const validEnd = (issueTime !== null && validEndTi !== null)
+      ? this.parseMpdValidEnd(issueTime, validEndTi)
+      : null;
+
+    // MPD-04: this is the ONLY mechanism that decides currency. The filename number and the
+    // discovery listing's Last-Modified timestamp must never appear anywhere in this decision —
+    // both are cost/label conveniences, never selection criteria.
+    if (validEnd instanceof Date && validEnd.getTime() <= Date.now()) {
+      return { drop: true, reason: "expired" };
+    }
+    if (validEnd === null) {
+      // Fail open per this plan's decision record: IssueTime/ValidEndTi could not be resolved
+      // (unparseable IssueTime, unknown timezone abbreviation, malformed/missing ValidEndTi), so
+      // the candidate is kept rather than discarded — showing an expired MPD is a minor
+      // annoyance, hiding an active one is the false-negative class this project exists to
+      // prevent.
+      Log.error(`MMM-SPCOutlook: mpd validity window unparseable, keeping candidate: ${url}`);
+    }
+
+    const hazardType = this.mpdHazardType(feature);
+    if (hazardType === null) {
+      // D-06: the user is inside an active precipitation discussion; omitting it for a missing
+      // MPDType would be the same false-negative class WR-06 already fixed for SPC MD's "covers
+      // the location but carries no name" case.
+      Log.error(`MMM-SPCOutlook: mpd covers the location but has no parseable hazard type: ${url}`);
+    }
+
+    let number = this.mpdNumber(feature);
+    if (number === null) {
+      // The filename number is acceptable as a *label* of last resort so a covering MPD is
+      // never dropped merely for an unreadable MPDNumber field — it remains forbidden as a
+      // *selection* criterion, which is why this fallback runs only after the ValidEndTi gate
+      // above has already decided currency.
+      const m = /MPD_(\d+)_final\.kmz/.exec(url);
+      if (m) {
+        number = m[1];
+        Log.error(`MMM-SPCOutlook: mpd MPDNumber unparseable, falling back to filename number: ${url}`);
+      }
+    }
+
+    return { ctx: { number, hazardType } };
   },
 
   // Called when the front-end (MMM-SPCOutlook.js) sends a socket notification
