@@ -79,6 +79,9 @@ const LEADING_BAD_FEATURE_BODY = {
 // layer otherwise takes installFetch's hard-failure default, which sets anyStale and
 // makes any `_stale` assertion pass for reasons that have nothing to do with the
 // scenario's subject (WR-02).
+// WSSI-03: this is also byte-identical to the live off-season response captured from the
+// WSSI MapServer — `{"type":"FeatureCollection","features":[]}` — so the same constant
+// doubles as the WSSI out-of-season fixture rather than a duplicate being added for it.
 const EMPTY_FEATURE_COLLECTION = { type: "FeatureCollection", features: [] };
 
 // WR-08: an HTTP 200 that parses as JSON and has a `features` array — so
@@ -193,6 +196,83 @@ const FIRE_CRIT_BODY = {
   ]
 };
 
+// D-09 AMENDED / WSSI-02: live WPC WSSI features carry ALL-CAPS `impact` values with no
+// `LIMITED` tier — the real, live-verified domain is WINTER WEATHER AREA -> MINOR ->
+// MODERATE -> MAJOR -> EXTREME. No fixture below may assert on the literal string
+// "LIMITED": that tier does not exist in the live payload, so a scenario written against
+// it could never go RED and would be permanently vacuous (RESEARCH.md Pitfall 4).
+const WSSI_MINOR_BODY = {
+  type: "FeatureCollection",
+  features: [
+    {
+      type: "Feature",
+      properties: { impact: "MINOR", valid_time: "2026-08-19T12:00:00Z" },
+      geometry: { type: "Polygon", coordinates: [SAMPLE_RING] }
+    }
+  ]
+};
+
+const WSSI_MODERATE_BODY = {
+  type: "FeatureCollection",
+  features: [
+    {
+      type: "Feature",
+      properties: { impact: "MODERATE", valid_time: "2026-08-19T12:00:00Z" },
+      geometry: { type: "Polygon", coordinates: [SAMPLE_RING] }
+    }
+  ]
+};
+
+const WSSI_MAJOR_BODY = {
+  type: "FeatureCollection",
+  features: [
+    {
+      type: "Feature",
+      properties: { impact: "MAJOR", valid_time: "2026-08-19T12:00:00Z" },
+      geometry: { type: "Polygon", coordinates: [SAMPLE_RING] }
+    }
+  ]
+};
+
+const WSSI_EXTREME_BODY = {
+  type: "FeatureCollection",
+  features: [
+    {
+      type: "Feature",
+      properties: { impact: "EXTREME", valid_time: "2026-08-19T12:00:00Z" },
+      geometry: { type: "Polygon", coordinates: [SAMPLE_RING] }
+    }
+  ]
+};
+
+// WSSI-02: WPC's prose documentation writes tier names in mixed case ("Minor") even
+// though the live renderer's `impact` field is always ALL-CAPS; the registry's case fold
+// must resolve this exactly like the ALL-CAPS fixture above.
+const WSSI_MIXED_CASE_BODY = {
+  type: "FeatureCollection",
+  features: [
+    {
+      type: "Feature",
+      properties: { impact: "Minor", valid_time: "2026-08-19T12:00:00Z" },
+      geometry: { type: "Polygon", coordinates: [SAMPLE_RING] }
+    }
+  ]
+};
+
+// D-09 AMENDED: WPC's own non-impact tier — its service description states this tier is
+// "not anticipated to impact daily life." The registry's includesFeat filters this out
+// before evaluatePolygons ever sees it, so it must render nothing, exactly like no-polygon.
+const WSSI_WWA_BODY = {
+  type: "FeatureCollection",
+  features: [
+    {
+      type: "Feature",
+      properties: { impact: "WINTER WEATHER AREA", valid_time: "2026-08-19T12:00:00Z" },
+      geometry: { type: "Polygon", coordinates: [SAMPLE_RING] }
+    }
+  ]
+};
+
 // WR-09: this pair used to be documented as "fixed for every scenario so getSpcOutlook's
 // location-change cache invalidation never fires mid-suite", which was false and hid a
 // coverage hole. resetHelper delegates to helper.start(), which sets _cachedLat = null,
@@ -211,6 +291,14 @@ const ERO_URLS = {
   3: PRODUCT_REGISTRY.excessiveRain.buildUrl(3),
   4: PRODUCT_REGISTRY.excessiveRain.buildUrl(4),
   5: PRODUCT_REGISTRY.excessiveRain.buildUrl(5)
+};
+
+// Never hardcode a WSSI query URL — keying off buildUrl keeps the probe's own dependency
+// chain honoring the URL byte-stability contract (PERF-02, D-09), exactly like ERO_URLS.
+const WSSI_URLS = {
+  1: PRODUCT_REGISTRY.winterImpact.buildUrl(1),
+  2: PRODUCT_REGISTRY.winterImpact.buildUrl(2),
+  3: PRODUCT_REGISTRY.winterImpact.buildUrl(3)
 };
 
 // The live MPD hazard-type table, verbatim from RESEARCH.md's MPD_1118_final.kmz sample.
@@ -347,6 +435,26 @@ function eroHttpRoutes(day1Handler) {
   const okEmpty = () => httpResponse({ body: EMPTY_FEATURE_COLLECTION, etag: "empty-v1" });
   return [
     [ERO_URLS[1], day1Handler],
+    [ERO_URLS[2], okEmpty],
+    [ERO_URLS[3], okEmpty],
+    [ERO_URLS[4], okEmpty],
+    [ERO_URLS[5], okEmpty],
+    [".lyr.geojson", okEmpty]
+  ];
+}
+
+// Routes for the WSSI HTTP-seam scenarios, mirroring eroHttpRoutes: WSSI day 1 is the
+// subject, WSSI days 2-3, every ERO day, and every SPC/fire-weather layer answer 200 with
+// an empty collection. This is WR-02's trap applied to WSSI — without routing every other
+// layer, an unrouted layer takes the hard-failure default, sets anyStale, and any `_stale`
+// assertion passes for a reason that has nothing to do with the scenario's subject.
+function wssiRoutes(day1Handler) {
+  const okEmpty = () => httpResponse({ body: EMPTY_FEATURE_COLLECTION, etag: "empty-v1" });
+  return [
+    [WSSI_URLS[1], day1Handler],
+    [WSSI_URLS[2], okEmpty],
+    [WSSI_URLS[3], okEmpty],
+    [ERO_URLS[1], okEmpty],
     [ERO_URLS[2], okEmpty],
     [ERO_URLS[3], okEmpty],
     [ERO_URLS[4], okEmpty],
