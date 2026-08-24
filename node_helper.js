@@ -30,16 +30,56 @@ const valueToFullRisk = {
 const valueToRisk = {
         1: "TSTM", 2: "MRGL", 3: "SLGT", 4: "ENH", 5: "MDT", 6: "HIGH"
       };
-// WR-06: the MD member URLs are not ours — they are hrefs harvested from a KML we
+// WR-06: the MD/MPD member URLs are not ours — they are hrefs harvested from a KML we
 // downloaded, so anyone able to influence that document (an upstream compromise, a
 // transparent proxy, a hostile DNS answer, a captive portal) chooses what this host
 // fetches next, including RFC1918 addresses, which from a home-network Pi is the
 // interesting target. productRegistry.js already refuses any baseUrl that is not
-// https://mapservices.weather.noaa.gov/ (buildArcGisQuery); this applies the same rule
-// to the older path that feeds the same render.
-const MD_HOST_PREFIX = "https://www.spc.noaa.gov/";
+// https://mapservices.weather.noaa.gov/ (buildArcGisQuery); this applies an equivalent
+// rule to the KML-advisory path that feeds SPC MD and WPC MPD (D-02).
+//
+// The former allowlist was a raw `startsWith("https://www.spc.noaa.gov/")` prefix check.
+// SPC's own `ActiveMD.kmz` publishes its member hrefs as `http://`, not `https://`, so
+// `"http://…".startsWith("https://…")` was always false and every live href was refused —
+// a live, currently-shipping availability defect (RESEARCH.md Pitfall 1), not merely a
+// bug in theory. Prefix matching on the raw string is also the wrong tool for the SSRF
+// control it exists to be: a lookalike host (`www.spc.noaa.gov.evil.test`) or a userinfo
+// trick (`https://www.spc.noaa.gov@evil.test/`) both satisfy a naive prefix test.
+//
+// `normalizeAdvisoryUrl` replaces it: parse with `new URL`, match the hostname exactly
+// against the row's `allowedHost`, and normalize the scheme to `https:` before ever
+// fetching — `fetchBinBuffer` sends `redirect: "error"`, so fetching the `http://` URL
+// SPC actually serves would throw on SPC's own 301 rather than follow it. Scheme is
+// normalized; host is matched exactly. One allowlist function now serves every
+// `kml-advisory` registry row (D-02), each supplying its own `allowedHost`.
+function normalizeAdvisoryUrl(rawHref, allowedHost) {
+  if (typeof rawHref !== "string") return null;
+  const trimmed = rawHref.trim();
+  if (trimmed === "") return null;
+
+  let url;
+  try {
+    url = new URL(trimmed);
+  } catch (_err) {
+    return null;
+  }
+
+  if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+  if (typeof allowedHost !== "string" || url.hostname.toLowerCase() !== allowedHost.toLowerCase()) return null;
+  if (url.username !== "" || url.password !== "") return null;
+  if (url.port !== "") return null;
+
+  url.protocol = "https:";
+  return url.toString();
+}
 
 module.exports = NodeHelper.create({
+  // Exposed on the helper object (rather than kept purely module-private) so offline
+  // probes can exercise the allowlist directly against the module-scope implementation
+  // above; every in-file caller still invokes the bare module-scope function, not
+  // `this.normalizeAdvisoryUrl`.
+  normalizeAdvisoryUrl,
+
   start: function() {
     Log.info("Starting node_helper for MMM-SPCOutlook...");
     this._geoJsonCache = new Map();  // keyed by URL string
@@ -295,6 +335,11 @@ module.exports = NodeHelper.create({
     return Buffer.from(await res.arrayBuffer());
   },
 
+  // Derives the KML member name from the URL's last path segment — correct for SPC MD,
+  // whose member KMZ and KML share the URL-derived stem (e.g. MD2108.kmz -> MD2108.kml).
+  // WPC MPD's KMZ member name is fixed (`doc.kml`) regardless of the URL, so this heuristic
+  // would yield the non-existent `MPD_1118_final.kml`. `kml-advisory` rows use
+  // `extractSoleKmlEntry` instead, which scans the archive for its sole `.kml` entry.
   kmzToKmlfilename(url) {
     const segments = url.split("/");
     const kmzFileName = segments[segments.length-1];
@@ -305,6 +350,44 @@ module.exports = NodeHelper.create({
     const ZIPper = new ZIP(buffer);
     const entry = ZIPper.getEntry(filename);
     if(!entry) throw new Error('KMZ downloaded has no KML');
+    return ZIPper.readFile(entry).toString();
+  },
+
+  /**
+   * Read the sole `.kml` member out of a remote KMZ archive, without relying on the
+   * URL-derived filename heuristic `kmzToKmlfilename` uses. WPC MPD's KMZ member is always
+   * named `doc.kml`, unlike SPC MD's URL-derived stem, so a shared `kml-advisory` runner
+   * needs a "find the sole `.kml` entry" primitive rather than a filename guess.
+   * @param buffer - the downloaded KMZ bytes, remote and attacker-influenceable
+   * @returns the `.kml` entry's contents as a string
+   *
+   *   Hardened against a hostile archive, since the buffer is remote: refuses an archive
+   *   reporting more than 32 entries, refuses an entry whose name contains a `..` segment
+   *   or begins with `/` or a drive letter (zip-slip shape — the selected name is logged
+   *   downstream and could otherwise be used to forge a log line), and refuses an entry
+   *   whose declared uncompressed size exceeds 8 MB (live samples are ~3 KB, so this is
+   *   three orders of magnitude of headroom and bounds a decompression bomb). Each refusal
+   *   throws with a message naming the reason, so the caller's per-candidate catch
+   *   (CR-02) logs it and moves on to the next candidate rather than losing the whole run.
+   */
+  extractSoleKmlEntry(buffer){
+    const ZIPper = new ZIP(buffer);
+    const entries = ZIPper.getEntries();
+    if (entries.length > 32) {
+      throw new Error(`KMZ downloaded has too many entries (${entries.length} > 32)`);
+    }
+    const entry = entries.find((e) => /\.kml$/i.test(e.entryName));
+    if (!entry) throw new Error("KMZ downloaded has no .kml entry");
+
+    const name = entry.entryName;
+    if (name.includes("..") || name.startsWith("/") || /^[A-Za-z]:/.test(name)) {
+      throw new Error(`KMZ downloaded has an unsafe entry name: ${JSON.stringify(name)}`);
+    }
+    const size = entry.header && typeof entry.header.size === "number" ? entry.header.size : 0;
+    if (size > 8 * 1024 * 1024) {
+      throw new Error(`KMZ downloaded has an oversized .kml entry: ${size} bytes`);
+    }
+
     return ZIPper.readFile(entry).toString();
   },
 
@@ -545,14 +628,20 @@ module.exports = NodeHelper.create({
     const ActiveURL = "https://www.spc.noaa.gov/products/md/ActiveMD.kmz"
     const ActiveKMZ = await this.fetchBinBuffer(ActiveURL);
     const ActiveKML = this.extractKmlFromKmz(ActiveKMZ, "ActiveMD.kml");
-    // WR-06: allowlist before fetching. A refusal is loud: an off-host href in an SPC
-    // product is either an upstream problem or an attack, and either way an operator
-    // needs to see it.
-    const MDURLs = this.parseNetworkLinks(ActiveKML).filter((u) => {
-      if (typeof u === "string" && u.startsWith(MD_HOST_PREFIX)) return true;
-      Log.error("MMM-SPCOutlook: refusing off-host NetworkLink href " + JSON.stringify(u));
-      return false;
-    });
+    // WR-06/Pitfall 1: allowlist before fetching, via the hostname-parsed
+    // normalizeAdvisoryUrl rather than a raw prefix match — SPC serves these hrefs as
+    // `http://`, which normalizeAdvisoryUrl accepts and upgrades to `https://` rather than
+    // refusing outright. A refusal is loud: an off-host href in an SPC product is either
+    // an upstream problem or an attack, and either way an operator needs to see it.
+    const MDURLs = [];
+    for (const u of this.parseNetworkLinks(ActiveKML)) {
+      const normalized = normalizeAdvisoryUrl(u, "www.spc.noaa.gov");
+      if (normalized === null) {
+        Log.error("MMM-SPCOutlook: refusing off-host NetworkLink href " + JSON.stringify(u));
+        continue;
+      }
+      MDURLs.push(normalized);
+    }
     if(MDURLs.length == 0) return false;
     const MDArray = [];
     // CR-02: contain per MD. ActiveMD.kmz is an index whose member KMZs are fetched
