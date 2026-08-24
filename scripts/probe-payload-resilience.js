@@ -638,6 +638,24 @@ function httpResponse({ status = 200, body, text, buffer, etag = null }) {
   };
 }
 
+// CR-02: a response whose headers arrived cleanly and whose BODY then fails — a
+// connection reset, a truncated chunked response, or the 15 s AbortSignal firing after
+// the connect phase succeeded. This is the shape no scenario could produce while
+// httpResponse only ever resolved text(): every existing failure fixture rejects at the
+// connect (installFetch's throwingFetch) or answers a non-2xx, and both of those take
+// branches that were already contained. Only this shape reaches the unguarded
+// `await res.text()`.
+function httpBodyReadFailure({ status = 200, etag = null, message = "ECONNRESET while reading body" } = {}) {
+  const reject = async () => { throw new Error(message); };
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    text: reject,
+    arrayBuffer: reject,
+    headers: { get: (name) => (String(name).toLowerCase() === "etag" ? etag : null) }
+  };
+}
+
 // Router over URL-substring routes, installed on helper._fetch. A URL matching no route
 // gets a 503, which is the real function's "unrecoverable fetch failure" path rather
 // than a fabricated return shape. Records the request headers so a scenario can prove an
@@ -1447,6 +1465,77 @@ const scenarios = [
         requireLog(
           ["rejected an unusable response body for", ERO_URLS[1], "unparseable body"],
           "an unparseable body produced no diagnostic naming the URL"
+        );
+      } finally {
+        turfStub.pointInPolygon = originalPointInPolygon;
+      }
+    }
+  },
+  {
+    // CR-02: the body read sat outside fetchGeoJsonCached's error containment, so a
+    // mid-body reset/abort — exactly what the 15 s AbortSignal produces when headers
+    // arrive and the body then stalls — escaped every per-layer guard. Two consequences,
+    // both asserted here: a still-fresh cached reading was discarded instead of served,
+    // and for the SPC layers (which have no per-layer try) the throw reached
+    // getSpcOutlook's shared catch and collapsed the whole payload to { error }.
+    name: "body-read-abort-is-contained-not-a-payload-collapse",
+    run: async (helper) => {
+      resetHelper(helper);
+      resetLogs();
+      helper._products = { showExcessiveRain: true };
+      const originalPointInPolygon = turfStub.pointInPolygon;
+      turfStub.pointInPolygon = () => true;
+      try {
+        // Part 1 — a cached reading exists, so a body-read failure must take the same
+        // stale-fallback path a failed connect takes, not blank the tier.
+        installHttp(helper, eroHttpRoutes(() => httpResponse({ body: ERO_SLGT_BODY, etag: "ero-v1" })));
+        const warm = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showExcessiveRain: true });
+        if (warm.excessiveRain.day1Risk !== "SLGT" || warm._stale) {
+          throw new Error(`warm-up did not establish a clean cached SLGT: ${warm.excessiveRain.day1Risk} / _stale ${warm._stale}`);
+        }
+        resetLogs();
+
+        installHttp(helper, eroHttpRoutes(() => httpBodyReadFailure({ etag: "ero-v2" })));
+        const out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showExcessiveRain: true });
+        assertPayloadIntact(out);
+        if (out.excessiveRain.day1Risk !== "SLGT") {
+          throw new Error(`a mid-body abort blanked an active tier: expected the cached SLGT, got ${out.excessiveRain.day1Risk}`);
+        }
+        if (out._stale !== true) {
+          throw new Error("last-known-good was served after a body-read failure without the stale flag");
+        }
+        requireLog(
+          ["stale fallback for", ERO_URLS[1]],
+          "a body-read failure did not take the stale-fallback path the network-error branch owns"
+        );
+
+        // Part 2 — no cached reading, and the failing layer is the SPC day 1 categorical
+        // one, which has no per-layer try. Pre-fix this returned { error } and every
+        // other product went dark with it; assertPayloadIntact fails loudly on that.
+        resetHelper(helper);
+        resetLogs();
+        helper._products = { showExcessiveRain: true };
+        const day1Cat = "https://www.spc.noaa.gov/products/outlook/day1otlk_cat.lyr.geojson";
+        installHttp(helper, [
+          [day1Cat, () => httpBodyReadFailure({ etag: "spc-v1" })],
+          [".lyr.geojson", () => httpResponse({ body: EMPTY_FEATURE_COLLECTION, etag: "empty-v1" })],
+          [ERO_URLS[1], () => httpResponse({ body: EMPTY_FEATURE_COLLECTION, etag: "empty-v1" })],
+          [ERO_URLS[2], () => httpResponse({ body: EMPTY_FEATURE_COLLECTION, etag: "empty-v1" })],
+          [ERO_URLS[3], () => httpResponse({ body: EMPTY_FEATURE_COLLECTION, etag: "empty-v1" })],
+          [ERO_URLS[4], () => httpResponse({ body: EMPTY_FEATURE_COLLECTION, etag: "empty-v1" })],
+          [ERO_URLS[5], () => httpResponse({ body: EMPTY_FEATURE_COLLECTION, etag: "empty-v1" })]
+        ]);
+        const solo = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showExcessiveRain: true });
+        assertPayloadIntact(solo);
+        if (solo.day1.risk !== "NONE") {
+          throw new Error(`the failing layer should resolve to NONE, got ${solo.day1.risk}`);
+        }
+        if (solo._stale !== true) {
+          throw new Error("a body-read hard failure produced an unflagged no-risk payload (_stale !== true)");
+        }
+        requireLog(
+          ["unrecoverable fetch failure for", day1Cat, "body read failed"],
+          "a body-read hard failure produced no diagnostic naming the URL"
         );
       } finally {
         turfStub.pointInPolygon = originalPointInPolygon;

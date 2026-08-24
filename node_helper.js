@@ -1139,8 +1139,25 @@ module.exports = NodeHelper.create({
       return { data: null, cachedResult: null, stale: false, failed: true };
     }
 
-    // HTTP 200 — read raw text
-    const rawText = await res.text();
+    // HTTP 200 — read raw text. CR-02: the body read has to be contained by the same
+    // branch that owns network-failure policy. A connection reset, a truncated chunked
+    // response, or the 15 s AbortSignal firing *after* headers arrived all reject here,
+    // not at the connect above — and an escape from this line reaches getSpcOutlook's
+    // shared catch and collapses the entire payload to `{ error }` over one layer, while
+    // discarding a still-fresh cached reading the stale-fallback path would have served.
+    let rawText;
+    try {
+      rawText = await res.text();
+    } catch (err) {
+      if (entry && this._isWithinStaleWindow(entry.timestamp, this._updateInterval)) {
+        Log.info('MMM-SPCOutlook: stale fallback for ' + url);
+        this._noteStaleEntry(entry);
+        return { data: null, cachedResult: entry.result, stale: true };
+      }
+      Log.error('MMM-SPCOutlook: unrecoverable fetch failure for ' + url +
+                ' (body read failed: ' + (err && err.message ? err.message : err) + ')');
+      return { data: null, cachedResult: null, stale: false, failed: true };
+    }
     const newEtag = res.headers.get('etag');
 
     // CR-02: an HTTP 200 whose body is unusable (ArcGIS REST returns most failures as a
