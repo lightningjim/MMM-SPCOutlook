@@ -2883,6 +2883,67 @@ const scenarios = [
         }
       }
     }
+  },
+  {
+    // WR-09: ERO and WSSI rows are gated on their own config toggles; the advisory band was
+    // not, at either the render or the no-risk gate. That was safe only while the backend
+    // and frontend toggles agreed — and node_helper's `_products` is shared across
+    // MagicMirror module INSTANCES of the same type, so two configured instances with
+    // different showMPD values overwrite each other's toggles on every poll and the losing
+    // instance renders advisories its own config disabled. The payloads below are exactly
+    // what that losing instance receives: populated arrays its config says not to show.
+    name: "frontend-advisory-band-respects-its-config-toggles",
+    run: async (_helper) => {
+      resetLogs();
+      const frontend = loadFrontendModule();
+      const noRisk = { risk: "NONE", text: "None", color: "afddf6" };
+      const payload = {
+        day1: { ...noRisk }, day2: { ...noRisk }, day3: { ...noRisk },
+        day4: { ...noRisk }, day5: { ...noRisk }, day6: { ...noRisk },
+        day7: { ...noRisk }, day8: { ...noRisk },
+        day48Risk: false,
+        fireWeather: { day1Risk: 0, day2Risk: 0 },
+        excessiveRain: {}, winterImpact: {},
+        advisories: {
+          spcMD: [{ label: "SPC MD 2108", hazardType: null }],
+          mpd: [{ label: "WPC MPD 1118", hazardType: "Heavy snow" }]
+        }
+      };
+      const cfg = (over) => ({
+        lat: PROBE_LAT, lon: PROBE_LON, extended: false, updateInterval: 60,
+        proximityWeighting: false, showExcessiveRain: false, showWinterImpact: false,
+        showSPCMD: true, showMPD: true, ...over
+      });
+
+      const bothOff = renderDom(frontend, { config: cfg({ showSPCMD: false, showMPD: false }), spcrisk: payload });
+      if (bothOff.includes("SPC MD 2108") || bothOff.includes("WPC MPD 1118")) {
+        throw new Error(`advisories rendered with both toggles off: ${JSON.stringify(bothOff)}`);
+      }
+      // The gate must agree with the render: with nothing displayable and no other risk,
+      // this is a genuine all-clear, not a band-less "(unconfirmed)" or a bare page.
+      if (bothOff !== "No Severe Weather Risk") {
+        throw new Error(
+          `the no-risk gate did not agree with the render — advisories the config disabled ` +
+          `still disqualified the short-circuit: ${JSON.stringify(bothOff)}`
+        );
+      }
+
+      const mpdOnly = renderDom(frontend, { config: cfg({ showSPCMD: false }), spcrisk: payload });
+      if (mpdOnly.includes("SPC MD 2108")) {
+        throw new Error(`showSPCMD:false still rendered the SPC MD: ${JSON.stringify(mpdOnly)}`);
+      }
+      if (!mpdOnly.includes("WPC MPD 1118")) {
+        throw new Error(`showMPD:true dropped the MPD: ${JSON.stringify(mpdOnly)}`);
+      }
+
+      const mdOnly = renderDom(frontend, { config: cfg({ showMPD: false }), spcrisk: payload });
+      if (mdOnly.includes("WPC MPD 1118")) {
+        throw new Error(`showMPD:false still rendered the MPD: ${JSON.stringify(mdOnly)}`);
+      }
+      if (!mdOnly.includes("SPC MD 2108")) {
+        throw new Error(`showSPCMD:true dropped the SPC MD: ${JSON.stringify(mdOnly)}`);
+      }
+    }
   }
 ];
 

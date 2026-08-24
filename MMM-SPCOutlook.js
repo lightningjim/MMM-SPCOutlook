@@ -162,6 +162,32 @@
     const escapeHtml = (value) => String(value).replace(/[&<>"']/g, (ch) => (
       { "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" }[ch]
     ));
+    // WR-09/CV-03: the one place the frontend names productRegistry.js's `kml-advisory`
+    // rows. Each key is a row's `id` (which is also its key inside the payload's
+    // `advisories` object) and each value is that row's `configFlag`. This mapping cannot be
+    // derived — the frontend runs in a browser context and cannot require the registry — so
+    // it is stated once here rather than spelled out at the gate and again at the render.
+    // A Phase 16/17 kml-advisory row adds one line here and nothing else.
+    const ADVISORY_SOURCES = { spcMD: "showSPCMD", mpd: "showMPD" };
+    // WR-09: every other product row is gated on its own toggle (`this.config.showExcessiveRain
+    // && ...`, `this.config.showWinterImpact && ...`); the advisory band was not, so it
+    // rendered whatever arrived. That was safe only because _runKmlAdvisoryRow returns [] when
+    // the toggle is off — i.e. correctness depended entirely on the backend and frontend
+    // toggles never disagreeing. They can: node_helper's `_products` is shared across
+    // MagicMirror module INSTANCES of the same type (acknowledged in node_helper.js), so two
+    // configured instances with different showMPD values overwrite each other's toggles on
+    // every poll and the losing instance renders advisories its own config disabled.
+    // WR-07: the Array.isArray filter is the tolerance the gate already applies — an absent
+    // or junk key contributes nothing rather than throwing out of getDom.
+    const enabledAdvisories = () => {
+      const advisories = (this.spcrisk && this.spcrisk.advisories) || {};
+      const lines = [];
+      for (const key of Object.keys(ADVISORY_SOURCES)) {
+        if (!this.config[ADVISORY_SOURCES[key]]) continue;
+        if (Array.isArray(advisories[key])) lines.push(...advisories[key]);
+      }
+      return lines;
+    };
     const wrapper = document.createElement("div");
     if (!this.spcrisk) {
       wrapper.innerHTML = "Loading SPC Outlook...";
@@ -213,9 +239,13 @@
       // discussion with no other risk rendered the literal "No Severe Weather Risk" and the
       // advisory was never displayed. That is dormant for SPC MDs, which usually accompany
       // convective risk, but fatal for MPD-01, since a WPC MPD routinely fires with zero SPC
-      // convective risk. Optional chaining and the length check tolerate a missing
-      // `advisories` key from a helper that predates this shape (version skew).
-      !((this.spcrisk.advisories?.spcMD?.length > 0) || (this.spcrisk.advisories?.mpd?.length > 0))
+      // convective risk. WR-09: the term now carries the same per-product toggle the ERO and
+      // WSSI terms above carry, so the gate and the render agree about what is displayable —
+      // an advisory the user's config disabled must not disqualify the short-circuit for a
+      // band that will not render it. enabledAdvisories() tolerates a missing `advisories`
+      // key, and a missing or non-array inner key, from a helper that predates this shape
+      // (version skew) — the same tolerance the optional chaining here used to provide.
+      !(enabledAdvisories().length > 0)
     ) {
       wrapper.innerHTML = "No Severe Weather Risk"
     } else {
@@ -247,18 +277,14 @@
       // the hazard type from the MPDType cell — so both are escaped (WR-12 already applies
       // this reasoning to MD names; MPD adds a second such source). No cap, no truncation
       // (D-07) — polygon containment already bounds the realistic count.
-      // WR-07: the gate above tolerates a missing `advisories` key AND a missing inner key
-      // (`advisories?.spcMD?.length > 0`), and this line did not — `advisories || {...}`
-      // guards only the OUTER object, so a payload carrying `advisories` with one key
-      // absent threw "advisories.mpd is not iterable". A throw inside getDom breaks the
-      // module's ENTIRE render, not just the advisory band, so the harsher of the two
-      // disagreeing guards was the one that decided the outcome. Tolerate here exactly what
-      // the gate tolerates: an absent or non-array key contributes nothing.
-      const advisories = this.spcrisk.advisories || {};
-      const allAdvisories = [
-        ...(Array.isArray(advisories.spcMD) ? advisories.spcMD : []),
-        ...(Array.isArray(advisories.mpd) ? advisories.mpd : [])
-      ];
+      // WR-07: this line used to spread `advisories.spcMD` and `advisories.mpd` directly,
+      // while the gate above tolerated both a missing `advisories` key and a missing inner
+      // key — `advisories || {...}` guards only the OUTER object, so a payload carrying
+      // `advisories` with one key absent threw "advisories.mpd is not iterable" out of
+      // getDom and took the module's ENTIRE render with it. WR-09: and it consulted no
+      // toggle. Both are now settled once, in enabledAdvisories(), so the gate and the
+      // render can no longer disagree about either question.
+      const allAdvisories = enabledAdvisories();
       for (const entry of allAdvisories) {
         // Guard the entry itself: skip a null/non-object entry rather than rendering
         // "undefined in effect." — the failure class CR-02 already fixed once on the backend.
