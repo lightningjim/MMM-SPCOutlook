@@ -73,6 +73,11 @@ function normalizeAdvisoryUrl(rawHref, allowedHost) {
   return url.toString();
 }
 
+// T-15-17: bounds how many member KMZs one `kml-advisory` row fetches per poll. A
+// hostile or malfunctioning index could otherwise turn one poll into an unbounded
+// fetch burst; 60 is comfortably above any observed SPC MD / WPC MPD candidate count.
+const ADVISORY_MAX_CANDIDATES = 60;
+
 module.exports = NodeHelper.create({
   // Exposed on the helper object (rather than kept purely module-private) so offline
   // probes can exercise the allowlist directly against the module-scope implementation
@@ -222,6 +227,109 @@ module.exports = NodeHelper.create({
     }
 
     return { payload, anyStale };
+  },
+
+  /**
+   * Discovery strategies for `kml-advisory` registry rows, keyed by `row.discovery`.
+   * Each strategy fetches whatever index document names the row's candidate member
+   * KMZs and returns `{ urls, failed }` — `urls` normalized and allowlisted, `failed`
+   * true when the index itself could not be fetched or parsed. A strategy never
+   * throws; a failure is reported through `failed` so `_runKmlAdvisoryRow` can fold it
+   * into D-04's staleness signal.
+   */
+  _advisoryDiscovery: {
+    // SPC's ActiveMD.kmz is itself a KMZ whose sole .kml member is an index of
+    // NetworkLink hrefs, one per active Mesoscale Discussion.
+    async "spc-active-index"(row) {
+      try {
+        const buffer = await this.fetchBinBuffer(row.discoveryUrl);
+        const kml = this.extractSoleKmlEntry(buffer);
+        const hrefs = this.parseNetworkLinks(kml);
+        const urls = [];
+        for (const href of hrefs) {
+          const normalized = normalizeAdvisoryUrl(href, row.allowedHost);
+          if (normalized === null) {
+            // WR-06: keep the exact wording an operator's existing log expectations
+            // and any log grep already match.
+            Log.error("MMM-SPCOutlook: refusing off-host NetworkLink href " + JSON.stringify(href));
+            continue;
+          }
+          urls.push(normalized);
+        }
+        return { urls, failed: false };
+      } catch (err) {
+        Log.error(`MMM-SPCOutlook ${row.id}: discovery index fetch/parse failed`, err);
+        return { urls: [], failed: true };
+      }
+    }
+  },
+
+  /**
+   * Fetch, allowlist, decode and contain-test every candidate member KMZ for one
+   * `kml-advisory` registry row (spcMD, mpd), returning the rows that cover the
+   * location and whether the run degraded.
+   * @param row - a PRODUCT_REGISTRY row of kind "kml-advisory"
+   * @param lat - latitude of the user location
+   * @param lon - longitude of the user location
+   * @param productToggles - this request's own toggle snapshot (WR-13), read via
+   *   `row.configFlag` rather than the helper-global `this._products`
+   * @returns { entries, anyStale } — `entries` is `row.toEntry(...)`'s non-null
+   *   results; D-04's two halves both apply: a failed index fetch, an unroutable
+   *   `row.discovery`, a truncated candidate list, or any per-candidate fetch/parse
+   *   failure sets `anyStale = true`, but a clean run that legitimately finds zero
+   *   advisories does NOT — "none active" is the normal state most of the year and
+   *   is a real answer, not staleness.
+   */
+  async _runKmlAdvisoryRow(row, lat, lon, productToggles) {
+    if (!productToggles[row.configFlag]) {
+      return { entries: [], anyStale: false };
+    }
+
+    const strategy = this._advisoryDiscovery[row.discovery];
+    if (typeof strategy !== "function") {
+      Log.error(`MMM-SPCOutlook ${row.id}: unknown discovery strategy "${row.discovery}"`);
+      return { entries: [], anyStale: true };
+    }
+
+    const { urls, failed } = await strategy.call(this, row);
+    let anyStale = failed;
+
+    let candidates = urls;
+    if (candidates.length > ADVISORY_MAX_CANDIDATES) {
+      Log.error(`MMM-SPCOutlook ${row.id}: ${candidates.length} candidates exceeds the ` +
+                `${ADVISORY_MAX_CANDIDATES}-candidate cap; truncating`);
+      candidates = candidates.slice(0, ADVISORY_MAX_CANDIDATES);
+      anyStale = true;
+    }
+
+    const entries = [];
+    // CR-02: contain per candidate. An index is fetched, then its member KMZs are
+    // fetched seconds to minutes later, so a member that expires in that window
+    // 404s. One unreadable advisory must never discard its siblings.
+    for (const url of candidates) {
+      try {
+        const buffer = await this.fetchBinBuffer(url);
+        const kml = this.extractSoleKmlEntry(buffer);
+        const gj = this.kmlToGeoJson(kml);
+        // The containing feature, not features[0] — see checkInPolygon.
+        const hit = this.checkInPolygon(gj, lat, lon);
+        if (!hit) continue;
+        const entry = row.toEntry(hit, {});
+        if (entry === null) {
+          Log.error(`MMM-SPCOutlook: ${row.id} covers the location but carries no name: ${url}`);
+          continue;
+        }
+        entries.push(entry);
+      } catch (err) {
+        Log.error(`MMM-SPCOutlook: skipping unreadable ${row.id} ${url}`, err);
+        // A candidate fetch/parse failure is a degrade, not a quiet day (D-04) — the
+        // current code logged and continued with no staleness signal, so a run in
+        // which every member KMZ 404s was indistinguishable from a genuine all-clear.
+        anyStale = true;
+      }
+    }
+
+    return { entries, anyStale };
   },
 
   // Called when the front-end (MMM-SPCOutlook.js) sends a socket notification
@@ -623,55 +731,17 @@ module.exports = NodeHelper.create({
    * @param lat - latitude of the user location
    * @param lon - longitude of the user location
    * @returns array of MD name strings that apply to the location, or false if none are active
+   *
+   *   Transitional thin wrapper (D-02): the fetch/allowlist/decode/containment work this
+   *   function used to do inline now lives in the shared `_runKmlAdvisoryRow`, which also
+   *   drives WPC MPD, so a fix applied to one advisory product structurally cannot skip
+   *   its twin (14-REVIEW.md WR-06). Preserves the pre-existing string-array-or-false
+   *   contract exactly, since `socketNotificationReceived` and the frontend still consume
+   *   it directly; removed once plan 15-07's socket migration lands.
    */
-  async getMesoscaleDiscussion(lat,lon){
-    const ActiveURL = "https://www.spc.noaa.gov/products/md/ActiveMD.kmz"
-    const ActiveKMZ = await this.fetchBinBuffer(ActiveURL);
-    const ActiveKML = this.extractKmlFromKmz(ActiveKMZ, "ActiveMD.kml");
-    // WR-06/Pitfall 1: allowlist before fetching, via the hostname-parsed
-    // normalizeAdvisoryUrl rather than a raw prefix match — SPC serves these hrefs as
-    // `http://`, which normalizeAdvisoryUrl accepts and upgrades to `https://` rather than
-    // refusing outright. A refusal is loud: an off-host href in an SPC product is either
-    // an upstream problem or an attack, and either way an operator needs to see it.
-    const MDURLs = [];
-    for (const u of this.parseNetworkLinks(ActiveKML)) {
-      const normalized = normalizeAdvisoryUrl(u, "www.spc.noaa.gov");
-      if (normalized === null) {
-        Log.error("MMM-SPCOutlook: refusing off-host NetworkLink href " + JSON.stringify(u));
-        continue;
-      }
-      MDURLs.push(normalized);
-    }
-    if(MDURLs.length == 0) return false;
-    const MDArray = [];
-    // CR-02: contain per MD. ActiveMD.kmz is an index whose member KMZs are fetched
-    // seconds to minutes later, so an MD that expires in that window returns 404 and
-    // fetchBinBuffer throws. Unconstrained, that throw escaped the whole function into
-    // socketNotificationReceived's catch, which reports "no active MDs" — one expired
-    // link silently discarded every MD that DID cover the user, and it is most likely
-    // during an outbreak, when N is largest and MDs churn fastest. The same applied to
-    // a KMZ with no matching KML member, a features-less body, and a missing `name`
-    // (which pushed `undefined` and rendered as "undefined in effect.").
-    for(const MDURL of MDURLs){
-      try {
-        const MDKMZ = await this.fetchBinBuffer(MDURL);
-        const MDKML = this.extractKmlFromKmz(MDKMZ, this.kmzToKmlfilename(MDURL));
-        const MDgj = this.kmlToGeoJson(MDKML);
-        // The containing feature, not features[0] — see checkInPolygon.
-        const hit = this.checkInPolygon(MDgj, lat, lon);
-        const name = hit && hit.properties && hit.properties.name;
-        if (name) {
-          MDArray.push(name);
-        } else if (hit) {
-          Log.error("MMM-SPCOutlook: MD covers the location but carries no name: " + MDURL);
-        }
-      } catch (err) {
-        Log.error("MMM-SPCOutlook: skipping unreadable MD " + MDURL, err);
-      }
-    }
-    Log.info("SPC-Outlook MDArray: " + MDArray);
-    if (MDArray.length == 0) return false;
-    return MDArray;
+  async getMesoscaleDiscussion(lat, lon){
+    const { entries } = await this._runKmlAdvisoryRow(PRODUCT_REGISTRY.spcMD, lat, lon, { showSPCMD: true });
+    return entries.length ? entries.map(e => e.label) : false;
   },
 
   
