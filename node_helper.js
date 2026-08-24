@@ -78,6 +78,14 @@ function normalizeAdvisoryUrl(rawHref, allowedHost) {
 // fetch burst; 60 is comfortably above any observed SPC MD / WPC MPD candidate count.
 const ADVISORY_MAX_CANDIDATES = 60;
 
+// WR-02: byte bounds on the two remote bodies the kml-advisory path pulls. Both are
+// security controls, not tidiness — the listing is remote HTML parsed for outbound fetch
+// targets, and the member bodies are fetched up to ADVISORY_MAX_CANDIDATES times per poll
+// from URLs whose paths a remote document chose. Live sizes are ~139 KB (listing) and
+// single-digit KB (member), so both carry orders of magnitude of headroom.
+const ADVISORY_MAX_BODY_BYTES = 8 * 1024 * 1024;
+const ADVISORY_MAX_LISTING_BYTES = 4 * 1024 * 1024;
+
 module.exports = NodeHelper.create({
   // Exposed on the helper object (rather than kept purely module-private) so offline
   // probes can exercise the allowlist directly against the module-scope implementation
@@ -277,7 +285,14 @@ module.exports = NodeHelper.create({
     async "wpc-mpd-listing"(row) {
       let res;
       try {
-        res = await this._fetch(row.discoveryUrl, withTimeout({ redirect: "error" }));
+        // WR-02: `size` is the only bound here that constrains *memory*. The length check
+        // below runs after res.text() has already materialised the whole body, so on its
+        // own it bounds the regex scan and nothing else; node-fetch's streaming cap rejects
+        // an oversized listing before it is ever fully read. The post-hoc check is kept as
+        // the fallback for a runtime that ignores `size`.
+        res = await this._fetch(row.discoveryUrl, withTimeout({
+          redirect: "error", size: ADVISORY_MAX_LISTING_BYTES
+        }));
       } catch (err) {
         Log.error(`MMM-SPCOutlook ${row.id}: discovery listing fetch failed`, err);
         return { urls: [], failed: true };
@@ -294,10 +309,11 @@ module.exports = NodeHelper.create({
         Log.error(`MMM-SPCOutlook ${row.id}: discovery listing body could not be read`, err);
         return { urls: [], failed: true };
       }
-      // This is remote HTML being parsed for outbound fetch targets, so the 4 MB body bound is
+      // This is remote HTML being parsed for outbound fetch targets, so the body bound is
       // a security control, not tidiness (T-15-24). The live listing is ~139 KB.
-      if (typeof text !== "string" || text.length > 4 * 1024 * 1024) {
-        Log.error(`MMM-SPCOutlook ${row.id}: discovery listing body exceeds the 4 MB bound, refusing`);
+      if (typeof text !== "string" || text.length > ADVISORY_MAX_LISTING_BYTES) {
+        Log.error(`MMM-SPCOutlook ${row.id}: discovery listing body exceeds the ` +
+                  `${ADVISORY_MAX_LISTING_BYTES}-byte bound, refusing`);
         return { urls: [], failed: true };
       }
 
@@ -648,13 +664,42 @@ module.exports = NodeHelper.create({
     return fetch(url, options);
   },
 
-  async fetchBinBuffer(url){
+  /**
+   * Fetch a binary body (an advisory member KMZ) under a hard byte bound.
+   * @param url - an already-allowlisted advisory member URL
+   * @param maxBytes - refusal threshold; live MPD/MD KMZs are single-digit KB, so
+   *   ADVISORY_MAX_BODY_BYTES is three orders of magnitude of headroom
+   *
+   *   WR-02: this had no size bound at all, while its sibling listing fetch documents the
+   *   equivalent control as "a security control, not tidiness". It is called up to
+   *   ADVISORY_MAX_CANDIDATES times per poll on URLs whose *paths* come from remote
+   *   documents (a NetworkLink href, a directory listing), so a hostile or malfunctioning
+   *   upstream serving a multi-gigabyte body OOM-kills the MagicMirror process on a Pi.
+   *
+   *   Three layers, because each is defeatable alone: `size` is node-fetch's own streaming
+   *   cap and the only one that bounds *memory* (it rejects mid-stream, so an oversized body
+   *   is never fully materialised); the Content-Length check refuses an honestly declared
+   *   oversized body before any byte is read; the post-read length check catches a runtime
+   *   whose fetch ignores `size`, so the bound can never be silently absent. Every refusal
+   *   throws, and the throw is contained per candidate by _runKmlAdvisoryRow's catch.
+   */
+  async fetchBinBuffer(url, maxBytes = ADVISORY_MAX_BODY_BYTES){
     // WR-06: node-fetch follows redirects by default, so a 302 on an allowlisted URL
     // would walk straight off the allowlist. Refuse instead — the throw is contained per
     // candidate by _runKmlAdvisoryRow's per-iteration catch.
-    const res = await this._fetch(url, withTimeout({ redirect: "error" }));
+    const res = await this._fetch(url, withTimeout({ redirect: "error", size: maxBytes }));
     if(!res.ok) throw new Error(`Failed to fetch ${url}: ${res.status}`);
-    return Buffer.from(await res.arrayBuffer());
+    const declared = res.headers && typeof res.headers.get === "function"
+      ? Number(res.headers.get("content-length"))
+      : NaN;
+    if (Number.isFinite(declared) && declared > maxBytes) {
+      throw new Error(`Refusing oversized body for ${url}: declared ${declared} > ${maxBytes} bytes`);
+    }
+    const buf = Buffer.from(await res.arrayBuffer());
+    if (buf.length > maxBytes) {
+      throw new Error(`Refusing oversized body for ${url}: read ${buf.length} > ${maxBytes} bytes`);
+    }
+    return buf;
   },
 
   // Derives the KML member name from the URL's last path segment — correct for SPC MD,

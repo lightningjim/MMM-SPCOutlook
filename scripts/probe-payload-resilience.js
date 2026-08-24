@@ -2523,6 +2523,82 @@ const scenarios = [
         );
       }
     }
+  },
+  {
+    // WR-02: fetchBinBuffer had no byte bound while its sibling listing fetch documented
+    // the equivalent control as "a security control, not tidiness". It runs up to 60 times
+    // per poll on URLs a remote document chose, so an unbounded body is an OOM on a Pi.
+    // Both halves are asserted: an honestly declared oversized Content-Length is refused
+    // before the body is read at all, and a body that is oversized despite its headers is
+    // refused after the read (the fallback for a runtime that ignores node-fetch's `size`).
+    name: "advisory-member-body-is-size-bounded",
+    run: async (helper) => {
+      resetHelper(helper);
+      resetLogs();
+      const url = "https://www.wpc.ncep.noaa.gov/kml/mpd/MPD_1900_final.kmz";
+      const MAX = 8 * 1024 * 1024;
+
+      let sawSizeOption = false;
+      let bodyWasRead = false;
+      helper._fetch = async (_url, options) => {
+        sawSizeOption = options && options.size === MAX;
+        return {
+          ok: true,
+          status: 200,
+          arrayBuffer: async () => { bodyWasRead = true; return Buffer.alloc(8); },
+          headers: { get: (n) => (String(n).toLowerCase() === "content-length" ? String(MAX + 1) : null) }
+        };
+      };
+      let declaredErr = null;
+      try {
+        await helper.fetchBinBuffer(url);
+      } catch (err) {
+        declaredErr = err;
+      }
+      if (!declaredErr || !/Refusing oversized body/.test(declaredErr.message)) {
+        throw new Error(`a body declaring ${MAX + 1} bytes was accepted: ${declaredErr && declaredErr.message}`);
+      }
+      if (bodyWasRead) {
+        throw new Error("an oversized Content-Length was read into memory before being refused");
+      }
+      if (!sawSizeOption) {
+        throw new Error(
+          "fetchBinBuffer did not pass node-fetch's `size` cap — the Content-Length and " +
+          "post-read checks bound nothing while the body streams into memory"
+        );
+      }
+
+      // A runtime that ignores `size` and a server that lies about Content-Length: the
+      // post-read length check is the only thing left, and it must still refuse.
+      helper._fetch = async () => ({
+        ok: true,
+        status: 200,
+        arrayBuffer: async () => Buffer.alloc(MAX + 1),
+        headers: { get: () => null }
+      });
+      let readErr = null;
+      try {
+        await helper.fetchBinBuffer(url);
+      } catch (err) {
+        readErr = err;
+      }
+      if (!readErr || !/Refusing oversized body/.test(readErr.message)) {
+        throw new Error(`an undeclared oversized body was accepted: ${readErr && readErr.message}`);
+      }
+
+      // Positive control: a normal-sized body still round-trips, so the assertions above
+      // are not satisfied by fetchBinBuffer refusing everything.
+      helper._fetch = async () => ({
+        ok: true,
+        status: 200,
+        arrayBuffer: async () => Buffer.from("kmz-bytes"),
+        headers: { get: () => "9" }
+      });
+      const ok = await helper.fetchBinBuffer(url);
+      if (ok.toString() !== "kmz-bytes") {
+        throw new Error(`control: a well-sized body did not survive the bound, got ${JSON.stringify(ok.toString())}`);
+      }
+    }
   }
 ];
 
