@@ -130,6 +130,23 @@ module.exports = NodeHelper.create({
     // every broadcast so the frontend can reject a chain that finishes out of order.
     this._inFlight = false;
     this._seq = 0;
+    // The generation this counter belongs to. MagicMirror restarts node_helpers when the
+    // server process restarts, but socket.io reconnects the browser WITHOUT reloading the
+    // page — the normal behaviour for serveronly/remote-browser deployments and for any
+    // pm2/systemd restart. `_seq` then starts over at 0 while the frontend still holds the
+    // highest number it saw before the restart, so every payload the new helper sends looks
+    // out-of-order and is discarded forever: the display freezes on an arbitrarily old
+    // payload, presented as current, with no badge, no error and no self-heal. The frontend
+    // resets its guard when this stamp changes, because a new generation's numbers have no
+    // relationship to the old generation's.
+    //
+    // A random id rather than Date.now(): the frontend only ever compares this for
+    // equality, and a clock is the one thing that is NOT reliably distinct across a
+    // restart on this project's target hardware — a Raspberry Pi has no RTC, so it boots
+    // with whatever time was last persisted and NTP corrects it seconds later. Two boots
+    // that stamped the same millisecond would leave the display frozen exactly as before,
+    // and nothing would say so.
+    this._epoch = Math.floor(Math.random() * Number.MAX_SAFE_INTEGER);
     // WR-08: monotonic count of features dropped because turf could not build their
     // geometry. getSpcOutlook samples it across a run to decide whether the payload was
     // assembled from complete layers.
@@ -656,12 +673,18 @@ module.exports = NodeHelper.create({
         // Phase 15 (D-03): the socket used to carry a third `md` element with the
         // separate mesoscale-discussion list; that element is retired now that
         // advisories live inside `outlook.advisories.{spcMD,mpd}`, so `seq` moved from
-        // index 2 to index 1. The two ends of this contract — this emit and
-        // MMM-SPCOutlook.js's `socketNotificationReceived` — must always change
-        // together: the frontend's guard fails open (accepts everything) when it reads
-        // a non-number, so a mismatch between the two is silent, not a crash.
+        // index 2 to index 1. Index 2 now carries a metadata object rather than a list.
+        // The two ends of this contract — this emit and MMM-SPCOutlook.js's
+        // `socketNotificationReceived` — must always change together: the frontend's guard
+        // fails open (accepts everything) when it reads a non-number, so a mismatch between
+        // the two is silent, not a crash.
+        //
+        // `epoch` is the generation `seq` belongs to (see start()). Without it a helper
+        // restart, which resets the counter to 0 under a browser that never reloaded,
+        // froze the display permanently. `?? null` keeps a caller that reaches this handler
+        // without start() (offline probes) emitting a well-formed payload.
         this._seq = (this._seq || 0) + 1;
-        this.sendSocketNotification("SPC_DATA_RESULT", [outlook, this._seq]);
+        this.sendSocketNotification("SPC_DATA_RESULT", [outlook, this._seq, { epoch: this._epoch ?? null }]);
       } finally {
         this._inFlight = false;
       }

@@ -3190,6 +3190,129 @@ const scenarios = [
       }
     }
   }
+  ,{
+    // A node_helper restart used to freeze the display permanently. MagicMirror restarts
+    // node_helpers with the server process, but socket.io reconnects the browser without
+    // reloading the page, so `_seq` began again at 1 while the frontend still held
+    // `_lastSeq` from before the restart — every subsequent payload was discarded, the
+    // display sat on an arbitrarily old reading presented as current, and nothing self-
+    // healed on any later tick. frontend-seq-discard-survives-socket-index-migration
+    // replays a single monotonic 5/3/6 run and cannot see this by construction.
+    name: "frontend-resyncs-after-a-node_helper-restart",
+    run: async (helper) => {
+      const frontend = loadFrontendModule();
+      const ctx = Object.create(frontend);
+      let updateDomCalls = 0;
+      ctx.updateDom = () => { updateDomCalls++; };
+      const bootA = 1700000000000;
+      const bootB = bootA + 3600000;
+      const send = (marker, seq, epoch) => {
+        const meta = epoch === undefined ? undefined : { epoch };
+        frontend.socketNotificationReceived.call(ctx, "SPC_DATA_RESULT", [{ marker }, seq, meta]);
+      };
+
+      // 47 polls under the first helper generation.
+      for (let n = 1; n <= 47; n++) send("boot-a-" + n, n, bootA);
+      if (ctx.spcrisk.marker !== "boot-a-47" || updateDomCalls !== 47) {
+        throw new Error(
+          `warm-up: 47 in-order payloads did not all render (spcrisk=${JSON.stringify(ctx.spcrisk)}, ` +
+          `updateDomCalls=${updateDomCalls})`
+        );
+      }
+
+      // The server restarts. The counter starts over; the browser did not reload.
+      for (let n = 1; n <= 10; n++) send("boot-b-" + n, n, bootB);
+      if (ctx.spcrisk.marker !== "boot-b-10") {
+        throw new Error(
+          `the display froze after a node_helper restart: still showing ${JSON.stringify(ctx.spcrisk)} after ten ` +
+          "polls from the restarted helper. Every payload it sends carries a sequence number below the one the " +
+          "browser last saw, so all of them are discarded — an arbitrarily old reading, rendered as current, forever."
+        );
+      }
+      if (updateDomCalls !== 57) {
+        throw new Error(`expected all ten post-restart payloads to render, got ${updateDomCalls - 47}`);
+      }
+
+      // Negative control: WITHIN one generation the guard must still discard a late chain,
+      // or the fix above has simply deleted it. bootB is at seq 10; a stray seq 4 from the
+      // same generation is a chain that finished out of order.
+      send("late-boot-b-4", 4, bootB);
+      if (ctx.spcrisk.marker !== "boot-b-10" || updateDomCalls !== 57) {
+        throw new Error(
+          `control: an out-of-order payload within one helper generation was accepted ` +
+          `(spcrisk=${JSON.stringify(ctx.spcrisk)}) — the resync swallowed the guard it was supposed to preserve`
+        );
+      }
+
+      // Control: a payload carrying no metadata at all (version skew with a helper that
+      // predates the epoch) must still be accepted rather than dropped for lacking it.
+      send("no-metadata", 99, undefined);
+      if (ctx.spcrisk.marker !== "no-metadata") {
+        throw new Error("a payload with no metadata object was rejected; the guard no longer fails open on version skew");
+      }
+
+      // The two ends of the socket contract are otherwise pinned only by a comment saying
+      // they must change together, and the frontend's guard fails OPEN on a shape it does
+      // not recognise — so a helper that stopped emitting the generation stamp would put
+      // the display straight back into the permanent freeze above with nothing turning red.
+      // Drive the real emit and assert the shape the frontend reads.
+      const emitted = [];
+      const realGetSpcOutlook = helper.getSpcOutlook;
+      try {
+        helper.sendSocketNotification = (_notification, payload) => { emitted.push(payload); };
+        helper.getSpcOutlook = async () => ({ marker: "emit-probe" });
+        helper.start();
+        const firstEpoch = helper._epoch;
+        await helper.socketNotificationReceived("GET_SPC_DATA", {
+          lat: PROBE_LAT, lon: PROBE_LON, extended: false, updateInterval: 60,
+          proximityWeighting: false, products: {}
+        });
+        // A restart, as MagicMirror performs it: the helper is re-started under a browser
+        // that never reloaded.
+        helper.start();
+        await helper.socketNotificationReceived("GET_SPC_DATA", {
+          lat: PROBE_LAT, lon: PROBE_LON, extended: false, updateInterval: 60,
+          proximityWeighting: false, products: {}
+        });
+        if (emitted.length !== 2) {
+          throw new Error(`expected two SPC_DATA_RESULT emissions, got ${emitted.length}`);
+        }
+        for (const [i, sent] of emitted.entries()) {
+          if (typeof sent[1] !== "number") {
+            throw new Error(`emission ${i}: payload[1] is not a sequence number (${JSON.stringify(sent[1])})`);
+          }
+          if (!sent[2] || typeof sent[2].epoch !== "number") {
+            throw new Error(
+              `emission ${i}: payload[2] carries no numeric generation stamp (${JSON.stringify(sent[2])}) — the ` +
+              "frontend's resync fails open on an unrecognised shape, so a helper restart would freeze the display " +
+              "again with nothing in this suite turning red"
+            );
+          }
+        }
+        if (emitted[0][2].epoch !== firstEpoch) {
+          throw new Error("the emitted generation stamp is not the one start() established");
+        }
+        if (emitted[0][2].epoch === emitted[1][2].epoch) {
+          throw new Error(
+            "two helper generations emitted the SAME stamp, so the frontend cannot tell them apart and the " +
+            "post-restart freeze is unfixed"
+          );
+        }
+        // And the frontend, driven by the REAL emissions, must advance across them.
+        const liveCtx = Object.create(frontend);
+        liveCtx.updateDom = () => {};
+        frontend.socketNotificationReceived.call(liveCtx, "SPC_DATA_RESULT", emitted[0]);
+        frontend.socketNotificationReceived.call(liveCtx, "SPC_DATA_RESULT", emitted[1]);
+        if (liveCtx.spcrisk !== emitted[1][0]) {
+          throw new Error("the frontend did not advance across two real helper generations");
+        }
+      } finally {
+        helper.getSpcOutlook = realGetSpcOutlook;
+        delete helper.sendSocketNotification;
+        resetHelper(helper);
+      }
+    }
+  }
 ];
 
 // ---------------------------------------------------------------------

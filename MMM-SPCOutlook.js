@@ -79,6 +79,29 @@
       // ends of this contract (this read and node_helper.js's sendSocketNotification)
       // must always change together: this guard fails open (accepts everything) when it
       // reads a non-number, so a mismatch between the two ends is silent, never a crash.
+      //
+      // payload[2] is the helper's metadata object, and `epoch` in it is the generation
+      // payload[1] belongs to. A node_helper restart resets the helper's counter to 0
+      // while socket.io reconnects the browser WITHOUT reloading the page (the normal
+      // behaviour for serveronly/remote-browser deployments and for any pm2/systemd
+      // restart of the server), so every payload from the restarted helper was <=
+      // _lastSeq and was discarded forever — the display froze on an arbitrarily old
+      // payload, presented as current, with no ⚠ badge and no self-heal on any later
+      // tick. That is the same "last-writer-wins across time" false negative the guard
+      // exists to prevent, inverted. A changed epoch invalidates every sequence number
+      // seen so far, because they came from a counter that no longer exists; comparing
+      // generations explicitly is what keeps this from becoming a guess about how large
+      // a backwards jump is "really" a restart.
+      const meta = payload[2] && typeof payload[2] === "object" ? payload[2] : null;
+      const epoch = meta && typeof meta.epoch === "number" ? meta.epoch : null;
+      if (epoch !== null && epoch !== this._lastEpoch) {
+        if (this._lastEpoch !== undefined) {
+          Log.warn("MMM-SPCOutlook: node_helper generation changed (" + this._lastEpoch +
+                   " -> " + epoch + "); re-syncing the out-of-order guard");
+        }
+        this._lastEpoch = epoch;
+        this._lastSeq = undefined;
+      }
       const seq = payload[1];
       if (typeof seq === "number") {
         if (seq <= (this._lastSeq ?? -1)) {
