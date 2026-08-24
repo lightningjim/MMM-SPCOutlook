@@ -250,6 +250,12 @@ function loadFrontendModule() {
     // Deterministic: the badge's exact wording is MagicMirror's business, its presence
     // is the probe's.
     moment: (_ts) => ({ fromNow: () => "PROBE_AGE" }),
+    // A plain object, not a DOM node: nothing parses what is assigned to `innerHTML`, so a
+    // scenario can only assert on the concatenated markup string, never on a parsed tree.
+    // That is enough for frontend-escapes-remote-advisory-text (the escape either happened
+    // in the string or it did not) but it means this harness cannot prove that what does
+    // reach a real browser is inert. Replacing this with a real DOM would let a scenario
+    // assert that, and is the only way to close that gap.
     document: { createElement: () => ({ innerHTML: "", textContent: "" }) },
     setInterval: () => 0,
     console

@@ -3603,6 +3603,53 @@ const scenarios = [
       resetHelper(helper);
     }
   }
+  ,{
+    // MMM-SPCOutlook.js states the threat model outright: advisory labels and hazard types
+    // are unbounded remote KML text that reaches innerHTML, and escapeHtml is the sole
+    // control. No scenario fed a label containing <, >, &, " or ' through renderDom, so
+    // replacing escapeHtml's body with `(value) => String(value)` left the suite fully
+    // green — the one security guarantee the frontend makes, asserted by nothing.
+    //
+    // The DOM stub returns a plain object whose innerHTML is never parsed, so this can only
+    // assert on the concatenated string rather than on a parsed tree. That is still enough
+    // to catch the deletion, which is what matters: the escape either happened in the
+    // string or it did not.
+    name: "frontend-escapes-remote-advisory-text",
+    run: async (_helper) => {
+      const frontend = loadFrontendModule();
+      const config = {
+        lat: PROBE_LAT, lon: PROBE_LON, extended: false, updateInterval: 60,
+        proximityWeighting: false, showExcessiveRain: false, showWinterImpact: false,
+        showMPD: true, showSPCMD: true
+      };
+      // Every character escapeHtml claims to handle: < > " ' &
+      const hostile = `<img src=x onerror="alert(1)&'">`;
+      const payload = noRiskPayloadWithAdvisory({
+        spcMD: [{ label: `SPC MD ${hostile}`, hazardType: null }],
+        mpd: [{ label: `WPC MPD ${hostile}`, hazardType: `Heavy rainfall ${hostile}` }]
+      });
+      const out = renderDom(frontend, { config, spcrisk: payload });
+
+      if (out.includes("<img")) {
+        throw new Error(`remote advisory text reached innerHTML unescaped: ${out}`);
+      }
+      // Vacuity guard: if the advisory did not render at all, the assertion above is
+      // satisfied by an empty string and proves nothing. All three hostile fields — the SPC
+      // label, the MPD label and the MPD hazard type — must be present AND escaped.
+      const escapes = (out.match(/&lt;img/g) || []).length;
+      if (escapes !== 3) {
+        throw new Error(
+          `expected all three hostile fields (SPC label, MPD label, MPD hazard type) to render escaped, ` +
+          `found ${escapes} in: ${out}`
+        );
+      }
+      for (const [raw, escaped] of [['"', "&quot;"], ["'", "&#39;"], ["&", "&amp;"]]) {
+        if (!out.includes(escaped)) {
+          throw new Error(`remote text containing ${raw} did not render as ${escaped}: ${out}`);
+        }
+      }
+    }
+  }
 ];
 
 // ---------------------------------------------------------------------
