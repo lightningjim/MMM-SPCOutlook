@@ -98,3 +98,14 @@ None - no external service configuration required.
 ---
 *Phase: 15-wpc-winter-storm-severity-mesoscale-precipitation-discussion*
 *Completed: 2026-08-24*
+
+## Self-Check: PASSED
+
+- FOUND: node_helper.js
+- FOUND: MMM-SPCOutlook.js
+- FOUND: scripts/probe-lib/module-stubs.js
+- FOUND: .planning/phases/15-wpc-winter-storm-severity-mesoscale-precipitation-discussion/15-07-SUMMARY.md
+- FOUND commit: c4ad80f (Task 1)
+- FOUND commit: 1da1b94 (Task 2)
+- FOUND commit: ce51960 (SUMMARY.md)
+- `node scripts/probe-payload-resilience.js` re-run at self-check time: 22 passed, 0 failed, 0 skipped, exit 0
