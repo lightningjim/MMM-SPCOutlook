@@ -185,24 +185,40 @@ function installStubs() {
   };
 }
 
-// WR-09: the real implementations of the two members scenarios stub, captured before any
+// WR-09: the real implementations of the members scenarios stub, captured before any
 // scenario can replace them. helper.start() resets helper-global *state*, but a stub
 // written onto the helper object is not state — it survived every later resetHelper, so a
 // scenario that stubbed the HTTP seam still ran against the previous scenario's
 // fetchGeoJsonCached stub and never reached the code it meant to test.
+//
+// WR-10: this used to capture a curated two-entry list — `fetchGeoJsonCached` and `_fetch`
+// — which is exactly the hand-maintained copy resetHelper's own comment below argues
+// against, applied to the seams instead of to the state. Every member of the helper is a
+// stubbable seam (`fetchBinBuffer`, `checkInPolygon`, `extractSoleKmlEntry`,
+// `_advisoryDiscovery`, `_prepareMpdEntry`, ...), and a scenario stubbing any of them bled
+// into every later scenario exactly as that comment describes, surfacing as an unrelated
+// flaky assertion somewhere further down the file. A shallow copy of the whole surface
+// needs no maintenance and cannot drift. Own enumerable properties only, which is what a
+// stub assignment creates — the prototype chain is untouched either way.
 const ORIGINAL_SEAMS = new WeakMap();
 
 function loadNodeHelper() {
   installStubs();
   const nodeHelperPath = path.join(__dirname, "..", "..", "node_helper.js");
   const helper = require(nodeHelperPath);
-  ORIGINAL_SEAMS.set(helper, {
-    fetchGeoJsonCached: helper.fetchGeoJsonCached,
-    _fetch: helper._fetch
-  });
+  ORIGINAL_SEAMS.set(helper, { ...helper });
   helper.start();
   return helper;
 }
+
+// WR-10: the turf stub's `pointInPolygon` is module-global mutable state that scenarios
+// flip to simulate the user standing inside a polygon. Twenty scenarios save and restore it
+// by hand in a `finally`; one omission bleeds `() => true` into every later scenario and
+// silently makes every polygon contain the user — a whole-suite false positive that no
+// assertion would name. resetHelper owning the reset makes the leak unreachable regardless
+// of what any individual scenario forgets. The hand-rolled pairs are left in place as
+// belt-and-braces: they now restore to the same default this does.
+const TURF_DEFAULTS = { pointInPolygon: () => false };
 
 // WR-09: delegate rather than duplicate. A hand-maintained copy of start()'s field
 // list drifts the moment a phase adds helper-global state (an in-flight guard, a
@@ -213,10 +229,8 @@ function loadNodeHelper() {
 // resetHelper(), so log assertions still see only their own scenario's output.
 function resetHelper(helper) {
   const originals = ORIGINAL_SEAMS.get(helper);
-  if (originals) {
-    helper.fetchGeoJsonCached = originals.fetchGeoJsonCached;
-    helper._fetch = originals._fetch;
-  }
+  if (originals) Object.assign(helper, originals);
+  Object.assign(turfStub, TURF_DEFAULTS);
   helper.start();
 }
 

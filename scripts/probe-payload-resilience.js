@@ -3013,6 +3013,64 @@ const scenarios = [
         throw new Error(`control: a 3-day block rendered days it does not carry: ${JSON.stringify(shortRender)}`);
       }
     }
+  },
+  {
+    // WR-10: ORIGINAL_SEAMS captured a curated two-entry list while its own neighbouring
+    // comment argued that hand-maintained lists drift, and the turf stub's module-global
+    // pointInPolygon was reset by nobody — twenty scenarios save and restore it by hand, and
+    // one omission bleeds `() => true` into every later scenario, silently making every
+    // polygon contain the user. Neither leak had an assertion; both surfaced, if at all, as
+    // an unrelated flaky failure elsewhere in the file. This scenario deliberately leaves
+    // both dirty and the NEXT one proves resetHelper cleaned them, which is the only way to
+    // test a leak that by definition escapes its own scenario.
+    name: "harness-leak-setup-deliberately-dirties-the-seams",
+    run: async (helper) => {
+      resetHelper(helper);
+      resetLogs();
+      // A seam outside the old curated list.
+      helper.fetchBinBuffer = async () => { throw new Error("LEAKED fetchBinBuffer stub"); };
+      helper.checkInPolygon = () => { throw new Error("LEAKED checkInPolygon stub"); };
+      // And the turf stub, left flipped exactly as a missing `finally` would leave it.
+      turfStub.pointInPolygon = () => true;
+    }
+  },
+  {
+    name: "harness-leak-check-resethelper-restores-every-seam",
+    run: async (helper) => {
+      resetHelper(helper);
+      resetLogs();
+      // 1. The seams the previous scenario stubbed must be the real implementations again.
+      let leaked = null;
+      try {
+        await helper.fetchBinBuffer("https://www.wpc.ncep.noaa.gov/kml/mpd/MPD_1_final.kmz");
+      } catch (err) {
+        leaked = err;
+      }
+      if (leaked && /LEAKED fetchBinBuffer stub/.test(leaked.message)) {
+        throw new Error(
+          "a previous scenario's fetchBinBuffer stub survived resetHelper — every seam " +
+          "outside the old curated two-entry list bleeds into every later scenario"
+        );
+      }
+      let hit;
+      try {
+        hit = helper.checkInPolygon({ type: "FeatureCollection", features: [] }, PROBE_LAT, PROBE_LON);
+      } catch (err) {
+        throw new Error(`a previous scenario's checkInPolygon stub survived resetHelper: ${err.message}`);
+      }
+      if (hit !== null) {
+        throw new Error(`checkInPolygon on an empty collection returned ${JSON.stringify(hit)}, not null`);
+      }
+
+      // 2. The turf stub must be back at its documented default. Left leaked, every
+      //    containment check in every later scenario silently answers "the user is inside".
+      if (turfStub.pointInPolygon({}, {}) !== false) {
+        throw new Error(
+          "turfStub.pointInPolygon leaked `() => true` past resetHelper — every polygon in " +
+          "every later scenario contains the user, and no assertion in the suite would say so"
+        );
+      }
+    }
   }
 ];
 
