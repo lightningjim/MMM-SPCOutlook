@@ -247,8 +247,18 @@
       // the hazard type from the MPDType cell — so both are escaped (WR-12 already applies
       // this reasoning to MD names; MPD adds a second such source). No cap, no truncation
       // (D-07) — polygon containment already bounds the realistic count.
-      const advisories = this.spcrisk.advisories || { spcMD: [], mpd: [] };
-      const allAdvisories = [...advisories.spcMD, ...advisories.mpd];
+      // WR-07: the gate above tolerates a missing `advisories` key AND a missing inner key
+      // (`advisories?.spcMD?.length > 0`), and this line did not — `advisories || {...}`
+      // guards only the OUTER object, so a payload carrying `advisories` with one key
+      // absent threw "advisories.mpd is not iterable". A throw inside getDom breaks the
+      // module's ENTIRE render, not just the advisory band, so the harsher of the two
+      // disagreeing guards was the one that decided the outcome. Tolerate here exactly what
+      // the gate tolerates: an absent or non-array key contributes nothing.
+      const advisories = this.spcrisk.advisories || {};
+      const allAdvisories = [
+        ...(Array.isArray(advisories.spcMD) ? advisories.spcMD : []),
+        ...(Array.isArray(advisories.mpd) ? advisories.mpd : [])
+      ];
       for (const entry of allAdvisories) {
         // Guard the entry itself: skip a null/non-object entry rather than rendering
         // "undefined in effect." — the failure class CR-02 already fixed once on the backend.

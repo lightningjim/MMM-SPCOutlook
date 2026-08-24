@@ -2820,6 +2820,69 @@ const scenarios = [
         throw new Error("control: checkInPolygon no longer finds a plain covering feature");
       }
     }
+  },
+  {
+    // WR-07: getDom's no-risk gate tolerates a missing `advisories` key AND a missing inner
+    // key — its own comment says so ("version skew") — while the render thirty lines later
+    // spread `advisories.spcMD` and `advisories.mpd` unguarded. `advisories || {...}` guards
+    // only the outer object, so a payload carrying `advisories` with one key absent threw
+    // "advisories.mpd is not iterable" INSIDE getDom, which takes down the module's entire
+    // render, not just the advisory band. Two disagreeing guards, and the harsher one won.
+    name: "frontend-tolerates-a-half-populated-advisories-object",
+    run: async (_helper) => {
+      resetLogs();
+      const frontend = loadFrontendModule();
+      const config = {
+        lat: PROBE_LAT, lon: PROBE_LON, extended: false, updateInterval: 60,
+        proximityWeighting: false, showExcessiveRain: false, showWinterImpact: false,
+        showSPCMD: true, showMPD: true
+      };
+      const noRisk = { risk: "NONE", text: "None", color: "afddf6" };
+      const base = () => ({
+        day1: { ...noRisk }, day2: { ...noRisk }, day3: { ...noRisk },
+        day4: { ...noRisk }, day5: { ...noRisk }, day6: { ...noRisk },
+        day7: { ...noRisk }, day8: { ...noRisk },
+        day48Risk: false,
+        fireWeather: { day1Risk: 0, day2Risk: 0 },
+        excessiveRain: {}, winterImpact: {}
+      });
+
+      // The version-skew shape: a helper that predates the mpd row ships advisories with
+      // only spcMD. The band must still render the entries that ARE present.
+      const skewed = { ...base(), advisories: { spcMD: [{ label: "SPC MD 2108", hazardType: null }] } };
+      let rendered;
+      try {
+        rendered = renderDom(frontend, { config, spcrisk: skewed });
+      } catch (err) {
+        throw new Error(
+          `a payload whose advisories object is missing one key threw inside getDom ` +
+          `(${err.message}) — that breaks the whole module render, not just the advisory band`
+        );
+      }
+      if (!rendered.includes("SPC MD 2108")) {
+        throw new Error(`the advisory that WAS present did not render: ${JSON.stringify(rendered)}`);
+      }
+
+      // The mirror shape, and a junk value in the key's place — neither may throw.
+      for (const advisories of [
+        { mpd: [{ label: "WPC MPD 1118", hazardType: "Heavy snow" }] },
+        { spcMD: null, mpd: [{ label: "WPC MPD 1118", hazardType: "Heavy snow" }] },
+        { spcMD: "not-an-array", mpd: [{ label: "WPC MPD 1118", hazardType: "Heavy snow" }] }
+      ]) {
+        let out;
+        try {
+          out = renderDom(frontend, { config, spcrisk: { ...base(), advisories } });
+        } catch (err) {
+          throw new Error(
+            `advisories ${JSON.stringify(advisories)} threw inside getDom (${err.message}) — ` +
+            "the gate above it tolerates exactly this shape"
+          );
+        }
+        if (!out.includes("WPC MPD 1118")) {
+          throw new Error(`the usable half of ${JSON.stringify(advisories)} did not render: ${JSON.stringify(out)}`);
+        }
+      }
+    }
   }
 ];
 
