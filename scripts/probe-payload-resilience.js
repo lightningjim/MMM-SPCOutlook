@@ -909,6 +909,211 @@ const scenarios = [
     }
   },
   {
+    // D-10: WSSI's headline well-formed case. Days 2-3 are routed to an empty collection
+    // (via wssiRoutes) rather than left unrouted, so their NONE reading proves the
+    // empty-routed days are unaffected by day 1's real body, not that the harness never
+    // reached them at all.
+    name: "wssi-wellformed-minor",
+    run: async (helper) => {
+      resetHelper(helper);
+      resetLogs();
+      helper._products = { showWinterImpact: true, showExcessiveRain: false };
+      const originalPointInPolygon = turfStub.pointInPolygon;
+      turfStub.pointInPolygon = () => true;
+      try {
+        installHttp(helper, wssiRoutes(() => httpResponse({ body: WSSI_MINOR_BODY, etag: "wssi-v1" })));
+        const out = await helper.getSpcOutlook(
+          PROBE_LAT, PROBE_LON, false, { showWinterImpact: true, showExcessiveRain: false }
+        );
+        assertPayloadIntact(out);
+        if (out.winterImpact.day1Risk !== "MINOR") {
+          throw new Error(`day1Risk expected MINOR, got ${out.winterImpact.day1Risk}`);
+        }
+        if (out.winterImpact.day1Text !== "Minor") {
+          throw new Error(`day1Text expected Minor, got ${out.winterImpact.day1Text}`);
+        }
+        if (out.winterImpact.day1Color !== "faf5a3") {
+          throw new Error(`day1Color expected faf5a3, got ${out.winterImpact.day1Color}`);
+        }
+        if (out.winterImpact.day1ValidTime !== "2026-08-19T12:00:00Z") {
+          throw new Error(`day1ValidTime mismatch: ${JSON.stringify(out.winterImpact.day1ValidTime)}`);
+        }
+        if (out.winterImpact.day2Risk !== "NONE" || out.winterImpact.day3Risk !== "NONE") {
+          throw new Error(
+            `day2/day3Risk expected NONE, got ${out.winterImpact.day2Risk}/${out.winterImpact.day3Risk} ` +
+            "— the empty-routed days were affected by day 1's body"
+          );
+        }
+      } finally {
+        turfStub.pointInPolygon = originalPointInPolygon;
+      }
+    }
+  },
+  {
+    // WSSI-02: the direct guard for the registry's case fold. WPC's prose documentation
+    // writes tier names in mixed case even though the live renderer's `impact` field is
+    // always ALL-CAPS; this must fail if the registry's toValue stops folding case.
+    name: "wssi-case-fold-mismatch-still-resolves",
+    run: async (helper) => {
+      resetHelper(helper);
+      resetLogs();
+      helper._products = { showWinterImpact: true, showExcessiveRain: false };
+      const originalPointInPolygon = turfStub.pointInPolygon;
+      turfStub.pointInPolygon = () => true;
+      try {
+        installHttp(helper, wssiRoutes(() => httpResponse({ body: WSSI_MIXED_CASE_BODY, etag: "wssi-v1" })));
+        const out = await helper.getSpcOutlook(
+          PROBE_LAT, PROBE_LON, false, { showWinterImpact: true, showExcessiveRain: false }
+        );
+        assertPayloadIntact(out);
+        if (out.winterImpact.day1Risk !== "MINOR") {
+          throw new Error(
+            `WSSI-02: mixed-case "Minor" did not fold to MINOR, got ${out.winterImpact.day1Risk}`
+          );
+        }
+      } finally {
+        turfStub.pointInPolygon = originalPointInPolygon;
+      }
+    }
+  },
+  {
+    // D-09 AMENDED: WINTER WEATHER AREA is a deliberate exclusion below the MINOR floor,
+    // not a degrade — it must render nothing at both the payload layer (day1Risk) and the
+    // render layer (no "Winter Impact" row), and it must never be flagged stale.
+    name: "wssi-winter-weather-area-renders-nothing",
+    run: async (helper) => {
+      resetHelper(helper);
+      resetLogs();
+      helper._products = { showWinterImpact: true, showExcessiveRain: false };
+      const originalPointInPolygon = turfStub.pointInPolygon;
+      turfStub.pointInPolygon = () => true;
+      let out;
+      try {
+        installHttp(helper, wssiRoutes(() => httpResponse({ body: WSSI_WWA_BODY, etag: "wssi-v1" })));
+        out = await helper.getSpcOutlook(
+          PROBE_LAT, PROBE_LON, false, { showWinterImpact: true, showExcessiveRain: false }
+        );
+      } finally {
+        turfStub.pointInPolygon = originalPointInPolygon;
+      }
+      assertPayloadIntact(out);
+      if (out.winterImpact.day1Risk !== "NONE") {
+        throw new Error(
+          `D-09 AMENDED: WINTER WEATHER AREA must render nothing, got day1Risk ${out.winterImpact.day1Risk}`
+        );
+      }
+      if (out._stale === true) {
+        throw new Error("D-09 AMENDED's floor is a deliberate exclusion, not a degrade — _stale must not be true");
+      }
+      const frontend = loadFrontendModule();
+      const config = {
+        lat: PROBE_LAT, lon: PROBE_LON, extended: false, updateInterval: 60,
+        proximityWeighting: false, showExcessiveRain: false, showWinterImpact: true
+      };
+      const rendered = renderDom(frontend, { config, spcrisk: out });
+      if (rendered.includes("Winter Impact")) {
+        throw new Error(`WINTER WEATHER AREA rendered a Winter Impact row: ${rendered}`);
+      }
+    }
+  },
+  {
+    // WSSI-03: the structural proof that substitutes for the deferred in-season live
+    // check. Off-season, the live WSSI layer answers with a literal zero-feature
+    // FeatureCollection on every day, and that must resolve to a clean, unflagged
+    // all-clear at both the payload and render layers, never { error } and never stale.
+    name: "wssi-zero-features-out-of-season",
+    run: async (helper) => {
+      resetHelper(helper);
+      resetLogs();
+      helper._products = { showWinterImpact: true, showExcessiveRain: false };
+      installHttp(helper, wssiRoutes(() => httpResponse({ body: EMPTY_FEATURE_COLLECTION, etag: "wssi-empty" })));
+      const out = await helper.getSpcOutlook(
+        PROBE_LAT, PROBE_LON, false, { showWinterImpact: true, showExcessiveRain: false }
+      );
+      assertPayloadIntact(out);
+      for (let d = 1; d <= 3; d++) {
+        if (out.winterImpact[`day${d}Risk`] !== "NONE") {
+          throw new Error(`WSSI-03: day${d}Risk expected NONE out of season, got ${out.winterImpact[`day${d}Risk`]}`);
+        }
+      }
+      if (out.error !== undefined) {
+        throw new Error(`WSSI-03: an all-empty off-season response collapsed the payload to { error }: ${out.error}`);
+      }
+      if (out._stale === true) {
+        throw new Error("WSSI-03: a well-formed zero-feature off-season response must not be flagged stale");
+      }
+      const frontend = loadFrontendModule();
+      const config = {
+        lat: PROBE_LAT, lon: PROBE_LON, extended: false, updateInterval: 60,
+        proximityWeighting: false, showExcessiveRain: false, showWinterImpact: true
+      };
+      const rendered = renderDom(frontend, { config, spcrisk: out });
+      if (rendered.includes("Winter Impact")) {
+        throw new Error(`an out-of-season zero-feature response rendered a Winter Impact row: ${rendered}`);
+      }
+    }
+  },
+  {
+    // Phase 14 D-05: the toggle off must still emit the full zero-valued winterImpact
+    // block, and the WSSI day 1 URL must never be requested while the toggle is off.
+    name: "wssi-toggle-off",
+    run: async (helper) => {
+      resetHelper(helper);
+      resetLogs();
+      helper._products = { showWinterImpact: false, showExcessiveRain: false };
+      const fetchFn = installHttp(helper, wssiRoutes(() => httpResponse({ body: WSSI_MINOR_BODY, etag: "wssi-v1" })));
+      const out = await helper.getSpcOutlook(
+        PROBE_LAT, PROBE_LON, false, { showWinterImpact: false, showExcessiveRain: false }
+      );
+      assertPayloadIntact(out);
+      for (let d = 1; d <= 3; d++) {
+        if (out.winterImpact[`day${d}Risk`] !== "NONE") {
+          throw new Error(`D-05: day${d}Risk expected NONE with the toggle off, got ${out.winterImpact[`day${d}Risk`]}`);
+        }
+        if (out.winterImpact[`day${d}Text`] !== "None") {
+          throw new Error(`D-05: day${d}Text expected "None" with the toggle off, got ${out.winterImpact[`day${d}Text`]}`);
+        }
+      }
+      const wssiKeyCount = Object.keys(out.winterImpact).length;
+      if (wssiKeyCount !== 12) {
+        throw new Error(`D-05: winterImpact toggle-off block has ${wssiKeyCount} keys, expected 12 (3 days x 4 fields)`);
+      }
+      if (fetchFn.calls.some((call) => call.url === WSSI_URLS[1])) {
+        throw new Error("the WSSI day 1 URL was requested while the toggle was off");
+      }
+    }
+  },
+  {
+    // CR-03 for WSSI: a day-1 hard fail (non-2xx, no usable cache entry) must resolve to
+    // NONE but never be presentable as a confident all-clear — the payload must carry the
+    // degrade signal, and the degrade must be diagnosable from the log (CR-01's lesson:
+    // a degraded winter read must never be indistinguishable from a genuine no-impact day).
+    name: "wssi-hard-fail-is-flagged",
+    run: async (helper) => {
+      resetHelper(helper);
+      resetLogs();
+      helper._products = { showWinterImpact: true, showExcessiveRain: false };
+      installHttp(helper, wssiRoutes(() => httpResponse({ status: 503, text: "service unavailable" })));
+      const out = await helper.getSpcOutlook(
+        PROBE_LAT, PROBE_LON, false, { showWinterImpact: true, showExcessiveRain: false }
+      );
+      assertPayloadIntact(out);
+      if (out.winterImpact.day1Risk !== "NONE") {
+        throw new Error(`a hard-failed WSSI day 1 fetch produced a tier out of nothing: ${out.winterImpact.day1Risk}`);
+      }
+      if (out._stale !== true) {
+        throw new Error("a hard-failed WSSI fetch produced an unflagged no-risk payload (_stale !== true)");
+      }
+      // The real fetchGeoJsonCached names the failing URL, and WSSI_URLS[1] is derived
+      // from the registry's own winterImpact day-1 buildUrl — the same URL-as-identifier
+      // pattern ero-304-with-no-cache-entry-is-a-hard-failure already uses to name a day.
+      requireLog(
+        ["unrecoverable fetch failure for", WSSI_URLS[1]],
+        "a hard-failed WSSI day 1 fetch produced no diagnostic naming the winterImpact day-1 URL"
+      );
+    }
+  },
+  {
     // WR-09: the phase's stated CR-02/WR-06 guarantee — "a WPC hiccup during an active
     // HIGH must not blank the display" — is delivered by rejectBody's stale fallback
     // inside the real fetchGeoJsonCached, which until now no scenario executed. This
