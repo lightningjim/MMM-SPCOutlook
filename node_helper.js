@@ -561,16 +561,9 @@ module.exports = NodeHelper.create({
         // CR-04: MagicMirror does not await this handler, so an unhandled rejection here
         // means sendSocketNotification is never reached and the frontend stays on
         // "Loading SPC Outlook..." forever — every later interval tick takes the identical
-        // path, so it never self-heals. getMesoscaleDiscussion throws on any non-2xx, on a
-        // DNS/TLS failure, on a KMZ with no KML, and on an MD KML with no features; none of
-        // those may be allowed to suppress the outlook payload.
-        let md = false;
-        try {
-          md = await this.getMesoscaleDiscussion(lat, lon);
-        } catch (err) {
-          Log.error("MMM-SPCOutlook: mesoscale discussion fetch failed, continuing without MDs", err);
-          md = false;   // matches getMesoscaleDiscussion's documented "no active MDs" return
-        }
+        // path, so it never self-heals. Advisory fetches (SPC MD, WPC MPD) now run inside
+        // getSpcOutlook's own try/catch via `_runKmlAdvisoryRow`, which never throws, so no
+        // separate containment is needed here for them.
         let outlook;
         try {
           outlook = await this.getSpcOutlook(lat, lon, extended, productToggles);
@@ -578,13 +571,21 @@ module.exports = NodeHelper.create({
           Log.error("MMM-SPCOutlook: outlook fetch failed", err);
           outlook = { error: err.toString() };
         }
-        // Send the results back to your front-end module. The third element is a
+        // Send the results back to your front-end module. The second element is a
         // monotonic sequence number (CR-03): it is what lets the frontend discard a
         // chain that finished after a newer one, so a late payload can never overwrite
         // a fresher risk. The increment is guarded so a caller that reaches this handler
         // without start() (offline probes) still emits a usable number.
+        //
+        // Phase 15 (D-03): the socket used to carry a third `md` element with the
+        // separate mesoscale-discussion list; that element is retired now that
+        // advisories live inside `outlook.advisories.{spcMD,mpd}`, so `seq` moved from
+        // index 2 to index 1. The two ends of this contract — this emit and
+        // MMM-SPCOutlook.js's `socketNotificationReceived` — must always change
+        // together: the frontend's guard fails open (accepts everything) when it reads
+        // a non-number, so a mismatch between the two is silent, not a crash.
         this._seq = (this._seq || 0) + 1;
-        this.sendSocketNotification("SPC_DATA_RESULT", [outlook, md, this._seq]);
+        this.sendSocketNotification("SPC_DATA_RESULT", [outlook, this._seq]);
       } finally {
         this._inFlight = false;
       }
@@ -613,7 +614,7 @@ module.exports = NodeHelper.create({
   async fetchBinBuffer(url){
     // WR-06: node-fetch follows redirects by default, so a 302 on an allowlisted URL
     // would walk straight off the allowlist. Refuse instead — the throw is contained per
-    // MD by getMesoscaleDiscussion's per-iteration catch.
+    // candidate by _runKmlAdvisoryRow's per-iteration catch.
     const res = await this._fetch(url, withTimeout({ redirect: "error" }));
     if(!res.ok) throw new Error(`Failed to fetch ${url}: ${res.status}`);
     return Buffer.from(await res.arrayBuffer());
@@ -1021,23 +1022,6 @@ module.exports = NodeHelper.create({
     return entry.lines;
   },
 
-  /**
-   * Fetch the SPC Active Mesoscale Discussion KMZ and return discussion names that cover the given location.
-   * @param lat - latitude of the user location
-   * @param lon - longitude of the user location
-   * @returns array of MD name strings that apply to the location, or false if none are active
-   *
-   *   Transitional thin wrapper (D-02): the fetch/allowlist/decode/containment work this
-   *   function used to do inline now lives in the shared `_runKmlAdvisoryRow`, which also
-   *   drives WPC MPD, so a fix applied to one advisory product structurally cannot skip
-   *   its twin (14-REVIEW.md WR-06). Preserves the pre-existing string-array-or-false
-   *   contract exactly, since `socketNotificationReceived` and the frontend still consume
-   *   it directly; removed once plan 15-07's socket migration lands.
-   */
-  async getMesoscaleDiscussion(lat, lon){
-    const { entries } = await this._runKmlAdvisoryRow(PRODUCT_REGISTRY.spcMD, lat, lon, { showSPCMD: true });
-    return entries.length ? entries.map(e => e.label) : false;
-  },
 
   
   //Day3+ % => risk
@@ -1316,6 +1300,11 @@ module.exports = NodeHelper.create({
    *   winterImpact with per-day Risk/Text/Color/ValidTime fields for days 1 through 3
    *   (always present, regardless of this._products.showWinterImpact — "NONE"/"None"/
    *   no-data color/null defaults when the toggle is off, D-05);
+   *   advisories: { spcMD: [...], mpd: [...] } — one { label, hazardType } entry per
+   *   active SPC Mesoscale Discussion / WPC Mesoscale Precipitation Discussion covering
+   *   the location (D-03). Both keys are always arrays, empty when the row's toggle is
+   *   off or nothing is active — never omitted, matching the day-block toggle-off
+   *   guarantee above;
    *   and optional _stale (boolean) and _staleAsOf (timestamp) when serving cached data
    */
   async getSpcOutlook(lat, lon, extended, products) {
@@ -1921,6 +1910,21 @@ module.exports = NodeHelper.create({
       const wssiPayload = wssiResult.payload;
       if (wssiResult.anyStale) anyStale = true;
 
+      // `kml-advisory` rows (SPC MD, WPC MPD) are driven here, inside getSpcOutlook, rather
+      // than as a separate top-level fetch in socketNotificationReceived, so that an advisory
+      // fetch failure folds into this run's own `anyStale` exactly like a product-layer
+      // failure (D-04) — the old top-level `md` path could not do that; its failure was
+      // caught and silently downgraded to "no active MDs" with no staleness signal at all.
+      // Both keys are seeded with empty arrays before the loop so `advisories.{spcMD,mpd}` is
+      // always a complete, array-shaped object even when a toggle is off (D-03, Phase 14 D-05).
+      const advisories = { spcMD: [], mpd: [] };
+      for (const row of Object.values(PRODUCT_REGISTRY)) {
+        if (row.kind !== "kml-advisory") continue;
+        const advisoryResult = await this._runKmlAdvisoryRow(row, lat, lon, productToggles);
+        advisories[row.id] = advisoryResult.entries;
+        if (advisoryResult.anyStale) anyStale = true;
+      }
+
       // WR-08: a layer that lost one or more polygons to unusable geometry produced a
       // partial answer, and a partial answer is not an answer — flag it exactly as a
       // failed fetch is flagged, so the user sees ⚠ rather than a confident reading.
@@ -2032,7 +2036,8 @@ module.exports = NodeHelper.create({
           day8Text: fireValueToFull[day8FireRisk]
         },
         excessiveRain: eroPayload,
-        winterImpact: wssiPayload
+        winterImpact: wssiPayload,
+        advisories: advisories
       };
 
     } catch (err) {

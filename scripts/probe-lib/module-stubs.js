@@ -249,11 +249,10 @@ function loadFrontendModule() {
 }
 
 // Render a payload through the real getDom and return the resulting markup/text.
-function renderDom(frontend, { config, spcrisk, mds = false }) {
+function renderDom(frontend, { config, spcrisk }) {
   const ctx = Object.create(frontend);
   ctx.config = config;
   ctx.spcrisk = spcrisk;
-  ctx.mds = mds;
   ctx.updateDom = () => {};
   const wrapper = frontend.getDom.call(ctx);
   return wrapper.innerHTML || wrapper.textContent || "";

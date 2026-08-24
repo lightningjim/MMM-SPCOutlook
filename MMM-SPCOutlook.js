@@ -60,13 +60,18 @@
     if (notification === "SPC_DATA_RESULT") {
       // Store the results in a variable for display
       Log.info("SPC Outlook: SPC_DATA_RESULT Received - " + JSON.stringify(payload));
-      // CR-03: payload[2] is the helper's monotonic poll sequence. Accepting every result
+      // CR-03: payload[1] is the helper's monotonic poll sequence. Accepting every result
       // unconditionally meant last-writer-wins across time, so a slow chain that read SLGT
       // several minutes ago could land after a fast chain that read MDT and silently
       // downgrade an active risk — with no ⚠ badge, because every fetch in the late chain
       // succeeded, just earlier. A payload with no sequence (an older helper) is still
       // accepted, so the check can only ever reject a provably older result.
-      const seq = payload[2];
+      // Phase 15 (D-03): this index moved from 2 to 1 when the separate `md` socket
+      // element was retired — advisories now live inside payload[0].advisories. The two
+      // ends of this contract (this read and node_helper.js's sendSocketNotification)
+      // must always change together: this guard fails open (accepts everything) when it
+      // reads a non-number, so a mismatch between the two ends is silent, never a crash.
+      const seq = payload[1];
       if (typeof seq === "number") {
         if (seq <= (this._lastSeq ?? -1)) {
           Log.info("SPC Outlook: discarding out-of-order SPC_DATA_RESULT (seq " + seq + " <= " + this._lastSeq + ")");
@@ -75,7 +80,6 @@
         this._lastSeq = seq;
       }
       this.spcrisk = payload[0];
-      this.mds = payload[1];
       this.updateDom();
     }
   },
@@ -220,10 +224,13 @@
       // otherwise render as a bare badge with nothing under it, so the marker lets the tail
       // of this branch say *what* is unconfirmed rather than leaving a dangling warning.
       const contentMarker = wrapper.innerHTML;
-      if(this.mds) {
-        for(const MD of this.mds){
-          wrapper.innerHTML += "<span style=\"color: #0059E0\">" + escapeHtml(MD) + " in effect.</span><br/>"
-        }
+      // Phase 15 (D-03): advisories now live inside the outlook payload rather than a
+      // separate retired socket element. Behaviour-preserving for SPC MDs here; Task 2
+      // rewrites this block into the single source-prefixed D-05 band that also covers
+      // WPC MPD.
+      const advisories = this.spcrisk.advisories || { spcMD: [], mpd: [] };
+      for (const entry of advisories.spcMD) {
+        wrapper.innerHTML += "<span style=\"color: #0059E0\">" + escapeHtml(entry.label) + " in effect.</span><br/>"
       }
       if(this.spcrisk.day1.risk != "NONE" || hasRenderableProximity(this.spcrisk.day1.proximity?.categorical))
       {
