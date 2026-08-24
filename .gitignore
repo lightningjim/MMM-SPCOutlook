@@ -1,0 +1,4 @@
+# GSD pause artifacts — written on /bm:pause-work, deleted on /bm:resume-work.
+# Ephemeral by design; tracking them churned two commits per pause/resume cycle.
+.planning/HANDOFF.json
+.planning/phases/*/.continue-here.md
