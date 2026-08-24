@@ -31,6 +31,48 @@ function buildArcGisQuery(baseUrl, layerId) {
   return `${baseUrl}/${layerId}/query?where=1%3D1&outFields=*&f=geojson`;
 }
 
+// The number of display days a `arcgis-day-layers` row covers, derived from the row's own
+// day -> layer map and validated at module load.
+//
+// A row used to state its span twice — `days: 5` beside a five-key `dayLayers` — with
+// nothing tying the two together. That mismatch is not a cosmetic duplication: `buildUrl`
+// reads `dayLayers[day]` and hands it to `buildArcGisQuery`, which throws on `undefined`;
+// node_helper's `_runArcGisDayProduct` calls `buildUrl` INSIDE its per-day try, and that
+// catch sets the payload's staleness flag. So a row whose `days` runs one past its
+// `dayLayers` does not fail loudly or even intermittently — it flags every payload stale on
+// every poll forever, which shows a permanent ⚠ Stale badge and, because staleness disables
+// the frontend's no-risk short-circuit, renders "No Severe Weather Risk (unconfirmed)"
+// indefinitely on quiet days. Raising `days` from 5 to 7 is the exact edit four separate
+// comments in this codebase use to illustrate a one-line span change.
+//
+// Deriving the span makes that state unrepresentable: adding a Day 6 is one edit, in the
+// one place the registry's own rule says a span is declared. Throwing here rather than
+// degrading at poll time is deliberate — the registry is static source, so an invalid map
+// is a bug that exists before the process ever polls, and a load-time throw surfaces it on
+// the first run instead of turning it into a permanent silent degrade in the field.
+function daySpanOf(dayLayers) {
+  if (!dayLayers || typeof dayLayers !== "object") {
+    throw new Error("productRegistry: dayLayers must be an object, got " + JSON.stringify(dayLayers));
+  }
+  const days = Object.keys(dayLayers).map(Number).sort((a, b) => a - b);
+  if (days.length === 0) {
+    throw new Error("productRegistry: dayLayers must name at least one day");
+  }
+  for (let i = 0; i < days.length; i++) {
+    if (days[i] !== i + 1) {
+      throw new Error("productRegistry: dayLayers must be a contiguous 1..N map, got " + JSON.stringify(days));
+    }
+    // The precondition buildArcGisQuery enforces, checked here so a bad layer id is a
+    // load-time failure rather than a per-day throw the staleness catch would swallow.
+    const layerId = dayLayers[days[i]];
+    if (!(Number.isInteger(layerId) && layerId >= 0)) {
+      throw new Error("productRegistry: dayLayers[" + days[i] + "] must be a non-negative integer layer id, got " +
+                      JSON.stringify(layerId));
+    }
+  }
+  return days.length;
+}
+
 // ERO display day -> MapServer layer id. Live-verified: layers 0 through 4
 // are Excessive Rainfall Day 1 through Day 5.
 const eroDayLayers = { 1: 0, 2: 1, 3: 2, 4: 3, 5: 4 };
@@ -88,7 +130,8 @@ const PRODUCT_REGISTRY = {
     configFlag: "showExcessiveRain",
     baseUrl: ERO_BASE_URL,
     dayLayers: eroDayLayers,
-    days: 5,
+    // Derived, never restated — see daySpanOf.
+    days: daySpanOf(eroDayLayers),
     // Arrow closure over the module constants (not a method using `this`) so
     // a destructured row still works.
     buildUrl: (day) => buildArcGisQuery(ERO_BASE_URL, eroDayLayers[day]),
@@ -114,7 +157,8 @@ const PRODUCT_REGISTRY = {
     configFlag: "showWinterImpact",
     baseUrl: WSSI_BASE_URL,
     dayLayers: wssiDayLayers,
-    days: 3,
+    // Derived, never restated — see daySpanOf.
+    days: daySpanOf(wssiDayLayers),
     buildUrl: (day) => buildArcGisQuery(WSSI_BASE_URL, wssiDayLayers[day]),
     // WSSI-02: fold BEFORE the lookup — raw field values are ALL CAPS
     // regardless of WPC's mixed-case documentation, and this is the single
@@ -196,4 +240,4 @@ const PRODUCT_REGISTRY = {
   // not added here.
 };
 
-module.exports = { buildArcGisQuery, MPD_FILENAME_PATTERN, PRODUCT_REGISTRY };
+module.exports = { buildArcGisQuery, daySpanOf, MPD_FILENAME_PATTERN, PRODUCT_REGISTRY };

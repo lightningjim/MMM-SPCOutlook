@@ -19,7 +19,7 @@
 // D-10 makes this suite the verification standard for the phase, so a run
 // that could not execute a scenario must never be reportable as green.
 
-const { PRODUCT_REGISTRY } = require("../productRegistry.js");
+const { PRODUCT_REGISTRY, daySpanOf } = require("../productRegistry.js");
 const {
   loadNodeHelper, loadFrontendModule, renderDom, resetHelper, resetLogs, turfStub, logCalls,
   hasRealKmlDeps, missingKmlDeps, makeKmzBuffer
@@ -3365,6 +3365,65 @@ const scenarios = [
         helper.getSpcOutlook = realGetSpcOutlook;
         delete helper.sendSocketNotification;
         resetHelper(helper);
+      }
+    }
+  }
+  ,{
+    // A registry row used to state its day span twice — `days: 5` beside a five-key
+    // `dayLayers` — with nothing tying them together. The failure mode of a mismatch is
+    // not a loud one: buildUrl throws on the missing layer id INSIDE _runArcGisDayProduct's
+    // per-day try, whose catch raises the payload's staleness flag, so the product flags
+    // every payload stale on every poll forever — a permanent ⚠ Stale badge and, because
+    // staleness disables the frontend's no-risk short-circuit, a permanent
+    // "No Severe Weather Risk (unconfirmed)" on quiet days. The span is derived now; this
+    // asserts the derivation refuses the shapes that would reintroduce it.
+    name: "registry-day-span-is-derived-and-cannot-outrun-its-layer-map",
+    run: async (helper) => {
+      if (typeof daySpanOf !== "function") {
+        throw new Error(
+          "productRegistry exports no daySpanOf: the day span is still stated separately from the layer map " +
+          "it has to agree with, and nothing checks that it does"
+        );
+      }
+      if (daySpanOf({ 1: 0, 2: 1, 3: 2 }) !== 3) {
+        throw new Error("daySpanOf did not return the number of days its layer map names");
+      }
+      const mustThrow = [
+        ["a gap in the middle", { 1: 0, 3: 2 }],
+        ["a map that does not start at day 1", { 2: 1, 3: 2 }],
+        ["an empty map", {}],
+        ["a non-integer layer id", { 1: 0, 2: "1" }],
+        ["a negative layer id", { 1: -1 }]
+      ];
+      for (const [what, map] of mustThrow) {
+        let err = null;
+        try { daySpanOf(map); } catch (e) { err = e; }
+        if (!err) {
+          throw new Error(`daySpanOf accepted ${what} (${JSON.stringify(map)}) — a row built on it would throw ` +
+                          "inside the per-day catch and latch the payload stale on every poll");
+        }
+      }
+
+      // The invariant itself, asserted against the shipped rows: every day a row declares
+      // must be one its own buildUrl can actually serve. This is the assertion that goes
+      // red if a future edit reintroduces a hand-written span.
+      for (const row of Object.values(PRODUCT_REGISTRY)) {
+        if (row.kind !== "arcgis-day-layers") continue;
+        if (row.days !== Object.keys(row.dayLayers).length) {
+          throw new Error(
+            `${row.id} declares ${row.days} days but its dayLayers names ${Object.keys(row.dayLayers).length}`
+          );
+        }
+        for (let d = 1; d <= row.days; d++) {
+          try {
+            row.buildUrl(d);
+          } catch (err) {
+            throw new Error(
+              `${row.id} declares day ${d} but buildUrl(${d}) throws (${err.message}) — every poll would set ` +
+              "anyStale here and the display would sit on a permanent ⚠ Stale badge"
+            );
+          }
+        }
       }
     }
   }
