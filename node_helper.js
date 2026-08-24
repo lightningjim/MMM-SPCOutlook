@@ -648,6 +648,125 @@ module.exports = NodeHelper.create({
   },
 
   /**
+   * Read one field's value out of an MPD's description-CDATA HTML table.
+   * @param descriptionValue - the already-unwrapped HTML string, e.g. `mpdDescriptionHtml`'s
+   *   return value. Returns null immediately when this is not a string, so a caller that forgets
+   *   to unwrap `@tmcw/togeojson`'s `{ "@type": "html", value }` object gets null rather than a
+   *   throw (RESEARCH.md Pitfall 3).
+   * @param label - a field name (`ValidEndTi`, `IssueTime`, `MPDNumber`, `MPDType`). Regex
+   *   metacharacters in `label` are escaped before the pattern is built (T-15-26) — every call
+   *   site today passes a compile-time constant, but building a `RegExp` from an unescaped
+   *   argument is a foot-gun worth closing at the source rather than trusting future callers.
+   * @returns the trimmed inner text of the `<td>` following `<td>LABEL</td>`, or null when the
+   *   field is absent, `descriptionValue` is not a string, or it exceeds 512 KB (T-15-24 — bounds
+   *   the lazy `(.*?)` match against a hostile multi-megabyte CDATA block on a Raspberry Pi).
+   */
+  extractMpdField(descriptionValue, label) {
+    if (typeof descriptionValue !== "string") return null;
+    if (descriptionValue.length > 512 * 1024) return null;
+    const escapedLabel = String(label).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    // Live samples separate <td>LABEL</td> from its value <td> by whitespace/newlines only —
+    // the `s` flag lets `.*?` survive that.
+    const m = descriptionValue.match(new RegExp(`<td>${escapedLabel}</td>\\s*<td>(.*?)</td>`, "s"));
+    return m ? m[1].trim() : null;
+  },
+
+  /**
+   * Unwrap an MPD feature's `description` property into a plain HTML string.
+   * @param feature - a GeoJSON feature from `kmlToGeoJson`'s output
+   * @returns `desc.value` when `@tmcw/togeojson` wrapped the description as
+   *   `{ "@type": "html", value }` (RESEARCH.md Pitfall 3, live-verified), `desc` when it is
+   *   already a plain string, or null otherwise. Reading `properties.description` directly and
+   *   regexing it either throws or, if merely guarded by a `typeof === "string"` check, silently
+   *   takes the "no hazard type" branch on every single MPD — a 100% parse-miss rate against a
+   *   fixture that structurally contains the field is the diagnostic signature of skipping this
+   *   unwrap, distinguishable from a genuine missing-field case only by that rate.
+   */
+  mpdDescriptionHtml(feature) {
+    const desc = feature && feature.properties && feature.properties.description;
+    if (desc && typeof desc === "object") return typeof desc.value === "string" ? desc.value : null;
+    if (typeof desc === "string") return desc;
+    return null;
+  },
+
+  /**
+   * Resolve an MPD's bare `ValidEndTi` (`DDHHMM`, no month/year) against its `IssueTime` (full
+   * date plus a US timezone abbreviation) into a UTC instant. This is MPD-04's sole currency
+   * decision — the filename number must never substitute for it.
+   * @param issueTimeStr - e.g. "734 PM EDT Sun Aug 23 2026". Native `Date` parsing of this shape
+   *   fails (`new Date("734 PM EDT Sun Aug 23 2026")` is `Invalid Date`, verified live).
+   * @param validEndTi - e.g. "240515" (day, hour, minute)
+   * @returns a UTC `Date`, or null when `IssueTime` cannot be parsed, its timezone abbreviation
+   *   falls outside the fixed 8-entry CONUS table, or `validEndTi` is not a well-formed 6-digit
+   *   day/hour/minute in range. Callers must fail open on null per this plan's decision record —
+   *   an unresolvable window is kept, never treated as expired.
+   */
+  parseMpdValidEnd(issueTimeStr, validEndTi) {
+    if (typeof issueTimeStr !== "string" || typeof validEndTi !== "string") return null;
+    if (!/^\d{6}$/.test(validEndTi)) return null;
+
+    const m = issueTimeStr.match(/([A-Z]{2,4})\s+\w{3}\s+(\w{3})\s+(\d{1,2})\s+(\d{4})/);
+    if (!m) return null;
+    const [, tz, monthAbbr, issueDayStr, yearStr] = m;
+
+    // Bounded 8-value CONUS domain (RESEARCH.md "Don't Hand-Roll") — a full timezone library is
+    // disproportionate weight for a Raspberry Pi module whose core value explicitly calls out
+    // "no unnecessary CPU burn."
+    const TZ_OFFSET_HOURS = { EST: -5, EDT: -4, CST: -6, CDT: -5, MST: -7, MDT: -6, PST: -8, PDT: -7 };
+    const offset = TZ_OFFSET_HOURS[tz];
+    if (offset === undefined) return null;
+
+    const day = Number(validEndTi.slice(0, 2));
+    const hour = Number(validEndTi.slice(2, 4));
+    const minute = Number(validEndTi.slice(4, 6));
+    if (!(day >= 1 && day <= 31)) return null;
+    if (!(hour >= 0 && hour <= 23)) return null;
+    if (!(minute >= 0 && minute <= 59)) return null;
+
+    const MONTH_ABBRS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    let monthIdx = MONTH_ABBRS.indexOf(monthAbbr);
+    if (monthIdx === -1) return null;
+    const issueDay = Number(issueDayStr);
+    let year = Number(yearStr);
+    if (!Number.isFinite(issueDay) || !Number.isFinite(year)) return null;
+
+    // MPD-04 correctness edge case: when the end-day is less than the issue-day, the validity
+    // window crosses into the next month (e.g. issued 23:33 on the 31st with a ValidEndTi of
+    // 010515). Without this roll, that instant resolves a month in the past and is discarded as
+    // expired — a false negative at exactly the moment MPD-04 cares about.
+    if (day < issueDay) {
+      monthIdx += 1;
+      if (monthIdx > 11) {
+        monthIdx = 0;
+        year += 1;
+      }
+    }
+
+    return new Date(Date.UTC(year, monthIdx, day, hour - offset, minute));
+  },
+
+  /**
+   * Read the `MPDType` field out of an MPD feature's description CDATA.
+   * @param feature - a GeoJSON feature from `kmlToGeoJson`'s output
+   * @returns the hazard type string, or null when absent. Per D-06 a null hazard type is a
+   *   normal, renderable state and must never cause the MPD to be dropped.
+   */
+  mpdHazardType(feature) {
+    return this.extractMpdField(this.mpdDescriptionHtml(feature), "MPDType");
+  },
+
+  /**
+   * Read the `MPDNumber` field out of an MPD feature's description CDATA.
+   * @param feature - a GeoJSON feature from `kmlToGeoJson`'s output
+   * @returns the number string, or null when absent. This is a display/fallback-label reader
+   *   only — it must never be used to decide currency (MPD-04); `parseMpdValidEnd` alone decides
+   *   that.
+   */
+  mpdNumber(feature) {
+    return this.extractMpdField(this.mpdDescriptionHtml(feature), "MPDNumber");
+  },
+
+  /**
    * computeProximity — distance-weighted proximity to higher-tier polygons via linear falloff (40 km cutoff).
    * @param items - array of { label, value, poly, line } — `line` is pre-derived by caller
    *                via turf.polygonToLine and memoized on _geoJsonCache entries (Plan 12-03)
