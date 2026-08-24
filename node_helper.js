@@ -23,7 +23,7 @@ const xpath    = require("xpath");
 const select = xpath.useNamespaces({
   k: "http://www.opengis.net/kml/2.2"
 });
-const { PRODUCT_REGISTRY } = require("./productRegistry");
+const { PRODUCT_REGISTRY, MPD_FILENAME_PATTERN } = require("./productRegistry");
 const valueToFullRisk = {
   NONE: "None", TSTM: "General Thunderstorms", MRGL: "Marginal", SLGT: "Slight", ENH: "Enhanced", MDT: "Moderate", HIGH: "High"
 };
@@ -261,6 +261,106 @@ module.exports = NodeHelper.create({
         Log.error(`MMM-SPCOutlook ${row.id}: discovery index fetch/parse failed`, err);
         return { urls: [], failed: true };
       }
+    },
+
+    // WPC publishes no ActiveMD.kmz-equivalent index for MPD (RESEARCH.md Pitfall 2) — only a
+    // flat, unfiltered Apache "Index of" listing of every MPD issued this year (1000+ entries),
+    // including prior-year stragglers. Discovery here parses the raw directory-listing HTML into
+    // candidate URLs instead of following NetworkLinks.
+    async "wpc-mpd-listing"(row) {
+      let res;
+      try {
+        res = await this._fetch(row.discoveryUrl, withTimeout({ redirect: "error" }));
+      } catch (err) {
+        Log.error(`MMM-SPCOutlook ${row.id}: discovery listing fetch failed`, err);
+        return { urls: [], failed: true };
+      }
+      if (!res.ok) {
+        Log.error(`MMM-SPCOutlook ${row.id}: discovery listing fetch failed: ${res.status}`);
+        return { urls: [], failed: true };
+      }
+
+      let text;
+      try {
+        text = await res.text();
+      } catch (err) {
+        Log.error(`MMM-SPCOutlook ${row.id}: discovery listing body could not be read`, err);
+        return { urls: [], failed: true };
+      }
+      // This is remote HTML being parsed for outbound fetch targets, so the 4 MB body bound is
+      // a security control, not tidiness (T-15-24). The live listing is ~139 KB.
+      if (typeof text !== "string" || text.length > 4 * 1024 * 1024) {
+        Log.error(`MMM-SPCOutlook ${row.id}: discovery listing body exceeds the 4 MB bound, refusing`);
+        return { urls: [], failed: true };
+      }
+
+      const now = Date.now();
+      const FRESH_WINDOW_MS = 48 * 60 * 60 * 1000;
+      // Captures a bare filename (re-validated against MPD_FILENAME_PATTERN below) plus its
+      // optional Last-Modified timestamp column. `MPD_latest.kmz` (a single pointer, insufficient
+      // for MPD-02 on its own) and the yearly archive folder (e.g. "2025/", by definition not
+      // current) never match this href shape and are excluded structurally — do not widen this
+      // pattern to admit them.
+      const ANCHOR_RE = /<a\s+href="(MPD_\d+_final\.kmz)"[^>]*>[^<]*<\/a>\s*(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2})?/gi;
+
+      const seen = new Set();
+      let urls = [];
+      let match;
+      while ((match = ANCHOR_RE.exec(text)) !== null) {
+        const filename = match[1];
+        const timestamp = match[2];
+        // Defence in depth: the capture group above is already anchored, but a hostile listing
+        // could still smuggle a value the regex over-accepted; re-check against the exported
+        // pattern before this filename is ever joined to a URL.
+        if (!MPD_FILENAME_PATTERN.test(filename)) continue;
+        if (seen.has(filename)) continue;
+        seen.add(filename);
+
+        // Fetch-count optimization ONLY (Open Question 2) — never the sole inclusion/exclusion
+        // gate. A candidate is dropped here only when its listing timestamp both parses AND is
+        // genuinely outside the 48h window; an absent or unparseable timestamp always fails OPEN
+        // (kept). Tightening this to "no timestamp = excluded" would reintroduce the exact
+        // false-negative class this project exists to prevent — the authoritative currency
+        // decision is always each candidate's own ValidEndTi, applied unconditionally in
+        // `_runKmlAdvisoryRow`'s mpd prepareEntry hook, never this pre-filter.
+        if (timestamp) {
+          const parsedMs = Date.parse(timestamp.replace(" ", "T") + "Z");
+          if (Number.isFinite(parsedMs) && (now - parsedMs) > FRESH_WINDOW_MS) continue;
+        }
+
+        // T-15-23: the href is never treated as a URL. Only a filename already re-validated
+        // against MPD_FILENAME_PATTERN is joined to the row's own known discoveryUrl, so a
+        // remote-supplied absolute URL or a `../` traversal segment can never become a fetch
+        // target. normalizeAdvisoryUrl re-checks the joined result anyway, as defence in depth.
+        let joined;
+        try {
+          joined = new URL(filename, row.discoveryUrl).toString();
+        } catch (_err) {
+          continue;
+        }
+        const normalized = normalizeAdvisoryUrl(joined, row.allowedHost);
+        if (normalized === null) {
+          Log.error(`MMM-SPCOutlook ${row.id}: refusing unroutable listing candidate ` + JSON.stringify(filename));
+          continue;
+        }
+        urls.push(normalized);
+      }
+
+      let failed = false;
+      // Degenerate case: the live directory holds 1000+ entries. If WPC's listing format ever
+      // changes, every timestamp becomes unparseable and the fail-open rule above would otherwise
+      // queue 1000+ KMZ fetches in one poll. Apache lists alphabetically, so the tail of document
+      // order is the highest-numbered entries — an explicitly degraded heuristic, not a selection
+      // rule — and the run is flagged stale so a truncated answer surfaces as ⚠, not as a
+      // confident list.
+      if (urls.length > ADVISORY_MAX_CANDIDATES) {
+        Log.error(`MMM-SPCOutlook ${row.id}: listing format not understood, ${urls.length} ` +
+                  `candidates survived the pre-filter; truncating to the last ${ADVISORY_MAX_CANDIDATES}`);
+        urls = urls.slice(-ADVISORY_MAX_CANDIDATES);
+        failed = true;
+      }
+
+      return { urls, failed };
     }
   },
 
@@ -294,6 +394,10 @@ module.exports = NodeHelper.create({
     const { urls, failed } = await strategy.call(this, row);
     let anyStale = failed;
 
+    // ADVISORY_MAX_CANDIDATES bounds how many KMZs are *fetched* per poll — a resource control
+    // only. It must never be repurposed into a cap on how many entries are *returned*: per D-07
+    // there is no cap on the advisory band, so every candidate that is fetched, contains the
+    // location and is still valid is returned below.
     let candidates = urls;
     if (candidates.length > ADVISORY_MAX_CANDIDATES) {
       Log.error(`MMM-SPCOutlook ${row.id}: ${candidates.length} candidates exceeds the ` +
@@ -305,7 +409,11 @@ module.exports = NodeHelper.create({
     const entries = [];
     // CR-02: contain per candidate. An index is fetched, then its member KMZs are
     // fetched seconds to minutes later, so a member that expires in that window
-    // 404s. One unreadable advisory must never discard its siblings.
+    // 404s. One unreadable advisory must never discard its siblings. Looping over every
+    // candidate here (rather than stopping at the first hit) is what satisfies MPD-02's "all
+    // concurrently active" requirement — checkInPolygon's single containing-feature return per
+    // candidate is sufficient because the live MPD KMZ carries a single Polygon Placemark; the
+    // multi-advisory collection happens at this loop's level, not inside checkInPolygon.
     for (const url of candidates) {
       try {
         const buffer = await this.fetchBinBuffer(url);
@@ -314,7 +422,18 @@ module.exports = NodeHelper.create({
         // The containing feature, not features[0] — see checkInPolygon.
         const hit = this.checkInPolygon(gj, lat, lon);
         if (!hit) continue;
-        const entry = row.toEntry(hit, {});
+
+        // MPD-04/MPD-03/D-06: mpd is the only kml-advisory row needing a per-candidate validity
+        // gate and description-CDATA labelling; spcMD supplies no ctx and keeps today's
+        // behaviour unchanged (its toEntry reads feature.properties.name directly).
+        let ctx = {};
+        if (row.id === "mpd") {
+          const prepared = this._prepareMpdEntry(hit, url);
+          if (prepared.drop) continue;
+          ctx = prepared.ctx;
+        }
+
+        const entry = row.toEntry(hit, ctx);
         if (entry === null) {
           Log.error(`MMM-SPCOutlook: ${row.id} covers the location but carries no name: ${url}`);
           continue;
@@ -330,6 +449,63 @@ module.exports = NodeHelper.create({
     }
 
     return { entries, anyStale };
+  },
+
+  /**
+   * MPD-only hook for `_runKmlAdvisoryRow`'s per-candidate loop: applies MPD-04's validity gate
+   * and reads MPD-03's hazard-type/number labels out of the description CDATA. `row.id ===
+   * "mpd"` branches into this rather than every `kml-advisory` row carrying it, so `spcMD` is
+   * structurally unaffected.
+   * @param feature - the containing feature `checkInPolygon` returned for this candidate
+   * @param url - the candidate's fetch URL, used only for diagnostic logging
+   * @returns `{ drop: true, reason }` to discard the candidate, or `{ ctx }` where `ctx.number`
+   *   and `ctx.hazardType` feed `PRODUCT_REGISTRY.mpd.toEntry(feature, ctx)`.
+   */
+  _prepareMpdEntry(feature, url) {
+    const html = this.mpdDescriptionHtml(feature);
+    const issueTime = this.extractMpdField(html, "IssueTime");
+    const validEndTi = this.extractMpdField(html, "ValidEndTi");
+    const validEnd = (issueTime !== null && validEndTi !== null)
+      ? this.parseMpdValidEnd(issueTime, validEndTi)
+      : null;
+
+    // MPD-04: this is the ONLY mechanism that decides currency. The filename number and the
+    // discovery listing's Last-Modified timestamp must never appear anywhere in this decision —
+    // both are cost/label conveniences, never selection criteria.
+    if (validEnd instanceof Date && validEnd.getTime() <= Date.now()) {
+      return { drop: true, reason: "expired" };
+    }
+    if (validEnd === null) {
+      // Fail open per this plan's decision record: IssueTime/ValidEndTi could not be resolved
+      // (unparseable IssueTime, unknown timezone abbreviation, malformed/missing ValidEndTi), so
+      // the candidate is kept rather than discarded — showing an expired MPD is a minor
+      // annoyance, hiding an active one is the false-negative class this project exists to
+      // prevent.
+      Log.error(`MMM-SPCOutlook: mpd validity window unparseable, keeping candidate: ${url}`);
+    }
+
+    const hazardType = this.mpdHazardType(feature);
+    if (hazardType === null) {
+      // D-06: the user is inside an active precipitation discussion; omitting it for a missing
+      // MPDType would be the same false-negative class WR-06 already fixed for SPC MD's "covers
+      // the location but carries no name" case.
+      Log.error(`MMM-SPCOutlook: mpd covers the location but has no parseable hazard type: ${url}`);
+    }
+
+    let number = this.mpdNumber(feature);
+    if (number === null) {
+      // The filename number is acceptable as a *label* of last resort so a covering MPD is
+      // never dropped merely for an unreadable MPDNumber field — it remains forbidden as a
+      // *selection* criterion, which is why this fallback runs only after the ValidEndTi gate
+      // above has already decided currency.
+      const m = /MPD_(\d+)_final\.kmz/.exec(url);
+      if (m) {
+        number = m[1];
+        Log.error(`MMM-SPCOutlook: mpd MPDNumber unparseable, falling back to filename number: ${url}`);
+      }
+    }
+
+    return { ctx: { number, hazardType } };
   },
 
   // Called when the front-end (MMM-SPCOutlook.js) sends a socket notification
@@ -645,6 +821,125 @@ module.exports = NodeHelper.create({
       if (v !== undefined && v !== null) return v;
     }
     return null;
+  },
+
+  /**
+   * Read one field's value out of an MPD's description-CDATA HTML table.
+   * @param descriptionValue - the already-unwrapped HTML string, e.g. `mpdDescriptionHtml`'s
+   *   return value. Returns null immediately when this is not a string, so a caller that forgets
+   *   to unwrap `@tmcw/togeojson`'s `{ "@type": "html", value }` object gets null rather than a
+   *   throw (RESEARCH.md Pitfall 3).
+   * @param label - a field name (`ValidEndTi`, `IssueTime`, `MPDNumber`, `MPDType`). Regex
+   *   metacharacters in `label` are escaped before the pattern is built (T-15-26) — every call
+   *   site today passes a compile-time constant, but building a `RegExp` from an unescaped
+   *   argument is a foot-gun worth closing at the source rather than trusting future callers.
+   * @returns the trimmed inner text of the `<td>` following `<td>LABEL</td>`, or null when the
+   *   field is absent, `descriptionValue` is not a string, or it exceeds 512 KB (T-15-24 — bounds
+   *   the lazy `(.*?)` match against a hostile multi-megabyte CDATA block on a Raspberry Pi).
+   */
+  extractMpdField(descriptionValue, label) {
+    if (typeof descriptionValue !== "string") return null;
+    if (descriptionValue.length > 512 * 1024) return null;
+    const escapedLabel = String(label).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    // Live samples separate <td>LABEL</td> from its value <td> by whitespace/newlines only —
+    // the `s` flag lets `.*?` survive that.
+    const m = descriptionValue.match(new RegExp(`<td>${escapedLabel}</td>\\s*<td>(.*?)</td>`, "s"));
+    return m ? m[1].trim() : null;
+  },
+
+  /**
+   * Unwrap an MPD feature's `description` property into a plain HTML string.
+   * @param feature - a GeoJSON feature from `kmlToGeoJson`'s output
+   * @returns `desc.value` when `@tmcw/togeojson` wrapped the description as
+   *   `{ "@type": "html", value }` (RESEARCH.md Pitfall 3, live-verified), `desc` when it is
+   *   already a plain string, or null otherwise. Reading `properties.description` directly and
+   *   regexing it either throws or, if merely guarded by a `typeof === "string"` check, silently
+   *   takes the "no hazard type" branch on every single MPD — a 100% parse-miss rate against a
+   *   fixture that structurally contains the field is the diagnostic signature of skipping this
+   *   unwrap, distinguishable from a genuine missing-field case only by that rate.
+   */
+  mpdDescriptionHtml(feature) {
+    const desc = feature && feature.properties && feature.properties.description;
+    if (desc && typeof desc === "object") return typeof desc.value === "string" ? desc.value : null;
+    if (typeof desc === "string") return desc;
+    return null;
+  },
+
+  /**
+   * Resolve an MPD's bare `ValidEndTi` (`DDHHMM`, no month/year) against its `IssueTime` (full
+   * date plus a US timezone abbreviation) into a UTC instant. This is MPD-04's sole currency
+   * decision — the filename number must never substitute for it.
+   * @param issueTimeStr - e.g. "734 PM EDT Sun Aug 23 2026". Native `Date` parsing of this shape
+   *   fails (`new Date("734 PM EDT Sun Aug 23 2026")` is `Invalid Date`, verified live).
+   * @param validEndTi - e.g. "240515" (day, hour, minute)
+   * @returns a UTC `Date`, or null when `IssueTime` cannot be parsed, its timezone abbreviation
+   *   falls outside the fixed 8-entry CONUS table, or `validEndTi` is not a well-formed 6-digit
+   *   day/hour/minute in range. Callers must fail open on null per this plan's decision record —
+   *   an unresolvable window is kept, never treated as expired.
+   */
+  parseMpdValidEnd(issueTimeStr, validEndTi) {
+    if (typeof issueTimeStr !== "string" || typeof validEndTi !== "string") return null;
+    if (!/^\d{6}$/.test(validEndTi)) return null;
+
+    const m = issueTimeStr.match(/([A-Z]{2,4})\s+\w{3}\s+(\w{3})\s+(\d{1,2})\s+(\d{4})/);
+    if (!m) return null;
+    const [, tz, monthAbbr, issueDayStr, yearStr] = m;
+
+    // Bounded 8-value CONUS domain (RESEARCH.md "Don't Hand-Roll") — a full timezone library is
+    // disproportionate weight for a Raspberry Pi module whose core value explicitly calls out
+    // "no unnecessary CPU burn."
+    const TZ_OFFSET_HOURS = { EST: -5, EDT: -4, CST: -6, CDT: -5, MST: -7, MDT: -6, PST: -8, PDT: -7 };
+    const offset = TZ_OFFSET_HOURS[tz];
+    if (offset === undefined) return null;
+
+    const day = Number(validEndTi.slice(0, 2));
+    const hour = Number(validEndTi.slice(2, 4));
+    const minute = Number(validEndTi.slice(4, 6));
+    if (!(day >= 1 && day <= 31)) return null;
+    if (!(hour >= 0 && hour <= 23)) return null;
+    if (!(minute >= 0 && minute <= 59)) return null;
+
+    const MONTH_ABBRS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    let monthIdx = MONTH_ABBRS.indexOf(monthAbbr);
+    if (monthIdx === -1) return null;
+    const issueDay = Number(issueDayStr);
+    let year = Number(yearStr);
+    if (!Number.isFinite(issueDay) || !Number.isFinite(year)) return null;
+
+    // MPD-04 correctness edge case: when the end-day is less than the issue-day, the validity
+    // window crosses into the next month (e.g. issued 23:33 on the 31st with a ValidEndTi of
+    // 010515). Without this roll, that instant resolves a month in the past and is discarded as
+    // expired — a false negative at exactly the moment MPD-04 cares about.
+    if (day < issueDay) {
+      monthIdx += 1;
+      if (monthIdx > 11) {
+        monthIdx = 0;
+        year += 1;
+      }
+    }
+
+    return new Date(Date.UTC(year, monthIdx, day, hour - offset, minute));
+  },
+
+  /**
+   * Read the `MPDType` field out of an MPD feature's description CDATA.
+   * @param feature - a GeoJSON feature from `kmlToGeoJson`'s output
+   * @returns the hazard type string, or null when absent. Per D-06 a null hazard type is a
+   *   normal, renderable state and must never cause the MPD to be dropped.
+   */
+  mpdHazardType(feature) {
+    return this.extractMpdField(this.mpdDescriptionHtml(feature), "MPDType");
+  },
+
+  /**
+   * Read the `MPDNumber` field out of an MPD feature's description CDATA.
+   * @param feature - a GeoJSON feature from `kmlToGeoJson`'s output
+   * @returns the number string, or null when absent. This is a display/fallback-label reader
+   *   only — it must never be used to decide currency (MPD-04); `parseMpdValidEnd` alone decides
+   *   that.
+   */
+  mpdNumber(feature) {
+    return this.extractMpdField(this.mpdDescriptionHtml(feature), "MPDNumber");
   },
 
   /**
