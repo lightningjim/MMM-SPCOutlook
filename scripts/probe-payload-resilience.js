@@ -2599,6 +2599,76 @@ const scenarios = [
         throw new Error(`control: a well-sized body did not survive the bound, got ${JSON.stringify(ok.toString())}`);
       }
     }
+  },
+  {
+    // WR-03: the 8 MB entry bound read `entry.header.size` — the DECLARED uncompressed
+    // size, a field a hostile archive sets independently of its deflate stream. The
+    // comment presented it as bounding a decompression bomb; it bounded only an honestly
+    // declared one. Three refusals are asserted against real adm-zip archives, plus a
+    // control so none of them is satisfied by refusing everything.
+    name: "kmz-decompression-bomb-is-refused",
+    requires: "kml-deps",
+    run: async (helper) => {
+      resetHelper(helper);
+      resetLogs();
+
+      // 1. Honest and oversized: refused on the declared size, before any inflation.
+      const oversized = makeKmzBuffer({ "doc.kml": Buffer.alloc(16 * 1024 * 1024, 0x41).toString("latin1") });
+      let oversizedErr = null;
+      try { helper.extractSoleKmlEntry(oversized); } catch (err) { oversizedErr = err; }
+      if (!oversizedErr || !/oversized \.kml entry/.test(oversizedErr.message)) {
+        throw new Error(`an honestly-declared 16 MB .kml entry was accepted: ${oversizedErr && oversizedErr.message}`);
+      }
+
+      // 2. Under the byte cap but bomb-shaped: 4 MB of one repeated byte compresses to a
+      //    few KB, a ratio near 1000:1. Pre-fix this passed the size check and was
+      //    inflated in full; the ratio check is what refuses it, and it refuses BEFORE
+      //    readFile allocates anything. Live KML compresses at well under 20:1, so this
+      //    cannot fire on a real WPC/SPC archive.
+      const ratioBomb = makeKmzBuffer({ "doc.kml": Buffer.alloc(4 * 1024 * 1024, 0x41).toString("latin1") });
+      let ratioErr = null;
+      try { helper.extractSoleKmlEntry(ratioBomb); } catch (err) { ratioErr = err; }
+      if (!ratioErr || !/implausible compression ratio/.test(ratioErr.message)) {
+        throw new Error(
+          "a 4 MB entry inflating from a few KB — under the byte cap, ~1000:1 — was accepted: " +
+          `${ratioErr && ratioErr.message}. The byte cap alone does not bound a bomb.`
+        );
+      }
+
+      // 3. A header that LIES: same deflate stream, central-directory uncompressed size
+      //    forged down to 100 bytes so both checks above see a tiny, plausible entry. The
+      //    refusal here does not come from either header check — it comes from bounding
+      //    what actually inflates. Pinning it means a future change that drops the
+      //    post-read check (or moves to a zip library that trusts the header) turns red
+      //    rather than silently reopening the hole.
+      const forged = Buffer.from(oversized);
+      const cdOffset = forged.indexOf(Buffer.from([0x50, 0x4b, 0x01, 0x02]));
+      if (cdOffset < 0) throw new Error("fixture is not a well-formed zip: no central directory header");
+      forged.writeUInt32LE(100, cdOffset + 24);
+      let forgedErr = null;
+      try { helper.extractSoleKmlEntry(forged); } catch (err) { forgedErr = err; }
+      if (!forgedErr) {
+        throw new Error("a forged 100-byte declaration on a 16 MB deflate stream was accepted and inflated");
+      }
+      if (/oversized \.kml entry|implausible compression ratio/.test(forgedErr.message)) {
+        throw new Error(
+          `the forged fixture was refused by a HEADER check (${forgedErr.message}), so it does not ` +
+          "prove the inflated result is bounded — the forge did not take effect"
+        );
+      }
+
+      // 4. Control: a live-shaped archive still round-trips, so the three refusals above
+      //    are not just "extractSoleKmlEntry refuses everything".
+      const good = kmzOf({
+        "doc.kml": mpdKml({
+          number: "1", issueTime: "734 PM EDT Sun Aug 23 2026",
+          validEndTi: "240515", hazardType: "Heavy snow"
+        })
+      });
+      if (!helper.extractSoleKmlEntry(good).includes("MPDNumber")) {
+        throw new Error("control: a well-formed KMZ no longer round-trips through extractSoleKmlEntry");
+      }
+    }
   }
 ];
 

@@ -86,6 +86,14 @@ const ADVISORY_MAX_CANDIDATES = 60;
 const ADVISORY_MAX_BODY_BYTES = 8 * 1024 * 1024;
 const ADVISORY_MAX_LISTING_BYTES = 4 * 1024 * 1024;
 
+// WR-03: bounds on a KMZ's sole .kml member. Live samples are ~3 KB, so the byte cap is
+// three orders of magnitude of headroom. The ratio cap is the half that actually bounds a
+// decompression bomb: the byte cap alone reads a header field the archive's author chose,
+// while a deflate bomb is defined by an enormous inflated:compressed ratio. Live KML
+// compresses at well under 20:1.
+const KMZ_MAX_KML_BYTES = 8 * 1024 * 1024;
+const KMZ_MAX_COMPRESSION_RATIO = 200;
+
 module.exports = NodeHelper.create({
   // Exposed on the helper object (rather than kept purely module-private) so offline
   // probes can exercise the allowlist directly against the module-scope implementation
@@ -750,12 +758,38 @@ module.exports = NodeHelper.create({
     if (name.includes("..") || name.startsWith("/") || /^[A-Za-z]:/.test(name)) {
       throw new Error(`KMZ downloaded has an unsafe entry name: ${JSON.stringify(name)}`);
     }
-    const size = entry.header && typeof entry.header.size === "number" ? entry.header.size : 0;
-    if (size > 8 * 1024 * 1024) {
-      throw new Error(`KMZ downloaded has an oversized .kml entry: ${size} bytes`);
+    // WR-03: `entry.header.size` is the DECLARED uncompressed size from the ZIP header, a
+    // field a hostile archive sets independently of what its deflate stream actually
+    // inflates to. Checking it alone bounds only an honestly-declared bomb: declare
+    // `size: 100` on an entry that inflates to gigabytes and readFile below inflates it
+    // anyway. Three checks are needed, and the last one is the only unforgeable one:
+    //   1. the declared size, which refuses the honest case before any inflation;
+    //   2. the compression ratio, since a deflate bomb is by definition a tiny compressed
+    //      payload claiming (or producing) an enormous one — live KML compresses at well
+    //      under 20:1, so 200:1 is generous headroom and still catches the attack shape;
+    //   3. the length of the buffer that actually came out, which no header field can lie
+    //      about. adm-zip inflates into memory, so this is a bound on what is retained and
+    //      passed downstream rather than on peak allocation — the first two checks are what
+    //      keep the common cases from ever reaching it.
+    const declared = entry.header && typeof entry.header.size === "number" ? entry.header.size : 0;
+    const compressed = entry.header && typeof entry.header.compressedSize === "number"
+      ? entry.header.compressedSize
+      : 0;
+    if (declared > KMZ_MAX_KML_BYTES) {
+      throw new Error(`KMZ downloaded has an oversized .kml entry: ${declared} bytes`);
+    }
+    if (compressed > 0 && declared / compressed > KMZ_MAX_COMPRESSION_RATIO) {
+      throw new Error(`KMZ .kml entry has an implausible compression ratio ` +
+                      `(${declared}/${compressed} > ${KMZ_MAX_COMPRESSION_RATIO})`);
     }
 
-    return ZIPper.readFile(entry).toString();
+    const buf = ZIPper.readFile(entry);
+    if (!buf) throw new Error("KMZ .kml entry could not be inflated");
+    if (buf.length > KMZ_MAX_KML_BYTES) {
+      throw new Error(`KMZ .kml entry inflated to ${buf.length} bytes, beyond the ` +
+                      `${KMZ_MAX_KML_BYTES}-byte bound (its header declared ${declared})`);
+    }
+    return buf.toString();
   },
 
   parseNetworkLinks(kmlText) {
