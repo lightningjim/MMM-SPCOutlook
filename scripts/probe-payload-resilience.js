@@ -2386,6 +2386,106 @@ const scenarios = [
         "an unresolvable validity window (unmapped timezone abbreviation) did not log its parse-miss diagnostic"
       );
     }
+  },
+  {
+    // CR-03: `<td>MPDNumber</td><td></td>` — a present but empty cell. extractMpdField
+    // matches it and returns "" (its trimmed inner text), not null, so the filename-number
+    // fallback was skipped, toEntry's `if (!number) return null` fired, and an MPD covering
+    // the user was dropped with no entry and no ⚠. The existing mpdKml fixtures only ever
+    // OMIT a row, never emit it empty, so this shape was untested. The label must come
+    // from the filename — a *label* of last resort, never a selection criterion, which is
+    // why this runs only after the ValidEndTi gate has already decided currency.
+    name: "mpd-empty-number-cell-falls-back-to-filename-not-dropped",
+    requires: "kml-deps",
+    run: async (helper) => {
+      resetHelper(helper);
+      resetLogs();
+      helper._products = { showSPCMD: false, showMPD: true, showExcessiveRain: false, showWinterImpact: false };
+      const now = Date.now();
+      const window = mpdWindowFields(now + 3 * 60 * 60 * 1000, { issueBeforeMs: 45 * 60 * 1000 });
+      const listingText = mpdListingHtml([
+        { filename: "MPD_1733_final.kmz", lastModified: new Date(now - 15 * 60 * 1000) }
+      ]);
+      const url = "https://www.wpc.ncep.noaa.gov/kml/mpd/MPD_1733_final.kmz";
+      const buffer = kmzOf({
+        "doc.kml": mpdKml({
+          number: "", issueTime: window.issueTimeStr, validEndTi: window.validEndTi,
+          hazardType: "Heavy snow"
+        })
+      });
+      installHttp(helper, advisoryRoutes({
+        listing: { url: PRODUCT_REGISTRY.mpd.discoveryUrl, text: listingText },
+        members: [{ url, buffer }]
+      }));
+
+      const originalPointInPolygon = turfStub.pointInPolygon;
+      turfStub.pointInPolygon = () => true;
+      let out;
+      try {
+        out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, {
+          showSPCMD: false, showMPD: true, showExcessiveRain: false, showWinterImpact: false
+        });
+      } finally {
+        turfStub.pointInPolygon = originalPointInPolygon;
+      }
+      assertPayloadIntact(out);
+      if (out.advisories.mpd.length !== 1) {
+        throw new Error(
+          `an active MPD covering the user was dropped for an empty MPDNumber cell, got ` +
+          `${out.advisories.mpd.length} entries — the exact false negative MPD-01/MPD-04 exist to prevent`
+        );
+      }
+      if (!out.advisories.mpd[0].label.includes("1733")) {
+        throw new Error(`expected the filename-number label 1733, got ${JSON.stringify(out.advisories.mpd[0])}`);
+      }
+      // D-06: an unrelated field's absence must not be collateral damage of the fallback.
+      if (out.advisories.mpd[0].hazardType !== "Heavy snow") {
+        throw new Error(`the hazard type was lost alongside the number: ${JSON.stringify(out.advisories.mpd[0])}`);
+      }
+      requireLog(
+        ["mpd MPDNumber unparseable, falling back to filename number", url],
+        "the empty-cell fallback produced no diagnostic naming the URL"
+      );
+      // The entry was recovered, so this is not a degrade — nothing was hidden from the user.
+      if (out._stale === true) {
+        throw new Error("a recovered MPD label was reported as a degrade (_stale true)");
+      }
+
+      // Control: a URL whose filename carries no MPD number leaves the entry genuinely
+      // unlabellable. It is then dropped — and that drop is a degrade the user must see.
+      resetHelper(helper);
+      resetLogs();
+      helper._products = { showSPCMD: false, showMPD: true, showExcessiveRain: false, showWinterImpact: false };
+      const originalDiscovery = helper._advisoryDiscovery;
+      helper._advisoryDiscovery = Object.assign({}, originalDiscovery, {
+        "wpc-mpd-listing": async () => ({
+          urls: ["https://www.wpc.ncep.noaa.gov/kml/mpd/unlabelled.kmz"], failed: false
+        })
+      });
+      installHttp(helper, advisoryRoutes({
+        members: [{ url: "https://www.wpc.ncep.noaa.gov/kml/mpd/unlabelled.kmz", buffer }]
+      }));
+      turfStub.pointInPolygon = () => true;
+      let dropped;
+      try {
+        dropped = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, {
+          showSPCMD: false, showMPD: true, showExcessiveRain: false, showWinterImpact: false
+        });
+      } finally {
+        turfStub.pointInPolygon = originalPointInPolygon;
+        helper._advisoryDiscovery = originalDiscovery;
+      }
+      assertPayloadIntact(dropped);
+      if (dropped.advisories.mpd.length !== 0) {
+        throw new Error(`control: an unlabellable MPD was expected to drop, got ${JSON.stringify(dropped.advisories.mpd)}`);
+      }
+      if (dropped._stale !== true) {
+        throw new Error(
+          "an advisory that covers the location and was dropped for having no name produced " +
+          "an unflagged payload — the user sees neither the advisory nor a ⚠ (D-04)"
+        );
+      }
+    }
   }
 ];
 

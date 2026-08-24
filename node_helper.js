@@ -442,7 +442,12 @@ module.exports = NodeHelper.create({
 
         const entry = row.toEntry(hit, ctx);
         if (entry === null) {
+          // CR-03: dropping an advisory that DOES cover the location is a degrade, not a
+          // quiet day — the user is inside it and sees nothing. Same reasoning as the
+          // per-candidate catch below and the seven other degrade sites in this file:
+          // silence here is indistinguishable from "no advisories active" (D-04, CV-01).
           Log.error(`MMM-SPCOutlook: ${row.id} covers the location but carries no name: ${url}`);
+          anyStale = true;
           continue;
         }
         entries.push(entry);
@@ -500,15 +505,22 @@ module.exports = NodeHelper.create({
     }
 
     let number = this.mpdNumber(feature);
-    if (number === null) {
+    // CR-03: "unreadable" is any value toEntry will refuse, not just `null`. extractMpdField
+    // returns `""` — a successful match on an empty trimmed <td> — for a present-but-blank
+    // `<td>MPDNumber</td><td></td>`, and `"" !== null` skipped this fallback entirely, so
+    // toEntry's `if (!number) return null` silently dropped an MPD covering the user. The
+    // guard now matches the condition the consumer actually applies.
+    if (typeof number !== "string" || number.trim() === "") {
       // The filename number is acceptable as a *label* of last resort so a covering MPD is
       // never dropped merely for an unreadable MPDNumber field — it remains forbidden as a
       // *selection* criterion, which is why this fallback runs only after the ValidEndTi gate
       // above has already decided currency.
-      const m = /MPD_(\d+)_final\.kmz/.exec(url);
+      const m = MPD_FILENAME_PATTERN.exec(url.split("/").pop());
       if (m) {
         number = m[1];
         Log.error(`MMM-SPCOutlook: mpd MPDNumber unparseable, falling back to filename number: ${url}`);
+      } else {
+        number = null;
       }
     }
 
