@@ -23,7 +23,7 @@ const xpath    = require("xpath");
 const select = xpath.useNamespaces({
   k: "http://www.opengis.net/kml/2.2"
 });
-const { PRODUCT_REGISTRY } = require("./productRegistry");
+const { PRODUCT_REGISTRY, MPD_FILENAME_PATTERN } = require("./productRegistry");
 const valueToFullRisk = {
   NONE: "None", TSTM: "General Thunderstorms", MRGL: "Marginal", SLGT: "Slight", ENH: "Enhanced", MDT: "Moderate", HIGH: "High"
 };
@@ -261,6 +261,106 @@ module.exports = NodeHelper.create({
         Log.error(`MMM-SPCOutlook ${row.id}: discovery index fetch/parse failed`, err);
         return { urls: [], failed: true };
       }
+    },
+
+    // WPC publishes no ActiveMD.kmz-equivalent index for MPD (RESEARCH.md Pitfall 2) — only a
+    // flat, unfiltered Apache "Index of" listing of every MPD issued this year (1000+ entries),
+    // including prior-year stragglers. Discovery here parses the raw directory-listing HTML into
+    // candidate URLs instead of following NetworkLinks.
+    async "wpc-mpd-listing"(row) {
+      let res;
+      try {
+        res = await this._fetch(row.discoveryUrl, withTimeout({ redirect: "error" }));
+      } catch (err) {
+        Log.error(`MMM-SPCOutlook ${row.id}: discovery listing fetch failed`, err);
+        return { urls: [], failed: true };
+      }
+      if (!res.ok) {
+        Log.error(`MMM-SPCOutlook ${row.id}: discovery listing fetch failed: ${res.status}`);
+        return { urls: [], failed: true };
+      }
+
+      let text;
+      try {
+        text = await res.text();
+      } catch (err) {
+        Log.error(`MMM-SPCOutlook ${row.id}: discovery listing body could not be read`, err);
+        return { urls: [], failed: true };
+      }
+      // This is remote HTML being parsed for outbound fetch targets, so the 4 MB body bound is
+      // a security control, not tidiness (T-15-24). The live listing is ~139 KB.
+      if (typeof text !== "string" || text.length > 4 * 1024 * 1024) {
+        Log.error(`MMM-SPCOutlook ${row.id}: discovery listing body exceeds the 4 MB bound, refusing`);
+        return { urls: [], failed: true };
+      }
+
+      const now = Date.now();
+      const FRESH_WINDOW_MS = 48 * 60 * 60 * 1000;
+      // Captures a bare filename (re-validated against MPD_FILENAME_PATTERN below) plus its
+      // optional Last-Modified timestamp column. `MPD_latest.kmz` (a single pointer, insufficient
+      // for MPD-02 on its own) and the yearly archive folder (e.g. "2025/", by definition not
+      // current) never match this href shape and are excluded structurally — do not widen this
+      // pattern to admit them.
+      const ANCHOR_RE = /<a\s+href="(MPD_\d+_final\.kmz)"[^>]*>[^<]*<\/a>\s*(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2})?/gi;
+
+      const seen = new Set();
+      let urls = [];
+      let match;
+      while ((match = ANCHOR_RE.exec(text)) !== null) {
+        const filename = match[1];
+        const timestamp = match[2];
+        // Defence in depth: the capture group above is already anchored, but a hostile listing
+        // could still smuggle a value the regex over-accepted; re-check against the exported
+        // pattern before this filename is ever joined to a URL.
+        if (!MPD_FILENAME_PATTERN.test(filename)) continue;
+        if (seen.has(filename)) continue;
+        seen.add(filename);
+
+        // Fetch-count optimization ONLY (Open Question 2) — never the sole inclusion/exclusion
+        // gate. A candidate is dropped here only when its listing timestamp both parses AND is
+        // genuinely outside the 48h window; an absent or unparseable timestamp always fails OPEN
+        // (kept). Tightening this to "no timestamp = excluded" would reintroduce the exact
+        // false-negative class this project exists to prevent — the authoritative currency
+        // decision is always each candidate's own ValidEndTi, applied unconditionally in
+        // `_runKmlAdvisoryRow`'s mpd prepareEntry hook, never this pre-filter.
+        if (timestamp) {
+          const parsedMs = Date.parse(timestamp.replace(" ", "T") + "Z");
+          if (Number.isFinite(parsedMs) && (now - parsedMs) > FRESH_WINDOW_MS) continue;
+        }
+
+        // T-15-23: the href is never treated as a URL. Only a filename already re-validated
+        // against MPD_FILENAME_PATTERN is joined to the row's own known discoveryUrl, so a
+        // remote-supplied absolute URL or a `../` traversal segment can never become a fetch
+        // target. normalizeAdvisoryUrl re-checks the joined result anyway, as defence in depth.
+        let joined;
+        try {
+          joined = new URL(filename, row.discoveryUrl).toString();
+        } catch (_err) {
+          continue;
+        }
+        const normalized = normalizeAdvisoryUrl(joined, row.allowedHost);
+        if (normalized === null) {
+          Log.error(`MMM-SPCOutlook ${row.id}: refusing unroutable listing candidate ` + JSON.stringify(filename));
+          continue;
+        }
+        urls.push(normalized);
+      }
+
+      let failed = false;
+      // Degenerate case: the live directory holds 1000+ entries. If WPC's listing format ever
+      // changes, every timestamp becomes unparseable and the fail-open rule above would otherwise
+      // queue 1000+ KMZ fetches in one poll. Apache lists alphabetically, so the tail of document
+      // order is the highest-numbered entries — an explicitly degraded heuristic, not a selection
+      // rule — and the run is flagged stale so a truncated answer surfaces as ⚠, not as a
+      // confident list.
+      if (urls.length > ADVISORY_MAX_CANDIDATES) {
+        Log.error(`MMM-SPCOutlook ${row.id}: listing format not understood, ${urls.length} ` +
+                  `candidates survived the pre-filter; truncating to the last ${ADVISORY_MAX_CANDIDATES}`);
+        urls = urls.slice(-ADVISORY_MAX_CANDIDATES);
+        failed = true;
+      }
+
+      return { urls, failed };
     }
   },
 
