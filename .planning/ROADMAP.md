@@ -51,7 +51,7 @@ Full details: `.planning/milestones/v1.2-ROADMAP.md`
 **Milestone Goal:** Extend the module beyond SPC to WPC and CPC hazard products, and restructure the display from per-product row sections into a unified per-day report that merges and deduplicates all sources.
 
 - [x] **Phase 14: Foundation & WPC Excessive Rainfall Outlook** - Decouple payload shape from `extended`, establish per-product toggles and endpoint conventions, ship ERO (7/7 plans; 3 review rounds, all blocking gaps closed; probe suite 15/15 mutation-proven — see 14-REVIEW.md / 14-REVIEW-FIX.md) — completed 2026-08-23
-- [ ] **Phase 15: WPC Winter Storm Severity & Mesoscale Precipitation Discussion** - Ship WSSI Overall Impact and MPD advisories
+- [x] **Phase 15: WPC Winter Storm Severity & Mesoscale Precipitation Discussion** - Ship WSSI Overall Impact and MPD advisories
 - [ ] **Phase 16: WPC Day 3–7 / CPC Day 8–14 Hazards Outlook** - Ship per-day and window-spanning hazard entries with weekday-aware staleness
 - [ ] **Phase 17: NWS/WPC HeatRisk & Parallelized Fetching** - Ship the raster-identify HeatRisk product and parallelize all new fetches
 - [ ] **Phase 18: Merge, Precedence & Unified Payload Schema** - Build the cross-source dedup/precedence logic and single backend payload; measure cold-cache latency
