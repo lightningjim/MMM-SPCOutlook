@@ -169,6 +169,30 @@
     // it is stated once here rather than spelled out at the gate and again at the render.
     // A Phase 16/17 kml-advisory row adds one line here and nothing else.
     const ADVISORY_SOURCES = { spcMD: "showSPCMD", mpd: "showMPD" };
+    // WR-08/CV-03: node_helper derives every day span from PRODUCT_REGISTRY (`row.days`) and
+    // states the rule outright — "no literal day count survives outside the registry" — while
+    // the frontend enumerated five ERO terms and three WSSI terms by hand, in four places.
+    // Raising PRODUCT_REGISTRY.excessiveRain.days from 5 to 7 therefore produced a correct
+    // 28-key payload whose days 6-7 never rendered and never disqualified the no-risk
+    // short-circuit, with no error at either end. The frontend runs in a browser context and
+    // cannot require the registry, so the span is read off the block the backend actually
+    // shipped: an `arcgis-day-layers` block carries exactly one `day{N}Risk` key per day
+    // (D-05 guarantees the full block is present regardless of the toggle), which makes the
+    // key count the span. Anything that is not such a block yields 0 and renders nothing.
+    const dayRiskCount = (block) => {
+      if (!block || typeof block !== "object") return 0;
+      return Object.keys(block).filter((k) => /^day\d+Risk$/.test(k)).length;
+    };
+    // True when any day in an arcgis-day-layers block carries a tier other than "NONE".
+    // Strict !== so a missing/undefined key is NOT counted as a risk (IN-08's trap: `!=
+    // "NONE"` is true for undefined, which would render a row with `color:#undefined`).
+    const blockHasRisk = (block) => {
+      const days = dayRiskCount(block);
+      for (let d = 1; d <= days; d++) {
+        if (block[`day${d}Risk`] !== "NONE") return true;
+      }
+      return false;
+    };
     // WR-09: every other product row is gated on its own toggle (`this.config.showExcessiveRain
     // && ...`, `this.config.showWinterImpact && ...`); the advisory band was not, so it
     // rendered whatever arrived. That was safe only because _runKmlAdvisoryRow returns [] when
@@ -217,23 +241,19 @@
         this.spcrisk.fireWeather.day7Risk > 0 ||
         this.spcrisk.fireWeather.day8Risk > 0
       )) &&
-      // ERO extension of the no-risk gate (Phase 19 RPT-06 regression target)
-      !(this.config.showExcessiveRain && this.spcrisk.excessiveRain && (
-        this.spcrisk.excessiveRain.day1Risk != "NONE" ||
-        this.spcrisk.excessiveRain.day2Risk != "NONE" ||
-        this.spcrisk.excessiveRain.day3Risk != "NONE" ||
-        this.spcrisk.excessiveRain.day4Risk != "NONE" ||
-        this.spcrisk.excessiveRain.day5Risk != "NONE"
-      )) &&
+      // ERO extension of the no-risk gate (Phase 19 RPT-06 regression target). WR-08: the
+      // day terms are derived from the block's own keys, not enumerated. node_helper builds
+      // this block from PRODUCT_REGISTRY.excessiveRain.days ("no literal day count survives
+      // outside the registry") — with five terms written out here, raising that single knob
+      // from 5 to 7 produced a correct 28-key payload whose days 6-7 never disqualified the
+      // short-circuit and never rendered, with no error anywhere.
+      !(this.config.showExcessiveRain && blockHasRisk(this.spcrisk.excessiveRain)) &&
       // WSSI extension of the no-risk gate (Phase 19 RPT-06 regression target). Without
       // this term a day with a genuine MAJOR winter impact and no convective risk would
       // short-circuit to "No Severe Weather Risk" and the winter row would never render —
-      // the false-negative class this project exists to prevent.
-      !(this.config.showWinterImpact && this.spcrisk.winterImpact && (
-        this.spcrisk.winterImpact.day1Risk != "NONE" ||
-        this.spcrisk.winterImpact.day2Risk != "NONE" ||
-        this.spcrisk.winterImpact.day3Risk != "NONE"
-      )) &&
+      // the false-negative class this project exists to prevent. WR-08: same derivation as
+      // the ERO term above, tracking PRODUCT_REGISTRY.winterImpact.days.
+      !(this.config.showWinterImpact && blockHasRisk(this.spcrisk.winterImpact)) &&
       // Advisory extension of the no-risk gate (Phase 19 RPT-06 regression target). Before
       // Phase 15 this gate had no advisory term at all, so a location inside an active
       // discussion with no other risk rendered the literal "No Severe Weather Risk" and the
@@ -356,29 +376,33 @@
           }
         }
       }
-      if (this.config.showExcessiveRain && this.spcrisk.excessiveRain) {
-        for (let d = 1; d <= 5; d++) {
-          if (this.spcrisk.excessiveRain["day" + d + "Risk"] != "NONE") {
-            wrapper.innerHTML += "Excessive Rain (Day " + d + "): <span style=\"color:#" +
-              this.spcrisk.excessiveRain["day" + d + "Color"] + "\">" +
-              this.spcrisk.excessiveRain["day" + d + "Text"] + "</span><br/>";
+      // WR-08: one renderer for every arcgis-day-layers block, with the day span read off
+      // the block the backend shipped rather than written out here. The literal `5` and `3`
+      // these loops used to carry were the frontend half of a contract whose backend half
+      // lives in PRODUCT_REGISTRY.<row>.days — changing the registry knob silently produced
+      // days that never rendered. Nothing here names a day count or a product's key layout.
+      const renderDayBlock = (label, block) => {
+        const days = dayRiskCount(block);
+        for (let d = 1; d <= days; d++) {
+          // Strict !== so an undefined key cannot render a row with `color:#undefined`.
+          if (block["day" + d + "Risk"] !== "NONE") {
+            wrapper.innerHTML += label + " (Day " + d + "): <span style=\"color:#" +
+              block["day" + d + "Color"] + "\">" +
+              block["day" + d + "Text"] + "</span><br/>";
           }
         }
+      };
+      if (this.config.showExcessiveRain) {
+        renderDayBlock("Excessive Rain", this.spcrisk.excessiveRain);
       }
-      if (this.config.showWinterImpact && this.spcrisk.winterImpact) {
-        for (let d = 1; d <= 3; d++) {
-          // D-09 AMENDED: the "!= NONE" gate alone is sufficient here — the registry's
-          // includesFeat (val >= 2) already drops WINTER WEATHER AREA features before
-          // evaluatePolygons ever sees them, so this payload can only ever carry "NONE"
-          // for that case. Do not "fix" this by adding a separate WWA term; the floor is
-          // enforced in productRegistry.js, and recording it at both ends keeps the two
-          // files' coupling visible.
-          if (this.spcrisk.winterImpact["day" + d + "Risk"] != "NONE") {
-            wrapper.innerHTML += "Winter Impact (Day " + d + "): <span style=\"color:#" +
-              this.spcrisk.winterImpact["day" + d + "Color"] + "\">" +
-              this.spcrisk.winterImpact["day" + d + "Text"] + "</span><br/>";
-          }
-        }
+      if (this.config.showWinterImpact) {
+        // D-09 AMENDED: the "!== NONE" gate alone is sufficient here — the registry's
+        // includesFeat (val >= 2) already drops WINTER WEATHER AREA features before
+        // evaluatePolygons ever sees them, so this payload can only ever carry "NONE"
+        // for that case. Do not "fix" this by adding a separate WWA term; the floor is
+        // enforced in productRegistry.js, and recording it at both ends keeps the two
+        // files' coupling visible.
+        renderDayBlock("Winter Impact", this.spcrisk.winterImpact);
       }
       // CR-01: a stale payload with no renderable risk must not present as a bare ⚠ badge.
       // "unconfirmed" rather than "last known good" because the two cases are not

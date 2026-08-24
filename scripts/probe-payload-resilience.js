@@ -2944,6 +2944,75 @@ const scenarios = [
         throw new Error(`showSPCMD:true dropped the SPC MD: ${JSON.stringify(mdOnly)}`);
       }
     }
+  },
+  {
+    // WR-08/CV-03: node_helper derives every day span from PRODUCT_REGISTRY (`row.days`)
+    // and states the rule outright — "no literal day count survives outside the registry" —
+    // while the frontend enumerated five ERO terms and three WSSI terms by hand in four
+    // places. Raising the single declared knob therefore produced a correct, longer payload
+    // whose extra days never rendered AND never disqualified the no-risk short-circuit,
+    // with no error at either end. The block below is what a `days: 7` ERO ships; the
+    // frontend must follow it without an edit of its own.
+    name: "frontend-follows-the-payload-day-span-not-a-hardcoded-one",
+    run: async (_helper) => {
+      resetLogs();
+      const frontend = loadFrontendModule();
+      const noRisk = { risk: "NONE", text: "None", color: "afddf6" };
+      const eroBlock = {};
+      for (let d = 1; d <= 7; d++) {
+        eroBlock[`day${d}Risk`] = d === 7 ? "MDT" : "NONE";
+        eroBlock[`day${d}Text`] = d === 7 ? "Moderate" : "None";
+        eroBlock[`day${d}Color`] = d === 7 ? "e06666" : "afddf6";
+        eroBlock[`day${d}ValidTime`] = null;
+      }
+      const payload = {
+        day1: { ...noRisk }, day2: { ...noRisk }, day3: { ...noRisk },
+        day4: { ...noRisk }, day5: { ...noRisk }, day6: { ...noRisk },
+        day7: { ...noRisk }, day8: { ...noRisk },
+        day48Risk: false,
+        fireWeather: { day1Risk: 0, day2Risk: 0 },
+        excessiveRain: eroBlock,
+        winterImpact: {},
+        advisories: { spcMD: [], mpd: [] }
+      };
+      const config = {
+        lat: PROBE_LAT, lon: PROBE_LON, extended: false, updateInterval: 60,
+        proximityWeighting: false, showExcessiveRain: true, showWinterImpact: false,
+        showSPCMD: true, showMPD: true
+      };
+      const rendered = renderDom(frontend, { config, spcrisk: payload });
+      if (rendered === "No Severe Weather Risk") {
+        throw new Error(
+          "a day beyond the frontend's hardcoded span did not disqualify the no-risk " +
+          "short-circuit — a real MDT excessive-rain day rendered as a confident all-clear"
+        );
+      }
+      if (!rendered.includes("Excessive Rain (Day 7)") || !rendered.includes("Moderate")) {
+        throw new Error(
+          `a day beyond the frontend's hardcoded span never rendered: ${JSON.stringify(rendered)}. ` +
+          "The backend derives the span from PRODUCT_REGISTRY.excessiveRain.days; the frontend must too."
+        );
+      }
+
+      // Control: the shorter, currently-shipping span still renders exactly its own days
+      // and no phantom ones, so the derivation is not just "render everything".
+      const shortBlock = {};
+      for (let d = 1; d <= 3; d++) {
+        shortBlock[`day${d}Risk`] = d === 2 ? "MDT" : "NONE";
+        shortBlock[`day${d}Text`] = d === 2 ? "Moderate" : "None";
+        shortBlock[`day${d}Color`] = d === 2 ? "e06666" : "afddf6";
+        shortBlock[`day${d}ValidTime`] = null;
+      }
+      const shortRender = renderDom(frontend, {
+        config, spcrisk: { ...payload, excessiveRain: shortBlock }
+      });
+      if (!shortRender.includes("Excessive Rain (Day 2)")) {
+        throw new Error(`control: a 3-day block did not render its own risk day: ${JSON.stringify(shortRender)}`);
+      }
+      if (shortRender.includes("Excessive Rain (Day 4)") || shortRender.includes("undefined")) {
+        throw new Error(`control: a 3-day block rendered days it does not carry: ${JSON.stringify(shortRender)}`);
+      }
+    }
   }
 ];
 
