@@ -74,6 +74,12 @@ const wssiTierToColor = {
   MODERATE: "f7962f", MAJOR: "e61f26", EXTREME: "7853a1"
 };
 
+// Bounds which remote directory-listing filenames may become a fetch target
+// (plan 15-06's discovery step). Anchored at both ends so a hostile listing
+// cannot inject a traversal segment, an absolute URL, or an alternate
+// extension into the candidate set.
+const MPD_FILENAME_PATTERN = /^MPD_(\d+)_final\.kmz$/;
+
 const PRODUCT_REGISTRY = {
   excessiveRain: {
     id: "excessiveRain",
@@ -138,9 +144,56 @@ const PRODUCT_REGISTRY = {
     // wssiTierToColor's hex values were read from this endpoint's
     // drawingInfo.renderer.uniqueValueInfos.
     paletteSource: "https://mapservices.weather.noaa.gov/vector/rest/services/outlooks/wpc_wssi/MapServer/1?f=json"
+  },
+  // Pure static configuration (D-02): no `this`, no network call, no
+  // `require`. Candidate discovery needs the _fetch transport seam and
+  // therefore lives in node_helper.js (plan 15-04); these rows only name
+  // the strategy they want by string.
+  spcMD: {
+    id: "spcMD",
+    kind: "kml-advisory",
+    // Unlike every other product flag in this registry, showSPCMD defaults
+    // to true, not false. Phase 14's CFG-01 rule ("every new product flag
+    // defaults to false") governs new products; SPC MD is a shipping,
+    // always-on feature being migrated under D-02, and defaulting it false
+    // would silently delete a live capability. The default itself is set in
+    // MMM-SPCOutlook.js (plan 15-03), not here.
+    configFlag: "showSPCMD",
+    allowedHost: "www.spc.noaa.gov",
+    discovery: "spc-active-index",
+    discoveryUrl: "https://www.spc.noaa.gov/products/md/ActiveMD.kmz",
+    // SPC publishes its Placemark <name> already formatted as "MD 2108";
+    // the composed label matches D-05's "SPC MD 0123 in effect." example.
+    // Returns null (rather than a label carrying `undefined`) when the name
+    // is missing or not a non-empty string, so the caller can log it.
+    toEntry: (feature, ctx) => {
+      const name = feature && feature.properties && feature.properties.name;
+      if (typeof name !== "string" || name.length === 0) return null;
+      return { label: "SPC " + name, hazardType: null };
+    }
+  },
+  mpd: {
+    id: "mpd",
+    kind: "kml-advisory",
+    // Genuinely new product; defaults to false per CFG-01.
+    configFlag: "showMPD",
+    allowedHost: "www.wpc.ncep.noaa.gov",
+    discovery: "wpc-mpd-listing",
+    discoveryUrl: "https://www.wpc.ncep.noaa.gov/kml/mpd/",
+    // number and hazardType come from the description-CDATA table
+    // (MPDNumber, MPDType), which only node_helper.js can parse, so the
+    // caller supplies them on ctx. Returns null when ctx.number is absent.
+    // Per D-06 a null hazardType is normal and must never cause the entry
+    // to be dropped.
+    toEntry: (feature, ctx) => {
+      const number = ctx && ctx.number;
+      if (!number) return null;
+      const hazardType = (ctx && ctx.hazardType) || null;
+      return { label: "WPC MPD " + number, hazardType };
+    }
   }
   // Future rows (Hazards Outlook, HeatRisk) land in Phases 16-17 (D-08) —
   // not added here.
 };
 
-module.exports = { buildArcGisQuery, PRODUCT_REGISTRY };
+module.exports = { buildArcGisQuery, MPD_FILENAME_PATTERN, PRODUCT_REGISTRY };
