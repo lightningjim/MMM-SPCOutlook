@@ -5,7 +5,8 @@
     extended: false,
     updateInterval: 60,
     proximityWeighting: false,
-    showExcessiveRain: false    // WPC Excessive Rainfall Outlook toggle; every new product flag defaults to false
+    showExcessiveRain: false,   // WPC Excessive Rainfall Outlook toggle; every new product flag defaults to false
+    showWinterImpact: false     // WPC WSSI Overall Impact toggle; every new product flag defaults to false
   },
 
   // WR-05: config comes from the user's MagicMirror config.js and is never validated by
@@ -39,7 +40,10 @@
       extended: this.config.extended,
       updateInterval: this.resolveUpdateInterval(),
       proximityWeighting: this.config.proximityWeighting,
-      products: { showExcessiveRain: this.config.showExcessiveRain }
+      products: {
+        showExcessiveRain: this.config.showExcessiveRain,
+        showWinterImpact: this.config.showWinterImpact
+      }
     };
   },
 
@@ -182,6 +186,15 @@
         this.spcrisk.excessiveRain.day3Risk != "NONE" ||
         this.spcrisk.excessiveRain.day4Risk != "NONE" ||
         this.spcrisk.excessiveRain.day5Risk != "NONE"
+      )) &&
+      // WSSI extension of the no-risk gate (Phase 19 RPT-06 regression target). Without
+      // this term a day with a genuine MAJOR winter impact and no convective risk would
+      // short-circuit to "No Severe Weather Risk" and the winter row would never render —
+      // the false-negative class this project exists to prevent.
+      !(this.config.showWinterImpact && this.spcrisk.winterImpact && (
+        this.spcrisk.winterImpact.day1Risk != "NONE" ||
+        this.spcrisk.winterImpact.day2Risk != "NONE" ||
+        this.spcrisk.winterImpact.day3Risk != "NONE"
       ))
     ) {
       wrapper.innerHTML = "No Severe Weather Risk"
@@ -276,6 +289,21 @@
             wrapper.innerHTML += "Excessive Rain (Day " + d + "): <span style=\"color:#" +
               this.spcrisk.excessiveRain["day" + d + "Color"] + "\">" +
               this.spcrisk.excessiveRain["day" + d + "Text"] + "</span><br/>";
+          }
+        }
+      }
+      if (this.config.showWinterImpact && this.spcrisk.winterImpact) {
+        for (let d = 1; d <= 3; d++) {
+          // D-09 AMENDED: the "!= NONE" gate alone is sufficient here — the registry's
+          // includesFeat (val >= 2) already drops WINTER WEATHER AREA features before
+          // evaluatePolygons ever sees them, so this payload can only ever carry "NONE"
+          // for that case. Do not "fix" this by adding a separate WWA term; the floor is
+          // enforced in productRegistry.js, and recording it at both ends keeps the two
+          // files' coupling visible.
+          if (this.spcrisk.winterImpact["day" + d + "Risk"] != "NONE") {
+            wrapper.innerHTML += "Winter Impact (Day " + d + "): <span style=\"color:#" +
+              this.spcrisk.winterImpact["day" + d + "Color"] + "\">" +
+              this.spcrisk.winterImpact["day" + d + "Text"] + "</span><br/>";
           }
         }
       }
