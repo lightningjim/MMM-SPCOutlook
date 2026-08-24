@@ -1642,6 +1642,181 @@ const scenarios = [
         throw new Error(`description.value did not contain the MPDType row: ${JSON.stringify(description)}`);
       }
     }
+  },
+  {
+    // Pitfall 1's regression guard. SPC's own ActiveMD.kmz serves member hrefs as
+    // http://, not https:// — the old MD_HOST_PREFIX = "https://www.spc.noaa.gov/"
+    // startsWith check refused every one of them, so getMesoscaleDiscussion reported
+    // zero active MDs on every single poll in production, even with MDs genuinely
+    // active. normalizeAdvisoryUrl replaced it with a scheme-normalizing, hostname-exact
+    // allowlist; this scenario proves the http:// href it actually serves resolves to a
+    // fetched, contained SPC MD through the real allowlist, discovery and KMZ chain.
+    name: "spc-md-http-href-not-rejected-by-allowlist",
+    requires: "kml-deps",
+    run: async (helper) => {
+      resetHelper(helper);
+      resetLogs();
+      helper._products = { showSPCMD: true, showMPD: false, showExcessiveRain: false, showWinterImpact: false };
+      const memberUrl = "https://www.spc.noaa.gov/products/md/MD2108.kmz";
+      const indexBuffer = kmzOf({
+        "activemd.kml": activeIndexKml(["http://www.spc.noaa.gov/products/md/MD2108.kmz"])
+      });
+      const memberBuffer = kmzOf({ "MD2108.kml": mdKml("MD 2108") });
+      installHttp(helper, advisoryRoutes({
+        index: { url: PRODUCT_REGISTRY.spcMD.discoveryUrl, buffer: indexBuffer },
+        members: [{ url: memberUrl, buffer: memberBuffer }]
+      }));
+      const originalPointInPolygon = turfStub.pointInPolygon;
+      turfStub.pointInPolygon = () => true;
+      let out;
+      try {
+        out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, {
+          showSPCMD: true, showMPD: false, showExcessiveRain: false, showWinterImpact: false
+        });
+      } finally {
+        turfStub.pointInPolygon = originalPointInPolygon;
+      }
+      assertPayloadIntact(out);
+      if (out.advisories.spcMD.length !== 1) {
+        throw new Error(
+          `Pitfall 1 regression: expected 1 SPC MD entry from an http:// href, got ` +
+          `${out.advisories.spcMD.length}. Against the pre-fix MD_HOST_PREFIX startsWith(...) ` +
+          "check this scenario would report zero entries, which was the live production " +
+          "behaviour on every poll."
+        );
+      }
+      if (out.advisories.spcMD[0].label !== "SPC MD 2108") {
+        throw new Error(`spcMD entry label mismatch: expected "SPC MD 2108", got ${JSON.stringify(out.advisories.spcMD[0].label)}`);
+      }
+      forbidLog("refusing off-host", "an http:// href that matches the allowed host was refused by the allowlist");
+    }
+  },
+  {
+    // The control for the scenario above: proves the Pitfall 1 fix loosened the scheme
+    // check without loosening the host check. An off-host href in the same index must
+    // still be refused and diagnosable from the log, and — since the fetch happens only
+    // after the allowlist decision — it must never reach the network at all.
+    name: "spc-md-off-host-href-still-refused",
+    requires: "kml-deps",
+    run: async (helper) => {
+      resetHelper(helper);
+      resetLogs();
+      helper._products = { showSPCMD: true, showMPD: false, showExcessiveRain: false, showWinterImpact: false };
+      const legitUrl = "https://www.spc.noaa.gov/products/md/MD2108.kmz";
+      const indexBuffer = kmzOf({
+        "activemd.kml": activeIndexKml([
+          "http://www.spc.noaa.gov/products/md/MD2108.kmz",
+          "http://evil.test/x.kmz"
+        ])
+      });
+      const memberBuffer = kmzOf({ "MD2108.kml": mdKml("MD 2108") });
+      const fetchFn = installHttp(helper, advisoryRoutes({
+        index: { url: PRODUCT_REGISTRY.spcMD.discoveryUrl, buffer: indexBuffer },
+        members: [{ url: legitUrl, buffer: memberBuffer }]
+      }));
+      const originalPointInPolygon = turfStub.pointInPolygon;
+      turfStub.pointInPolygon = () => true;
+      let out;
+      try {
+        out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, {
+          showSPCMD: true, showMPD: false, showExcessiveRain: false, showWinterImpact: false
+        });
+      } finally {
+        turfStub.pointInPolygon = originalPointInPolygon;
+      }
+      assertPayloadIntact(out);
+      if (out.advisories.spcMD.length !== 1) {
+        throw new Error(`expected exactly 1 SPC MD entry (the legit host), got ${out.advisories.spcMD.length}`);
+      }
+      if (fetchFn.calls.some((call) => call.url.includes("evil.test"))) {
+        throw new Error(`the off-host href reached the network: ${JSON.stringify(fetchFn.calls.map((c) => c.url))}`);
+      }
+      requireLog(
+        ["refusing off-host NetworkLink href", "evil.test"],
+        "the off-host href was refused with no diagnostic naming it"
+      );
+    }
+  },
+  {
+    // T-15-36 / RESEARCH.md Pitfall 5: drives the real frontend socketNotificationReceived
+    // through an in-order, out-of-order, then higher-order sequence at the new payload[1]
+    // index. With the old payload[2] read against this two-element payload, `seq` is
+    // undefined, `typeof seq === "number"` is false, and the discard guard fails open —
+    // silently becoming a no-op with no error, no log, and no other failing test.
+    name: "frontend-seq-discard-survives-socket-index-migration",
+    run: async (helper) => {
+      const frontend = loadFrontendModule();
+      const ctx = Object.create(frontend);
+      let updateDomCalls = 0;
+      ctx.updateDom = () => { updateDomCalls++; };
+      const outlookA = { marker: "A" };
+      const outlookB = { marker: "B" };
+      const outlookC = { marker: "C" };
+
+      frontend.socketNotificationReceived.call(ctx, "SPC_DATA_RESULT", [outlookA, 5]);
+      if (ctx.spcrisk !== outlookA || updateDomCalls !== 1) {
+        throw new Error(
+          `the first in-order payload was not accepted: spcrisk=${JSON.stringify(ctx.spcrisk)}, ` +
+          `updateDomCalls=${updateDomCalls}`
+        );
+      }
+
+      frontend.socketNotificationReceived.call(ctx, "SPC_DATA_RESULT", [outlookB, 3]);
+      if (ctx.spcrisk !== outlookA || updateDomCalls !== 1) {
+        throw new Error(
+          "CR-03 at the new socket index: an out-of-order payload (seq 3 after seq 5) was " +
+          `not discarded — spcrisk=${JSON.stringify(ctx.spcrisk)}, updateDomCalls=${updateDomCalls}`
+        );
+      }
+
+      frontend.socketNotificationReceived.call(ctx, "SPC_DATA_RESULT", [outlookC, 6]);
+      if (ctx.spcrisk !== outlookC || updateDomCalls !== 2) {
+        throw new Error(
+          `a genuinely newer payload (seq 6) was not accepted after a discard: ` +
+          `spcrisk=${JSON.stringify(ctx.spcrisk)}, updateDomCalls=${updateDomCalls}`
+        );
+      }
+    }
+  },
+  {
+    // MPD-01: before Phase 15 the no-risk short-circuit gate had no advisory term at all,
+    // so a location inside an active discussion with every other value at its no-risk
+    // default rendered the literal "No Severe Weather Risk" and the advisory never
+    // displayed. Dormant for SPC MDs (which usually accompany convective risk), fatal for
+    // MPD-01, since a WPC MPD routinely fires with zero SPC convective risk.
+    name: "frontend-advisory-only-is-not-an-all-clear",
+    run: async (helper) => {
+      const frontend = loadFrontendModule();
+      const config = {
+        lat: PROBE_LAT, lon: PROBE_LON, extended: false, updateInterval: 60,
+        proximityWeighting: false, showExcessiveRain: false, showWinterImpact: false, showMPD: true
+      };
+
+      const withAdvisory = noRiskPayloadWithAdvisory({
+        spcMD: [],
+        mpd: [{ label: "WPC MPD 1118", hazardType: "Heavy rainfall, Flash flooding possible" }]
+      });
+      const rendered = renderDom(frontend, { config, spcrisk: withAdvisory });
+      if (rendered === "No Severe Weather Risk") {
+        throw new Error(
+          "MPD-01: an advisory-only payload (every day/fireWeather/ERO/WSSI value no-risk, " +
+          "no _stale) short-circuited to the plain no-risk line — before Phase 15 the gate had " +
+          "no advisory term at all, so this rendered as a confident all-clear while the user " +
+          "was inside an active discussion."
+        );
+      }
+      if (!rendered.includes("WPC MPD 1118")) {
+        throw new Error(`an advisory-only payload rendered with no MPD label: ${rendered}`);
+      }
+
+      // Control: the same shape with empty advisory arrays must still short-circuit, or the
+      // positive assertion above is satisfied by the gate simply never firing.
+      const noAdvisory = noRiskPayloadWithAdvisory({ spcMD: [], mpd: [] });
+      const controlRendered = renderDom(frontend, { config, spcrisk: noAdvisory });
+      if (controlRendered !== "No Severe Weather Risk") {
+        throw new Error(`control: a genuine all-clear with no advisories no longer renders the plain no-risk line, it rendered: ${controlRendered}`);
+      }
+    }
   }
 ];
 
