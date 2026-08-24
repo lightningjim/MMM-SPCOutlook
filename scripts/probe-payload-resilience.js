@@ -3545,6 +3545,64 @@ const scenarios = [
       }
     }
   }
+  ,{
+    // The generic candidate cap in _runKmlAdvisoryRow keeps the HEAD of whatever order a
+    // discovery strategy returns, and documents that as a contract each strategy must
+    // satisfy by handing back a meaningfully ordered list. wpc-mpd-listing satisfies it;
+    // spc-active-index returned raw NetworkLink document order, so the cap kept an
+    // arbitrary 60 and dropped the rest — the contract was asserted by a comment against
+    // code that did not meet it. This drives the strategy directly, past the outlook
+    // assembly, because the failure is entirely in which candidates survive.
+    name: "spc-active-index-truncation-keeps-the-newest-not-the-document-order-head",
+    requires: "kml-deps",
+    run: async (helper) => {
+      resetHelper(helper);
+      resetLogs();
+      const row = PRODUCT_REGISTRY.spcMD;
+      const numbers = Array.from({ length: 70 }, (_, i) => 2001 + i);
+      const hrefs = numbers.map((n) => `https://www.spc.noaa.gov/products/md/MD${n}.kmz`);
+      const numberIn = (u) => Number(/MD(\d+)\.kmz$/.exec(u)[1]);
+
+      helper.fetchBinBuffer = async () => kmzOf({ "activemd.kml": activeIndexKml(hrefs) });
+      const result = await helper._advisoryDiscovery["spc-active-index"].call(helper, row);
+
+      if (result.urls.length !== 60) {
+        throw new Error(`expected the 60-candidate cap to apply, got ${result.urls.length} candidates`);
+      }
+      if (result.failed !== true) {
+        throw new Error("a truncated candidate list was not reported as a degrade, so the drop is invisible");
+      }
+      const kept = result.urls.map(numberIn);
+      const newest = numbers.slice(-60);
+      if (kept.join(",") !== newest.join(",")) {
+        throw new Error(
+          `truncation kept ${kept[0]}..${kept[kept.length - 1]} rather than the 60 highest-numbered ` +
+          `(${newest[0]}..${newest[newest.length - 1]}). Document order is whatever SPC's index emits, so keeping ` +
+          "its head drops active discussions arbitrarily — the same defect wpc-mpd-listing was fixed for."
+        );
+      }
+      requireLog(
+        ["70 NetworkLink candidates", "keeping the 60 highest-numbered"],
+        "a truncated SPC MD candidate list produced no diagnostic saying how many were dropped"
+      );
+
+      // Control: an ordinary index is neither truncated nor flagged, so the assertions
+      // above are not satisfied by the strategy degrading everything.
+      resetLogs();
+      const few = [2108, 2106, 2107].map((n) => `https://www.spc.noaa.gov/products/md/MD${n}.kmz`);
+      helper.fetchBinBuffer = async () => kmzOf({ "activemd.kml": activeIndexKml(few) });
+      const small = await helper._advisoryDiscovery["spc-active-index"].call(helper, row);
+      if (small.failed !== false || small.urls.length !== 3) {
+        throw new Error(
+          `control: a 3-candidate index was reported as failed=${small.failed} with ${small.urls.length} candidates`
+        );
+      }
+      if (small.urls.map(numberIn).join(",") !== "2106,2107,2108") {
+        throw new Error(`control: an untruncated list was not ordered by MD number: ${small.urls.map(numberIn)}`);
+      }
+      resetHelper(helper);
+    }
+  }
 ];
 
 // ---------------------------------------------------------------------

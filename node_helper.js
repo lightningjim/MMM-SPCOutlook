@@ -333,6 +333,30 @@ module.exports = NodeHelper.create({
           }
           urls.push(normalized);
         }
+        // The generic cap in _runKmlAdvisoryRow keeps the HEAD of whatever order a strategy
+        // returns, and states as a contract that "each strategy is responsible for handing
+        // back a meaningfully ordered list". This one did not satisfy it: NetworkLink
+        // document order is whatever SPC's index happens to emit, so the cap kept an
+        // arbitrary 60 and silently dropped the rest — a contract asserted by comment
+        // against code that did not meet it, which is the shape that lets the next reader
+        // trust it wrongly. Sorting by MD number and truncating here mirrors
+        // wpc-mpd-listing, so the cap downstream is a no-op for this strategy rather than a
+        // second, contradictory heuristic, and what survives a truncation is the newest
+        // discussions rather than the ones SPC listed first. An href whose filename carries
+        // no parseable number sorts to -1, i.e. is dropped first.
+        //
+        // Practical exposure is low (SPC rarely has more than ~15 concurrent MDs) — the
+        // point is that the contract and the code now say the same thing.
+        const mdNumberOf = (u) => {
+          const m = /md(\d{1,6})\.kmz$/i.exec(u.split("/").pop() || "");
+          return m ? Number(m[1]) : -1;
+        };
+        urls.sort((a, b) => mdNumberOf(a) - mdNumberOf(b));
+        if (urls.length > ADVISORY_MAX_CANDIDATES) {
+          Log.error(`MMM-SPCOutlook ${row.id}: ${urls.length} NetworkLink candidates; keeping the ` +
+                    `${ADVISORY_MAX_CANDIDATES} highest-numbered`);
+          return { urls: urls.slice(-ADVISORY_MAX_CANDIDATES), failed: true };
+        }
         return { urls, failed: false };
       } catch (err) {
         Log.error(`MMM-SPCOutlook ${row.id}: discovery index fetch/parse failed`, err);
@@ -499,9 +523,13 @@ module.exports = NodeHelper.create({
     let candidates = urls;
     // WR-01: this generic cap keeps the HEAD of whatever order the discovery strategy
     // returned, which is only defensible because each strategy is responsible for handing
-    // back a meaningfully ordered list — `wpc-mpd-listing` now sorts numerically and
-    // truncates to ADVISORY_MAX_CANDIDATES itself, so for mpd this slice is a no-op rather
-    // than a second, contradictory heuristic. A future strategy must do the same.
+    // back a meaningfully ordered list. Both shipped strategies now sort numerically and
+    // truncate to ADVISORY_MAX_CANDIDATES themselves — `wpc-mpd-listing` on the listing's
+    // filename number, `spc-active-index` on the MD number — so for both of them this
+    // slice is a no-op rather than a second, contradictory heuristic. It stays as the
+    // backstop for a future strategy, which must do the same; note that keeping the HEAD
+    // here and the TAIL there is not a contradiction, because a strategy hands back a list
+    // it has already truncated to its own most-relevant end.
     if (candidates.length > ADVISORY_MAX_CANDIDATES) {
       Log.error(`MMM-SPCOutlook ${row.id}: ${candidates.length} candidates exceeds the ` +
                 `${ADVISORY_MAX_CANDIDATES}-candidate cap; truncating`);
