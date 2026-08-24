@@ -1,13 +1,27 @@
-// module-stubs.js — dependency-free loader for node_helper.js.
+// module-stubs.js — loader for node_helper.js that prefers the real ZIP/KML
+// libraries and falls back to in-memory stubs.
 //
 // Payload-integrity probes need to require node_helper.js and exercise its
-// getSpcOutlook path with zero third-party packages installed, because
-// executor git worktrees never carry an untracked node_modules directory.
-// This file patches Node's module resolver so every third-party require in
-// node_helper.js resolves to a minimal in-memory stub instead of touching
-// disk or the network — it never edits node_helper.js itself. Future
-// product rows (WSSI, MPD, Hazards Outlook, HeatRisk) reuse this same
-// loader for their own scenario probes.
+// getSpcOutlook path without a network call. `node_helper`, `logger` and
+// `@turf/turf` stay mapped to hand-written stubs unconditionally — the turf
+// stub's `pointInPolygon` delegation and its ring-validation throws are
+// load-bearing scenario controls, not a placeholder for the real library.
+//
+// `adm-zip`, `@xmldom/xmldom`, `@tmcw/togeojson` and `xpath` are different:
+// stubbing them unconditionally made every KMZ-layer defect unreachable by
+// any scenario (WR-09's "do not stub too high a layer") — three confirmed
+// silent-miss defects live inside those libraries' output shape:
+// `extractSoleKmlEntry`'s entry selection (MPD's KMZ member is a fixed
+// `doc.kml`, not the URL-derived filename), `@tmcw/togeojson` wrapping
+// `description` as `{ "@type": "html", value }` rather than a plain string,
+// and `fetchBinBuffer`'s real `arrayBuffer() -> Buffer` path. So this loader
+// resolves those four specifiers from the repo root at install time: when
+// resolution succeeds the real module is registered and the KMZ chain
+// executes for real; when it fails, today's throwing stub is registered and
+// the shipped scenarios run exactly as before. A scenario that needs the
+// real chain declares `requires: "kml-deps"` and the runner turns a missing
+// dependency into a loud SKIP rather than a silent pass — see
+// probe-payload-resilience.js.
 
 const Module = require("module");
 const path = require("path");
@@ -98,16 +112,45 @@ const togeojsonStub = { kml: inertThrow("@tmcw/togeojson") };
 
 // node_helper.js calls xpath.useNamespaces({...}) at module scope, so this
 // must succeed and return a function; only the returned selector throws.
+// This exact fallback shape (a working useNamespaces whose returned
+// selector throws) is preserved when the real xpath package is unavailable,
+// so node_helper.js still loads.
 const xpathStub = { useNamespaces: (_ns) => inertThrow("xpath") };
+
+const THROWING_FALLBACKS = {
+  "adm-zip": AdmZipStub,
+  "@xmldom/xmldom": xmldomStub,
+  "@tmcw/togeojson": togeojsonStub,
+  xpath: xpathStub
+};
+
+// T-15-06: resolution is pinned to the repository root rather than the
+// ambient NODE_PATH/cwd, so the harness cannot be steered to a package
+// outside the project tree. Only these four fixed, hardcoded specifiers are
+// resolved; the list is not data-driven.
+const REPO_ROOT = path.join(__dirname, "..", "..");
+const missingKmlDeps = [];
+const REAL_KML_DEPS = {};
+
+for (const specifier of Object.keys(THROWING_FALLBACKS)) {
+  try {
+    const resolved = require.resolve(specifier, { paths: [REPO_ROOT] });
+    REAL_KML_DEPS[specifier] = require(resolved);
+  } catch (_err) {
+    missingKmlDeps.push(specifier);
+  }
+}
+
+const hasRealKmlDeps = missingKmlDeps.length === 0;
 
 const STUBS = {
   node_helper: nodeHelperStub,
   logger: loggerStub,
   "@turf/turf": turfStub,
-  "adm-zip": AdmZipStub,
-  "@xmldom/xmldom": xmldomStub,
-  "@tmcw/togeojson": togeojsonStub,
-  xpath: xpathStub
+  "adm-zip": REAL_KML_DEPS["adm-zip"] || THROWING_FALLBACKS["adm-zip"],
+  "@xmldom/xmldom": REAL_KML_DEPS["@xmldom/xmldom"] || THROWING_FALLBACKS["@xmldom/xmldom"],
+  "@tmcw/togeojson": REAL_KML_DEPS["@tmcw/togeojson"] || THROWING_FALLBACKS["@tmcw/togeojson"],
+  xpath: REAL_KML_DEPS.xpath || THROWING_FALLBACKS.xpath
 };
 
 const syntheticPaths = {};
@@ -216,6 +259,31 @@ function renderDom(frontend, { config, spcrisk, mds = false }) {
   return wrapper.innerHTML || wrapper.textContent || "";
 }
 
+// Builds a real KMZ archive in memory from `entries` (entry name -> file
+// contents) using the resolved real `adm-zip`, and returns the resulting
+// Buffer. Entry insertion order is preserved as given — a fixture can place
+// a non-.kml entry first to prove extractSoleKmlEntry scans the archive
+// rather than taking the first entry. Throws a clear error naming
+// hasRealKmlDeps when called while the real adm-zip is unavailable, so a
+// misuse is a loud failure rather than a confusing stub throw.
+function makeKmzBuffer(entries) {
+  if (!hasRealKmlDeps) {
+    throw new Error(
+      "makeKmzBuffer requires the real adm-zip package; hasRealKmlDeps is false " +
+      `(missing: ${missingKmlDeps.join(", ")}). Run npm ci.`
+    );
+  }
+  // adm-zip sorts entries alphabetically by entryName unless noSort is set; without it
+  // the write/read round trip silently reorders entries and a fixture cannot prove
+  // entry-scan behaviour at all.
+  const RealZip = REAL_KML_DEPS["adm-zip"];
+  const zip = new RealZip(undefined, { noSort: true });
+  for (const [entryName, contents] of Object.entries(entries)) {
+    zip.addFile(entryName, Buffer.from(contents));
+  }
+  return zip.toBuffer();
+}
+
 module.exports = {
   installStubs,
   loadNodeHelper,
@@ -224,5 +292,8 @@ module.exports = {
   resetHelper,
   resetLogs,
   turfStub,
+  hasRealKmlDeps,
+  missingKmlDeps,
+  makeKmzBuffer,
   logCalls
 };
