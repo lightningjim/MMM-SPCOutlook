@@ -6,7 +6,13 @@
     updateInterval: 60,
     proximityWeighting: false,
     showExcessiveRain: false,   // WPC Excessive Rainfall Outlook toggle; every new product flag defaults to false
-    showWinterImpact: false     // WPC WSSI Overall Impact toggle; every new product flag defaults to false
+    showWinterImpact: false,    // WPC WSSI Overall Impact toggle; every new product flag defaults to false
+    showMPD: false,             // WPC Mesoscale Precipitation Discussion toggle; every new product flag defaults to false
+    // Deviation from CFG-01 ("every new product flag defaults to false"): SPC Mesoscale
+    // Discussions are a shipping, always-on feature being migrated into the registry under
+    // D-02, not a new product. Defaulting this false would silently delete a live
+    // capability for every existing user on upgrade.
+    showSPCMD: true
   },
 
   // WR-05: config comes from the user's MagicMirror config.js and is never validated by
@@ -42,7 +48,9 @@
       proximityWeighting: this.config.proximityWeighting,
       products: {
         showExcessiveRain: this.config.showExcessiveRain,
-        showWinterImpact: this.config.showWinterImpact
+        showWinterImpact: this.config.showWinterImpact,
+        showMPD: this.config.showMPD,
+        showSPCMD: this.config.showSPCMD
       }
     };
   },
@@ -199,7 +207,15 @@
         this.spcrisk.winterImpact.day1Risk != "NONE" ||
         this.spcrisk.winterImpact.day2Risk != "NONE" ||
         this.spcrisk.winterImpact.day3Risk != "NONE"
-      ))
+      )) &&
+      // Advisory extension of the no-risk gate (Phase 19 RPT-06 regression target). Before
+      // Phase 15 this gate had no advisory term at all, so a location inside an active
+      // discussion with no other risk rendered the literal "No Severe Weather Risk" and the
+      // advisory was never displayed. That is dormant for SPC MDs, which usually accompany
+      // convective risk, but fatal for MPD-01, since a WPC MPD routinely fires with zero SPC
+      // convective risk. Optional chaining and the length check tolerate a missing
+      // `advisories` key from a helper that predates this shape (version skew).
+      !((this.spcrisk.advisories?.spcMD?.length > 0) || (this.spcrisk.advisories?.mpd?.length > 0))
     ) {
       wrapper.innerHTML = "No Severe Weather Risk"
     } else {
@@ -224,13 +240,27 @@
       // otherwise render as a bare badge with nothing under it, so the marker lets the tail
       // of this branch say *what* is unconfirmed rather than leaving a dangling warning.
       const contentMarker = wrapper.innerHTML;
-      // Phase 15 (D-03): advisories now live inside the outlook payload rather than a
-      // separate retired socket element. Behaviour-preserving for SPC MDs here; Task 2
-      // rewrites this block into the single source-prefixed D-05 band that also covers
-      // WPC MPD.
+      // D-05: one advisory band, one colour, each entry prefixed with its issuing source
+      // by `label` (SPC MD / WPC MPD entries are concatenated in that order) and MPDs
+      // suffixed with their hazard type. `label` and `hazardType` both originate in remote
+      // KML — the label from the Placemark <name> or the description table's MPDNumber,
+      // the hazard type from the MPDType cell — so both are escaped (WR-12 already applies
+      // this reasoning to MD names; MPD adds a second such source). No cap, no truncation
+      // (D-07) — polygon containment already bounds the realistic count.
       const advisories = this.spcrisk.advisories || { spcMD: [], mpd: [] };
-      for (const entry of advisories.spcMD) {
-        wrapper.innerHTML += "<span style=\"color: #0059E0\">" + escapeHtml(entry.label) + " in effect.</span><br/>"
+      const allAdvisories = [...advisories.spcMD, ...advisories.mpd];
+      for (const entry of allAdvisories) {
+        // Guard the entry itself: skip a null/non-object entry rather than rendering
+        // "undefined in effect." — the failure class CR-02 already fixed once on the backend.
+        if (!entry || typeof entry !== "object") continue;
+        let line = escapeHtml(entry.label);
+        // D-06: a hazard type is only ever a non-empty string when present — an MPD whose
+        // hazard type could not be parsed renders without the suffix rather than being
+        // dropped, degrading to exactly today's MD behaviour.
+        if (typeof entry.hazardType === "string" && entry.hazardType.length > 0) {
+          line += " — " + escapeHtml(entry.hazardType);
+        }
+        wrapper.innerHTML += "<span style=\"color: #0059E0\">" + line + " in effect.</span><br/>"
       }
       if(this.spcrisk.day1.risk != "NONE" || hasRenderableProximity(this.spcrisk.day1.proximity?.categorical))
       {
