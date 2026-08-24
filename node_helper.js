@@ -79,6 +79,111 @@ module.exports = NodeHelper.create({
     return toggles;
   },
 
+  /**
+   * Fetch, cache and evaluate one `arcgis-day-layers` registry row (ERO, WSSI, ...) across its
+   * full day span, returning the same flat `day{N}Risk/Text/Color/ValidTime` payload shape
+   * every arcgis-day-layers product shares. Extracted from the original ERO-only day-loop so a
+   * fix applied to one arcgis-day-layers product structurally cannot skip its twin (D-02).
+   * @param row - a PRODUCT_REGISTRY row of kind "arcgis-day-layers"
+   * @param loc - turf point representing the query location
+   * @param comparator - { initial, comparator(best, val) } shape, e.g. catComparator
+   * @param productToggles - this request's own toggle snapshot (WR-13); the row's own
+   *   configFlag is read from here rather than from this._products, so the method stays pure
+   *   with respect to helper-global state and never touches the caller's `anyStale` local
+   *   directly.
+   * @returns { payload, anyStale } — payload always carries the full day1..dayN block
+   *   regardless of the toggle (Phase 14 D-05); anyStale is the boolean OR of every
+   *   fetchResult.stale || fetchResult.failed seen while the toggle was on.
+   */
+  async _runArcGisDayProduct(row, loc, comparator, productToggles) {
+    // WR-16: the day count, the seed objects, the loop bound and the payload block are all
+    // driven by `row.days` — no literal day count survives outside the registry, so the row is
+    // the single place a product's span is declared.
+    const days = row.days;
+    const tiers = {};
+    const validTimes = {};
+    for (let d = 1; d <= days; d++) {
+      tiers[d] = "NONE";
+      validTimes[d] = null;
+    }
+
+    let anyStale = false;
+
+    if (productToggles[row.configFlag]) {
+      for (let d = 1; d <= days; d++) {
+        try {
+          const url = row.buildUrl(d);
+          const fetchResult = await this.fetchGeoJsonCached(url);
+          // A rejected body is deliberately never written to the cache (it would pin a bad
+          // result behind a future 304), but it DOES set `anyStale` — refining D-04, which
+          // bound ERO staleness to `fetchResult.stale` alone. A degrade the user cannot see
+          // is indistinguishable from a genuine all-clear, and that false negative is the
+          // one outcome this product exists to prevent (CR-03, WR-06).
+          if (fetchResult.stale || fetchResult.failed) anyStale = true;
+
+          let value = 0;
+          let validTime = null;
+
+          if (fetchResult.data === null && fetchResult.cachedResult !== null) {
+            value = fetchResult.cachedResult.value;
+            validTime = fetchResult.cachedResult.validTime;
+          } else if (fetchResult.data !== null) {
+            // WR-01: no second shape check here. fetchGeoJsonCached has twelve
+            // `return { data ... }` sites and exactly two carry a non-null `data`,
+            // each immediately preceded by an `_isFeatureCollection` gate, so
+            // `data !== null` already implies a usable FeatureCollection. The branch
+            // that used to sit here could not execute in production, and it was a
+            // second, divergent implementation of a policy rejectBody already owns:
+            // rejectBody requires `entry.result !== null && !== undefined`, this copy
+            // required `cached.result` to be truthy, so a legitimately cached `{ value: 0 }`
+            // would have been treated differently by the two. The stale-fallback
+            // guarantee ("a WPC hiccup during an active HIGH must not blank the
+            // display") is delivered by rejectBody at the fetch layer, which is where
+            // ero-rejected-body-serves-last-known-good now exercises it.
+            const polys = this.extractPolygons(fetchResult.data, row.toValue, row.includesFeat, url);
+            value = this.evaluatePolygons(polys, loc, comparator);
+            // CR-01/WR-10: read the row's valid-time field off the winning polygon — the
+            // one the user is actually inside at the resolved tier — never off
+            // `features[0]`, and never at all on the no-risk path (a risk-free day must
+            // not advertise a valid window).
+            validTime = value > 0
+              ? this._validTimeOfWinner(polys, loc, value, row.validTimeField)
+              : null;
+            this._geoJsonCache.set(url, {
+              mode: fetchResult.mode,
+              etag: fetchResult.newEtag ?? null,
+              hash: fetchResult.newHash ?? null,
+              result: { value, validTime },
+              timestamp: Date.now()
+            });
+          }
+
+          // Convert exactly once, after the branch closes — never inside either
+          // branch — so a cache hit produces the identical tier string as a fresh
+          // fetch (PERF-02, D-03).
+          tiers[d] = row.valueToTier[value] || "NONE";
+          validTimes[d] = validTime;
+        } catch (err) {
+          Log.error(`MMM-SPCOutlook ${row.id} day ${d}: fetch/parse/evaluate failed, leaving day at no risk`, err);
+        }
+      }
+    }
+
+    // WR-16: built from `row.days` rather than a hand-written literal, so the registry
+    // row is the only place the product's day span is declared. Key insertion order
+    // (dayNRisk, dayNText, dayNColor, dayNValidTime) is deliberate — the probe's golden
+    // snapshots compare serialised payloads byte for byte.
+    const payload = {};
+    for (let d = 1; d <= days; d++) {
+      payload[`day${d}Risk`] = tiers[d];
+      payload[`day${d}Text`] = row.tierToText[tiers[d]];
+      payload[`day${d}Color`] = row.tierToColor[tiers[d]];
+      payload[`day${d}ValidTime`] = validTimes[d];
+    }
+
+    return { payload, anyStale };
+  },
+
   // Called when the front-end (MMM-SPCOutlook.js) sends a socket notification
   socketNotificationReceived: async function(notification, payload) {
     if (notification === "GET_SPC_DATA") {
@@ -754,6 +859,9 @@ module.exports = NodeHelper.create({
    *   excessiveRain with per-day Risk/Text/Color/ValidTime fields for days 1
    *   through 5 (always present, regardless of this._products.showExcessiveRain
    *   — "NONE"/"None"/no-data color/null defaults when the toggle is off, D-05);
+   *   winterImpact with per-day Risk/Text/Color/ValidTime fields for days 1 through 3
+   *   (always present, regardless of this._products.showWinterImpact — "NONE"/"None"/
+   *   no-data color/null defaults when the toggle is off, D-05);
    *   and optional _stale (boolean) and _staleAsOf (timestamp) when serving cached data
    */
   async getSpcOutlook(lat, lon, extended, products) {
@@ -1328,104 +1436,36 @@ module.exports = NodeHelper.create({
       let day48Risk = false;
       if(day4ProbRisk > 0 || day5ProbRisk > 0 || day6ProbRisk > 0 || day7ProbRisk > 0 || day8ProbRisk > 0) day48Risk = true;
 
-      // WPC Excessive Rainfall Outlook (ERO). This block never runs when the row's
-      // configFlag is off, yet the excessiveRain payload block below is always
-      // emitted (D-05). `anyStale` is written only inside this gate (D-04).
-      // WR-16: the day count, the seed objects, the loop bound and the payload block are
-      // all driven by `ero.days` — no literal day count survives outside the registry, so
-      // the row is the single place a product's span is declared.
-      // ERO's `dn` map is the registry row's own (`ero.toValue`) and must never be
-      // fed through fire weather's uppercase-DN-keyed value map (ERO-02). Every URL
-      // comes from `ero.buildUrl` so the query string is byte-stable across polls
-      // (PERF-02, D-09). The cache stores the raw numeric tier under `value`, with
-      // the single `ero.valueToTier` conversion deliberately placed downstream of
-      // the cache-hit/fresh-data branch so both paths produce the identical tier
-      // string (PERF-02).
-      // ArcGIS REST returns most failures as HTTP 200 with an `error` body and no
-      // `features`, so each day is validated and fetch/parse/evaluate is wrapped in
-      // its own try/catch — a failed day degrades to no risk instead of reaching
-      // this function's own catch and losing the whole payload. A rejected body is
-      // deliberately never written to the cache (it would pin a bad result behind a
-      // future 304), but it DOES set `anyStale` — refining D-04, which bound ERO
-      // staleness to `fetchResult.stale` alone. A degrade the user cannot see is
-      // indistinguishable from a genuine all-clear, and that false negative is the
-      // one outcome this product exists to prevent (CR-03, WR-06).
-      const ero = PRODUCT_REGISTRY.excessiveRain;
-      const eroDays = ero.days;
-      const eroTiers = {};
-      const eroValidTimes = {};
-      for (let d = 1; d <= eroDays; d++) {
-        eroTiers[d] = "NONE";
-        eroValidTimes[d] = null;
-      }
+      // WPC arcgis-day-layers products (ERO, WSSI, ...) share one fetch/cache/evaluate
+      // runner (_runArcGisDayProduct, above) so a fix applied to one structurally cannot
+      // skip its twin (D-02) — exactly the divergence 14-REVIEW.md WR-06 found between ERO
+      // and the (then-separate) MD path. Each call only runs its row's fetch loop when the
+      // row's own configFlag is on, yet always returns the row's full day-span payload
+      // block (Phase 14 D-05); `anyStale` is written only when a call reports it (D-04).
+      // ERO's `dn` map is the registry row's own (`ero.toValue`) and must never be fed
+      // through fire weather's uppercase-DN-keyed value map (ERO-02). Every URL comes from
+      // the row's own `buildUrl` so the query string is byte-stable across polls (PERF-02,
+      // D-09). ArcGIS REST returns most failures as HTTP 200 with an `error` body and no
+      // `features`, so each day is validated and fetch/parse/evaluate is wrapped in its own
+      // try/catch inside the runner — a failed day degrades to no risk instead of reaching
+      // this function's own catch and losing the whole payload.
+      const eroResult = await this._runArcGisDayProduct(
+        PRODUCT_REGISTRY.excessiveRain, loc, catComparator, productToggles
+      );
+      const eroPayload = eroResult.payload;
+      if (eroResult.anyStale) anyStale = true;
 
-      if (productToggles[ero.configFlag]) {
-        for (let d = 1; d <= eroDays; d++) {
-          try {
-            const url = ero.buildUrl(d);
-            const fetchResult = await this.fetchGeoJsonCached(url);
-            if (fetchResult.stale || fetchResult.failed) anyStale = true;
-
-            let eroValue = 0;
-            let eroValidTime = null;
-
-            if (fetchResult.data === null && fetchResult.cachedResult !== null) {
-              eroValue = fetchResult.cachedResult.value;
-              eroValidTime = fetchResult.cachedResult.validTime;
-            } else if (fetchResult.data !== null) {
-              // WR-01: no second shape check here. fetchGeoJsonCached has twelve
-              // `return { data ... }` sites and exactly two carry a non-null `data`,
-              // each immediately preceded by an `_isFeatureCollection` gate, so
-              // `data !== null` already implies a usable FeatureCollection. The branch
-              // that used to sit here could not execute in production, and it was a
-              // second, divergent implementation of a policy rejectBody already owns:
-              // rejectBody requires `entry.result !== null && !== undefined`, this copy
-              // required `cached.result` to be truthy, so a legitimately cached `{ value: 0 }`
-              // would have been treated differently by the two. The stale-fallback
-              // guarantee ("a WPC hiccup during an active HIGH must not blank the
-              // display") is delivered by rejectBody at the fetch layer, which is where
-              // ero-rejected-body-serves-last-known-good now exercises it.
-              const polys = this.extractPolygons(fetchResult.data, ero.toValue, ero.includesFeat, url);
-              eroValue = this.evaluatePolygons(polys, loc, catComparator);
-              // CR-01/WR-10: read valid_time off the winning polygon — the one the user is
-              // actually inside at the resolved tier — never off `features[0]`, and never at
-              // all on the no-risk path (a risk-free day must not advertise a valid window).
-              // Every dereference here is guarded: a feature with absent/null `properties`
-              // must never throw away an already-computed real tier.
-              eroValidTime = eroValue > 0
-                ? this._validTimeOfWinner(polys, loc, eroValue, ero.validTimeField)
-                : null;
-              this._geoJsonCache.set(url, {
-                mode: fetchResult.mode,
-                etag: fetchResult.newEtag ?? null,
-                hash: fetchResult.newHash ?? null,
-                result: { value: eroValue, validTime: eroValidTime },
-                timestamp: Date.now()
-              });
-            }
-
-            // Convert exactly once, after the branch closes — never inside either
-            // branch — so a cache hit produces the identical tier string as a fresh
-            // fetch (PERF-02, D-03).
-            eroTiers[d] = ero.valueToTier[eroValue] || "NONE";
-            eroValidTimes[d] = eroValidTime;
-          } catch (eroErr) {
-            Log.error(`MMM-SPCOutlook ${ero.id} day ${d}: fetch/parse/evaluate failed, leaving day at no risk`, eroErr);
-          }
-        }
-      }
-
-      // WR-16: built from `ero.days` rather than a hand-written five-day literal, so the
-      // registry row is the only place the product's day span is declared. Key insertion
-      // order (dayNRisk, dayNText, dayNColor, dayNValidTime) is deliberate — the probe's
-      // golden snapshots compare serialised payloads byte for byte.
-      const eroPayload = {};
-      for (let d = 1; d <= eroDays; d++) {
-        eroPayload[`day${d}Risk`] = eroTiers[d];
-        eroPayload[`day${d}Text`] = ero.tierToText[eroTiers[d]];
-        eroPayload[`day${d}Color`] = ero.tierToColor[eroTiers[d]];
-        eroPayload[`day${d}ValidTime`] = eroValidTimes[d];
-      }
+      // WSSI Overall Impact (winterImpact). Off-season, the live layer responds with a
+      // literal `{"type":"FeatureCollection","features":[]}` — the shape
+      // `_isFeatureCollection` and `extractPolygons` already handle unchanged (zero
+      // features -> value 0 -> tier NONE -> no row), so no additional guard belongs here
+      // (WSSI-03). D-09 AMENDED's MINOR floor lives entirely in the registry row's
+      // `includesFeat`, not in this call site.
+      const wssiResult = await this._runArcGisDayProduct(
+        PRODUCT_REGISTRY.winterImpact, loc, catComparator, productToggles
+      );
+      const wssiPayload = wssiResult.payload;
+      if (wssiResult.anyStale) anyStale = true;
 
       // WR-08: a layer that lost one or more polygons to unusable geometry produced a
       // partial answer, and a partial answer is not an answer — flag it exactly as a
@@ -1537,7 +1577,8 @@ module.exports = NodeHelper.create({
           day8Risk: day8FireRisk,
           day8Text: fireValueToFull[day8FireRisk]
         },
-        excessiveRain: eroPayload
+        excessiveRain: eroPayload,
+        winterImpact: wssiPayload
       };
 
     } catch (err) {
