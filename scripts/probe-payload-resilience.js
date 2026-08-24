@@ -1,18 +1,28 @@
-// probe-payload-resilience.js — offline, dependency-free proof that
-// getSpcOutlook's payload survives a hostile WPC ERO response.
+// probe-payload-resilience.js — offline proof that getSpcOutlook's payload
+// survives a hostile WPC/SPC response.
 //
 // Run with: node scripts/probe-payload-resilience.js
 //
-// Each scenario feeds getSpcOutlook a controlled fetchGeoJsonCached
-// replacement (never the real network) and assert the D-05 payload
-// contract: no `error` key, day1-day8, fireWeather, and a full 20-key
-// excessiveRain block, regardless of what the upstream host returns.
-// Future product rows add one scenario object here — the loader and
-// contract assertion are product-agnostic.
+// The suite drives two seams: `installFetch` replaces helper.fetchGeoJsonCached
+// directly for ArcGIS-shaped products, and `installHttp` replaces the lower
+// `_fetch` transport seam so a scenario can drive the real fetchGeoJsonCached
+// (and, for KMZ/binary products, fetchBinBuffer) against a controlled HTTP
+// response. Each scenario asserts the D-05 payload contract: no `error` key,
+// day1-day8, fireWeather, and a full 20-key excessiveRain block, regardless of
+// what the upstream host returns.
+//
+// A scenario may declare `requires: "kml-deps"` when it needs the real
+// adm-zip/@xmldom/xmldom/@tmcw/togeojson/xpath libraries that module-stubs.js
+// resolves opportunistically. When those libraries are unavailable the
+// scenario is SKIPPED rather than silently omitted: a skip is a missing proof,
+// not a pass, and the run exits non-zero whenever any scenario did not run —
+// D-10 makes this suite the verification standard for the phase, so a run
+// that could not execute a scenario must never be reportable as green.
 
 const { PRODUCT_REGISTRY } = require("../productRegistry.js");
 const {
-  loadNodeHelper, loadFrontendModule, renderDom, resetHelper, resetLogs, turfStub, logCalls
+  loadNodeHelper, loadFrontendModule, renderDom, resetHelper, resetLogs, turfStub, logCalls,
+  hasRealKmlDeps, missingKmlDeps
 } = require("./probe-lib/module-stubs.js");
 
 // ---------------------------------------------------------------------
@@ -1038,11 +1048,21 @@ const scenarios = [
 async function main() {
   let passed = 0;
   let failed = 0;
+  let skipped = 0;
   assertGoldenPinsSomething("GOLDEN_DAY1", GOLDEN_DAY1);
   assertGoldenPinsSomething("GOLDEN_FIRE_WEATHER", GOLDEN_FIRE_WEATHER);
   const helper = loadNodeHelper();
 
   for (const scenario of scenarios) {
+    // D-10 / T-15-05: a scenario that cannot run is counted as skipped and
+    // forces a non-zero exit below, so an environment missing node_modules
+    // can never produce a green run that is later cited as proof the phase
+    // was verified. A skip is a missing proof, not a pass.
+    if (scenario.requires === "kml-deps" && !hasRealKmlDeps) {
+      console.log(`SKIP ${scenario.name} (requires real ${missingKmlDeps.join(", ")}; run npm ci)`);
+      skipped++;
+      continue;
+    }
     try {
       await scenario.run(helper);
       console.log(`PASS ${scenario.name}`);
@@ -1053,8 +1073,11 @@ async function main() {
     }
   }
 
-  console.log(`PROBE RESULT: ${passed} passed, ${failed} failed`);
-  process.exit(failed === 0 ? 0 : 1);
+  console.log(`PROBE RESULT: ${passed} passed, ${failed} failed, ${skipped} skipped`);
+  if (skipped > 0) {
+    console.log(`REMEDIATE: run npm ci to install ${missingKmlDeps.join(", ")} and re-run the suite`);
+  }
+  process.exit(failed === 0 && skipped === 0 ? 0 : 1);
 }
 
 // WR-05: report what actually went wrong. A failure before the scenario loop — most
