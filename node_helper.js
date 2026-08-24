@@ -209,6 +209,13 @@ module.exports = NodeHelper.create({
           tiers[d] = row.valueToTier[value] || "NONE";
           validTimes[d] = validTime;
         } catch (err) {
+          // CR-01: a contained throw is a degrade, not a clean read. The day resolves to
+          // "NONE", which is byte-identical to a genuine all-clear, so the payload must
+          // carry the staleness signal or the frontend renders a confident "No Severe
+          // Weather Risk" with no ⚠. Raised independently of the
+          // `fetchResult.stale || fetchResult.failed` line above, because the throw can
+          // happen before that line ever runs (D-04, CV-01).
+          anyStale = true;
           Log.error(`MMM-SPCOutlook ${row.id} day ${d}: fetch/parse/evaluate failed, leaving day at no risk`, err);
         }
       }
