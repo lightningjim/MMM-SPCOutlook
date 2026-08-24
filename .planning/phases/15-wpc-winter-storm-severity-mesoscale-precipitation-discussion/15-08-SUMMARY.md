@@ -114,3 +114,12 @@ None — no external service configuration required. `node_modules` (real `adm-z
 ---
 *Phase: 15-wpc-winter-storm-severity-mesoscale-precipitation-discussion*
 *Completed: 2026-08-24*
+
+## Self-Check: PASSED
+
+- FOUND: scripts/probe-payload-resilience.js
+- FOUND: .planning/phases/15-wpc-winter-storm-severity-mesoscale-precipitation-discussion/15-08-SUMMARY.md
+- FOUND commit: 6416833 (Task 1)
+- FOUND commit: a4c48ce (Task 2)
+- FOUND commit: bfea00c (SUMMARY.md)
+- `node scripts/probe-payload-resilience.js` re-run at self-check time: 26 passed, 0 failed, 0 skipped, exit 0
