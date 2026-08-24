@@ -2669,6 +2669,88 @@ const scenarios = [
         throw new Error("control: a well-formed KMZ no longer round-trips through extractSoleKmlEntry");
       }
     }
+  },
+  {
+    // WR-04: checkInPolygon built its turf geometry unguarded, so ONE malformed feature
+    // aborted the whole scan for that candidate and _runKmlAdvisoryRow's catch then
+    // discarded the entire advisory. The shape that makes this a false negative rather
+    // than a wash is a malformed feature serialised BEFORE a valid one containing the
+    // user: the covering advisory is lost to document order alone. extractPolygons was
+    // hardened against exactly these turf throws (WR-08); checkInPolygon was not.
+    //
+    // Asserted against the primitive rather than end-to-end on purpose: @tmcw/togeojson
+    // normalises rings on the way out (it auto-closes a 4-position ring and emits
+    // `geometry: null` for anything shorter), so no KML fixture can currently deliver a
+    // ring-invalid Polygon through the MPD chain. checkInPolygon is a generic helper over
+    // "anything, including junk" — its own doc comment — and its containment must not
+    // depend on one upstream parser's normalisation staying as it is today.
+    name: "checkinpolygon-contains-unusable-geometry-per-feature",
+    run: async (helper) => {
+      resetHelper(helper);
+      resetLogs();
+      const before = helper._unusableFeatureCount || 0;
+      const covering = {
+        type: "Feature", properties: { name: "covering" },
+        geometry: { type: "Polygon", coordinates: [SAMPLE_RING] }
+      };
+      const collection = {
+        type: "FeatureCollection",
+        features: [
+          // Fewer than four positions: turf's "Each LinearRing of a Polygon must have 4 or
+          // more Positions.", reproduced verbatim by the turf stub (module-stubs.js).
+          { type: "Feature", properties: { name: "malformed" },
+            geometry: { type: "Polygon", coordinates: [[[-97, 35], [-96, 35]]] } },
+          covering
+        ]
+      };
+      const originalPointInPolygon = turfStub.pointInPolygon;
+      turfStub.pointInPolygon = () => true;
+      let hit;
+      let scanErr = null;
+      try {
+        hit = helper.checkInPolygon(collection, PROBE_LAT, PROBE_LON);
+      } catch (err) {
+        scanErr = err;
+      } finally {
+        turfStub.pointInPolygon = originalPointInPolygon;
+      }
+      if (scanErr) {
+        throw new Error(
+          `one malformed feature aborted the whole scan (${scanErr.message}) — the caller ` +
+          "discards the entire advisory, so a covering polygon behind it is never seen"
+        );
+      }
+      if (!hit || hit.properties.name !== "covering") {
+        throw new Error(`expected the covering feature behind the malformed one, got ${JSON.stringify(hit)}`);
+      }
+      requireLog(
+        ["checkInPolygon", "unusable geometry"],
+        "a feature dropped for unusable geometry produced no diagnostic"
+      );
+      // Reusing the shared counter is what makes the drop surface as ⚠ through
+      // getSpcOutlook's existing sampling instead of vanishing.
+      if ((helper._unusableFeatureCount || 0) !== before + 1) {
+        throw new Error(
+          `the dropped feature was not counted (${before} -> ${helper._unusableFeatureCount}), so ` +
+          "getSpcOutlook's sampling cannot flag the payload as assembled from incomplete layers"
+        );
+      }
+
+      // Control: with no malformed feature the same call still finds the covering one, so
+      // nothing above is satisfied by checkInPolygon simply bailing out early.
+      turfStub.pointInPolygon = () => true;
+      let control;
+      try {
+        control = helper.checkInPolygon(
+          { type: "FeatureCollection", features: [covering] }, PROBE_LAT, PROBE_LON
+        );
+      } finally {
+        turfStub.pointInPolygon = originalPointInPolygon;
+      }
+      if (!control || control.properties.name !== "covering") {
+        throw new Error("control: checkInPolygon no longer finds a plain covering feature");
+      }
+    }
   }
 ];
 

@@ -2201,15 +2201,27 @@ module.exports = NodeHelper.create({
     for (const feature of geojson.features) {
       if (!feature || !feature.geometry) continue;
 
+      // WR-04: turf.polygon/multiPolygon throw on a ring with fewer than four positions,
+      // on an unclosed ring, and on non-array coordinates — the same throws extractPolygons
+      // is already hardened against. Unguarded here, one malformed Placemark aborted the
+      // whole feature scan for that candidate, and the caller's per-candidate catch then
+      // discarded the entire advisory. When the malformed Placemark is serialised BEFORE a
+      // valid one that does contain the user, that is a false negative produced by document
+      // order alone. Containing it per feature matches extractPolygons, and reusing
+      // _unusableFeatureCount makes the drop surface as ⚠ through getSpcOutlook's existing
+      // sampling rather than vanishing.
       const geomType = feature.geometry.type;
-      if (geomType === "Polygon") {
-        const poly = turf.polygon(feature.geometry.coordinates);
-        if (turf.booleanPointInPolygon(pt, poly)) return feature;
+      let poly;
+      try {
+        if (geomType === "Polygon") poly = turf.polygon(feature.geometry.coordinates);
+        else if (geomType === "MultiPolygon") poly = turf.multiPolygon(feature.geometry.coordinates);
+        else continue;
+      } catch (err) {
+        Log.error("MMM-SPCOutlook checkInPolygon: skipping a feature with unusable geometry", err);
+        this._unusableFeatureCount = (this._unusableFeatureCount || 0) + 1;
+        continue;
       }
-      else if (geomType === "MultiPolygon") {
-        const multiPoly = turf.multiPolygon(feature.geometry.coordinates);
-        if (turf.booleanPointInPolygon(pt, multiPoly)) return feature;
-      }
+      if (turf.booleanPointInPolygon(pt, poly)) return feature;
     }
     return null;
   },
