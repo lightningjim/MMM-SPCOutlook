@@ -821,29 +821,14 @@ module.exports = NodeHelper.create({
     return buf;
   },
 
-  // Derives the KML member name from the URL's last path segment — correct for SPC MD,
-  // whose member KMZ and KML share the URL-derived stem (e.g. MD2108.kmz -> MD2108.kml).
-  // WPC MPD's KMZ member name is fixed (`doc.kml`) regardless of the URL, so this heuristic
-  // would yield the non-existent `MPD_1118_final.kml`. `kml-advisory` rows use
-  // `extractSoleKmlEntry` instead, which scans the archive for its sole `.kml` entry.
-  kmzToKmlfilename(url) {
-    const segments = url.split("/");
-    const kmzFileName = segments[segments.length-1];
-    return kmzFileName.slice(0,-1)+"l";
-  },
-
-  extractKmlFromKmz(buffer, filename){
-    const ZIPper = new ZIP(buffer);
-    const entry = ZIPper.getEntry(filename);
-    if(!entry) throw new Error('KMZ downloaded has no KML');
-    return ZIPper.readFile(entry).toString();
-  },
-
   /**
-   * Read the sole `.kml` member out of a remote KMZ archive, without relying on the
-   * URL-derived filename heuristic `kmzToKmlfilename` uses. WPC MPD's KMZ member is always
-   * named `doc.kml`, unlike SPC MD's URL-derived stem, so a shared `kml-advisory` runner
-   * needs a "find the sole `.kml` entry" primitive rather than a filename guess.
+   * Read the sole `.kml` member out of a remote KMZ archive, without relying on the member
+   * name being derivable from the URL. SPC MD's member KMZ and KML share the URL-derived
+   * stem (MD2108.kmz -> MD2108.kml), but WPC MPD's member is always named `doc.kml`
+   * regardless of the URL, so a shared `kml-advisory` runner needs a "find the sole `.kml`
+   * entry" primitive rather than a filename guess. A pair of helpers that did guess the
+   * name (`kmzToKmlfilename` and `extractKmlFromKmz`) lived here until this function
+   * superseded them; they were deleted once they had no caller left.
    * @param buffer - the downloaded KMZ bytes, remote and attacker-influenceable
    * @returns the `.kml` entry's contents as a string
    *
@@ -1281,18 +1266,14 @@ module.exports = NodeHelper.create({
     return "NONE";
   },
 
-  async fetchGeoJson(url){
-    try {
-      const result = await this._fetch(url, withTimeout());
-      if(!result.ok) throw new Error(`HTTP ${result.status} fetching ${url}`);
-      const data = await result.json();
-      return data;
-    } catch (err) {
-      Log.error("MMM-SPCOutlook fetchGeoJson error:", err);
-      return null;
-    }
-  },
-
+  // A second, caller-less `fetchGeoJson` sat here: a divergent transport that bypassed
+  // every control on this path — no body bound, no _isFeatureCollection gate, no stale
+  // fallback, no `failed` flag, swallowing errors into a bare `return null` that is
+  // indistinguishable from "no risk". It was deleted rather than left as a convenience,
+  // because the danger was its NAME: a future caller reaching for the obviously-named
+  // fetchGeoJson instead of fetchGeoJsonCached would have reintroduced the whole
+  // silent-degradation class in one line. If a plain fetch is ever wanted, route it
+  // through fetchGeoJsonCached rather than duplicating the transport.
   _isWithinStaleWindow(timestamp, intervalMinutes) {
     const intervalMs = (intervalMinutes ?? 60) * 60 * 1000;
     return (Date.now() - timestamp) < intervalMs * STALE_WINDOW_INTERVALS;
