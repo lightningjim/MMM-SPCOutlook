@@ -841,6 +841,23 @@ module.exports = NodeHelper.create({
                       `inflate an entry whose declared size cannot bound the inflation`);
     }
 
+    // This post-read length check is UNREACHABLE with the pinned adm-zip and is retained
+    // deliberately, not by oversight. A previous revision described it as "the length of
+    // the buffer that actually came out, which no header field can lie about" and as the
+    // only unforgeable one of the three; it is neither, and stating so plainly is the
+    // point of this comment. adm-zip allocates its output buffer as
+    // `Buffer.alloc(centralHeader.size)` and copies the inflated result into it
+    // (zipEntry.js), so what comes back is always exactly `declared` bytes — a number the
+    // checks above have already bounded. It cannot be longer, whatever the deflate stream
+    // contains.
+    //
+    // It stays because that is a property of THIS library version, not of ZIP: a reader
+    // that returns whatever inflated (a growing buffer, a streaming reader) would make
+    // this the only thing standing between a forged header and an unbounded string
+    // downstream. adm-zip is pinned to an exact version in package.json so an upgrade is a
+    // deliberate act, and kmz-decompression-bomb-is-refused asserts on the exact refusal
+    // adm-zip's own clamp produces — so a version that stops clamping turns the suite red
+    // here rather than silently promoting this line from dead code to load-bearing.
     const buf = ZIPper.readFile(entry);
     if (!buf) throw new Error("KMZ .kml entry could not be inflated");
     if (buf.length > KMZ_MAX_KML_BYTES) {

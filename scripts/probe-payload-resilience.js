@@ -2742,11 +2742,20 @@ const scenarios = [
       }
 
       // 3. A header that LIES: same deflate stream, central-directory uncompressed size
-      //    forged down to 100 bytes so both checks above see a tiny, plausible entry. The
-      //    refusal here does not come from either header check — it comes from bounding
-      //    what actually inflates. Pinning it means a future change that drops the
-      //    post-read check (or moves to a zip library that trusts the header) turns red
-      //    rather than silently reopening the hole.
+      //    forged down to 100 bytes so the size checks above see a tiny, plausible entry.
+      //    Something must still refuse it, and WHICH layer refuses is the whole point —
+      //    asserting only "some error was thrown" is what let the previous version of this
+      //    case pass against every possible implementation, including one with no bound at
+      //    all, since adm-zip's own error satisfied it.
+      //
+      //    The refusal must come from adm-zip clamping inflation to the declared size
+      //    (zlib's maxOutputLength). extractSoleKmlEntry's post-read length check cannot
+      //    be what fires: adm-zip returns a buffer of exactly the declared size, so that
+      //    check is unreachable while this library behaves this way, and it is documented
+      //    as such. If this assertion ever fails, the library has stopped bounding
+      //    inflation, that post-read check has just become the only thing that does, and
+      //    the version pin in package.json needs re-examining — which is precisely the
+      //    event a green suite must not hide.
       const forged = Buffer.from(oversized);
       const cdOffset = forged.indexOf(Buffer.from([0x50, 0x4b, 0x01, 0x02]));
       if (cdOffset < 0) throw new Error("fixture is not a well-formed zip: no central directory header");
@@ -2756,10 +2765,19 @@ const scenarios = [
       if (!forgedErr) {
         throw new Error("a forged 100-byte declaration on a 16 MB deflate stream was accepted and inflated");
       }
-      if (/oversized \.kml entry|implausible compression ratio/.test(forgedErr.message)) {
+      if (/oversized \.kml entry|declares 0 uncompressed bytes/.test(forgedErr.message)) {
         throw new Error(
           `the forged fixture was refused by a HEADER check (${forgedErr.message}), so it does not ` +
-          "prove the inflated result is bounded — the forge did not take effect"
+          "prove the inflation itself is bounded — the forge did not take effect"
+        );
+      }
+      if (!/Cannot create a Buffer larger than/.test(forgedErr.message)) {
+        throw new Error(
+          `the forged fixture was not refused by adm-zip's declared-size clamp (${forgedErr.message}). ` +
+          "The installed adm-zip passes the declared uncompressed size to zlib as maxOutputLength; if it " +
+          "no longer does, inflation is unbounded up to whatever the deflate stream produces and " +
+          "extractSoleKmlEntry's post-read length check — documented there as unreachable — is now the " +
+          "only bound on it."
         );
       }
 
