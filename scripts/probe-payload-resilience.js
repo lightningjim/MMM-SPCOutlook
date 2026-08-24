@@ -2238,6 +2238,65 @@ const scenarios = [
         );
       }
     }
+  },
+  {
+    // T-15-39 / D-10 mutation 5: the fail-open direction on an unresolvable validity window
+    // is a deliberate no-false-negatives choice (showing an expired MPD is a minor annoyance;
+    // hiding an active one is the class of bug this project exists to prevent) and must not be
+    // silently reversible. This scenario's IssueTime carries AKST — a real US timezone
+    // abbreviation absent from parseMpdValidEnd's fixed 8-entry CONUS table — so
+    // parseMpdValidEnd resolves to null. The candidate must still be kept and the parse-miss
+    // logged, never dropped.
+    name: "mpd-unparseable-validity-is-kept-not-dropped",
+    requires: "kml-deps",
+    run: async (helper) => {
+      resetHelper(helper);
+      resetLogs();
+      helper._products = { showSPCMD: false, showMPD: true, showExcessiveRain: false, showWinterImpact: false };
+      const now = Date.now();
+      const window = mpdWindowFields(now + 3 * 60 * 60 * 1000, { issueBeforeMs: 45 * 60 * 1000 });
+      const issueTimeStr = window.issueTimeStr.replace(/\bEDT\b/, "AKST");
+      const listingText = mpdListingHtml([
+        { filename: "MPD_1617_final.kmz", lastModified: new Date(now - 15 * 60 * 1000) }
+      ]);
+      const url = "https://www.wpc.ncep.noaa.gov/kml/mpd/MPD_1617_final.kmz";
+      const buffer = kmzOf({
+        "doc.kml": mpdKml({
+          number: "1617", issueTime: issueTimeStr, validEndTi: window.validEndTi,
+          hazardType: "Heavy snow"
+        })
+      });
+
+      installHttp(helper, advisoryRoutes({
+        listing: { url: PRODUCT_REGISTRY.mpd.discoveryUrl, text: listingText },
+        members: [{ url, buffer }]
+      }));
+
+      const originalPointInPolygon = turfStub.pointInPolygon;
+      turfStub.pointInPolygon = () => true;
+      let out;
+      try {
+        out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, {
+          showSPCMD: false, showMPD: true, showExcessiveRain: false, showWinterImpact: false
+        });
+      } finally {
+        turfStub.pointInPolygon = originalPointInPolygon;
+      }
+      assertPayloadIntact(out);
+      if (out.advisories.mpd.length !== 1) {
+        throw new Error(
+          `fail-open regression: an MPD with an unmapped timezone abbreviation (AKST) in ` +
+          `IssueTime was dropped instead of kept, got ${out.advisories.mpd.length} entries`
+        );
+      }
+      if (!out.advisories.mpd[0].label.includes("1617")) {
+        throw new Error(`expected the kept candidate labelled 1617, got ${JSON.stringify(out.advisories.mpd[0])}`);
+      }
+      requireLog(
+        ["mpd validity window unparseable, keeping candidate", url],
+        "an unresolvable validity window (unmapped timezone abbreviation) did not log its parse-miss diagnostic"
+      );
+    }
   }
 ];
 
