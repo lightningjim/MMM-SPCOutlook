@@ -1,683 +1,699 @@
 ---
 phase: 15-wpc-winter-storm-severity-mesoscale-precipitation-discussion
-reviewed: 2026-08-24T21:51:34Z
+reviewed: 2026-08-25T00:59:14Z
 depth: deep
-iteration: 2
-files_reviewed: 5
+iteration: 3
+files_reviewed: 7
 files_reviewed_list:
   - MMM-SPCOutlook.js
   - node_helper.js
   - productRegistry.js
   - scripts/probe-lib/module-stubs.js
   - scripts/probe-payload-resilience.js
+  - package.json
+  - README.md
 findings:
   critical: 2
-  warning: 8
-  info: 11
-  convention: 3
-  total: 24
+  warning: 13
+  info: 5
+  total: 20
 status: issues_found
 ---
 
-# Phase 15: Code Review Report (re-review after fix pass)
+# Phase 15: Code Review Report (iteration 3)
 
-**Reviewed:** 2026-08-24T21:51:34Z
+**Reviewed:** 2026-08-25T00:59:14Z
 **Depth:** deep
-**Files Reviewed:** 5
+**Files Reviewed:** 7
 **Status:** issues_found
-**Probe suite at review time:** 43 passed / 0 failed / 0 skipped (re-run and confirmed)
 
 ## Summary
 
-This is a fresh adversarial pass over the five Phase 15 source files as they stand at
-`9d88bfd`, after the 13-finding fix pass (`3622e19`..`4880b37`). Findings were re-derived
-from the current source; nothing was carried forward on the strength of a commit message.
-
-**On the 13 prior fixes:** twelve hold under scrutiny. CR-01 (`anyStale` in the arcgis
-per-day catch), CR-02 (contained body read), WR-01 (numeric truncation), WR-02 (three-layer
-body bound), WR-04 (`checkInPolygon` per-feature containment), WR-05 (registry-driven
-oracle), WR-06 (routing correction + render assertion), WR-07/WR-08/WR-09 (frontend
-tolerance, span derivation, toggle gate) and WR-10 (whole-surface seam restore) are
-genuinely closed, and I could not find a scenario whose routing masks them the way WR-06's
-originally did. **WR-03 does not hold.** Its third and "only unforgeable" check —
-`buf.length > KMZ_MAX_KML_BYTES` after `readFile` — is dead code with the installed
-adm-zip (verified: adm-zip sizes its output buffer from `header.size` and throws
-`Cannot create a Buffer larger than N bytes` before returning), and the scenario written to
-pin it (`kmz-decompression-bomb-is-refused`, case 3) passes on *any* error and therefore
-asserts nothing about node_helper.js at all. **CR-03's flagged extension is defensible** —
-`RESEARCH.md:620-636` records live-verified `<name>MD 2108</name>` on the SPC MD member
-Placemark, so the new `anyStale` on the unnamed-advisory drop should not latch for `spcMD`
-in practice; I am not raising a finding on it.
-
-**Two BLOCKERs are new to this pass and neither was in the prior review.** Both are silent
-false negatives of exactly the class this product exists to prevent, both are invisible to
-the probe suite because the suite's temporal model does not match production, and both were
-reproduced here against the real code:
-
-1. The stale-fallback window (`_isWithinStaleWindow`) is unreachable in production. Every
-   scenario that proves "a WPC hiccup during an active HIGH must not blank the display"
-   runs its warm-up and its failure poll milliseconds apart; at the real 60-minute cadence
-   the cached reading is always older than the window, so the fallback never fires.
-2. The frontend's out-of-order sequence guard permanently freezes the display after a
-   node_helper restart, because `_seq` restarts at 0 while the browser's `_lastSeq` does not.
-
-**On the heuristic bounds the prompt asked about:** the WR-02 body bounds (8 MB member,
-4 MB listing) are generous and safe against live sizes. The WR-03 200:1 ratio is *not* a
-security control at all given the adm-zip behaviour above, and its stated basis ("live KML
-compresses at well under 20:1") is measurably wrong for the one archive shape it actually
-sees most often — a 1000-entry NetworkLink index KML measures 33:1 here.
-
-**On the probe suite** (now 3,123 lines): the new scenarios are, with one exception, well
-constructed — negative controls, positive controls and vacuity guards are used
-deliberately and correctly. The exception is `kmz-decompression-bomb-is-refused` case 3
-(WR-01 below). Two harness weaknesses are recorded: an undeclared inter-scenario ordering
-dependency, and a DOM stub that makes the XSS-escaping guarantee unassertable.
-
-## Critical Issues
-
-### CR-01: the stale-fallback window is unreachable at the shipping poll cadence — an active HIGH *is* blanked by a single upstream hiccup
-
-**File:** `node_helper.js:1164-1167`, `node_helper.js:1212`, `1240`, `1261`, `1282`; write sites `node_helper.js:1226-1236`, `1300-1306`, `1315-1318`
-
-**Issue:** `_isWithinStaleWindow(timestamp, intervalMinutes)` returns
-`(Date.now() - timestamp) < intervalMinutes * 60 * 1000`, and `entry.timestamp` is written
-**only** on a fresh 200 that produced new data. Every cache-hit return path —
-304 (`1226-1236`), ETag match on a 200 (`1300-1306`), hash match (`1315-1318`) — returns
-without rewriting the entry, so the timestamp is the age of the last *body change*, not of
-the last successful confirmation.
-
-At the documented default `updateInterval: 60`, the entry that was written at poll N is
-already ~60 minutes old when poll N+1 reaches that URL (later, in fact — `getSpcOutlook` is
-a ~30-hop serial chain, so each layer is fetched some seconds into the run). `60min < 60min`
-is false. And because SPC outlooks change a handful of times a day while the module polls
-hourly, most entries are hours old: they have been 304-confirmed repeatedly and never
-rewritten.
-
-Reproduced against the real `fetchGeoJsonCached`:
-
-```
-warm cache entry, age 0                        -> 200, cached
-entry aged to 61 min, then network error       -> {"data":null,"cachedResult":null,"stale":false,"failed":true}
-entry aged to  5 min, then network error       -> {"data":null,"cachedResult":6,"stale":true}
-304 hit on a 59-min-old entry                  -> served; timestamp refreshed? false
-200 with matching ETag on a 59-min-old entry   -> served; timestamp refreshed? false
-```
-
-So in production the second line is the real behaviour: `cachedResult: null`, the day
-resolves to `"NONE"`, and the display renders `⚠ Stale` + `No Severe Weather Risk
-(unconfirmed)` for a location that was HIGH ten minutes earlier. The phase's stated
-guarantee — "a WPC hiccup during an active HIGH must not blank the display"
-(`node_helper.js:1451-1456` comment, `ero-rejected-body-serves-last-known-good`) — is not
-delivered by the shipped code. `ero-rejected-body-serves-last-known-good`,
-`ero-unparseable-body-serves-last-known-good` and part 1 of
-`body-read-abort-is-contained-not-a-payload-collapse` all pass only because their warm-up
-poll and their failure poll are milliseconds apart.
-
-**Fix:** refresh the entry timestamp whenever upstream confirms the bytes are unchanged —
-a 304 or an ETag/hash match *is* a successful reading, which is exactly what
-`_noteStaleEntry`'s own comment says ("an ETag/hash cache hit is upstream confirming the
-bytes are unchanged, which is a fresh reading"). Apply it at all three hit sites:
-
-```js
-// 304 Not Modified
-if (res.status === 304) {
-  if (!entry) { /* ...unchanged... */ }
-  Log.info('MMM-SPCOutlook: cache hit (ETag) for ' + url);
-  entry.timestamp = Date.now();          // upstream confirmed: this reading is fresh
-  return { data: null, cachedResult: entry.result, stale: false };
-}
-...
-if (entry && entry.mode === 'etag' && entry.etag === newEtag) {
-  entry.timestamp = Date.now();
-  return { data: null, cachedResult: entry.result, stale: false };
-}
-...
-if (entry && entry.mode === 'hash' && entry.hash === newHash) {
-  entry.timestamp = Date.now();
-  return { data: null, cachedResult: entry.result, stale: false };
-}
-```
-
-Additionally decouple the window from the poll interval so it cannot be exactly-equal to
-the cadence (`intervalMs * 2`, or an explicit `STALE_MAX_AGE_MS`), and add a probe scenario
-that ages the cache entry past one interval before failing — the current suite structurally
-cannot see this class of bug.
-
-### CR-02: a node_helper restart permanently freezes the frontend — every subsequent payload is discarded
-
-**File:** `MMM-SPCOutlook.js:82-89`; producer `node_helper.js:113-117`, `node_helper.js:648-649`
-
-**Issue:** `node_helper.start()` sets `this._seq = 0` and `socketNotificationReceived`
-emits `[outlook, ++this._seq]`. The frontend keeps `this._lastSeq` and discards anything
-`<= this._lastSeq`. Nothing resets `_lastSeq`, and nothing detects that the producer's
-counter restarted.
-
-MagicMirror restarts node_helpers when the server process restarts, but the browser client
-reconnects over socket.io **without reloading the page** — this is the normal behaviour for
-`serveronly` / remote-browser deployments and for any pm2/systemd restart of the server. On
-reconnect the helper emits seq 1, 2, 3… while the frontend still holds `_lastSeq = 47`, so
-every payload is rejected forever. Reproduced against the real `socketNotificationReceived`:
-
-```
-after 47 polls:                          spcrisk {"seq":47}  renders 47
-after server restart + 10 polls:         spcrisk {"seq":47}  renders 47
-```
-
-The display is frozen on an arbitrarily old payload, presented as current — no `⚠` badge
-(the frozen payload's own `_stale` value is whatever it was at freeze time), no error, no
-self-heal on any later tick. This is the same "last-writer-wins across time" false negative
-the sequence guard was introduced to prevent, inverted.
-
-`frontend-seq-discard-survives-socket-index-migration` only exercises a monotonically
-sourced 5/3/6 sequence and cannot see this.
-
-**Fix:** make the guard tolerant of a producer restart. Either seed the helper's counter
-from wall-clock so it can never regress:
-
-```js
-// node_helper.js start()
-this._seq = Date.now();          // monotonic across helper restarts within a boot
-```
-
-or treat a large backwards jump as a new producer epoch on the frontend:
-
-```js
-const seq = payload[1];
-if (typeof seq === "number") {
-  const last = this._lastSeq ?? -1;
-  if (seq <= last) {
-    // A producer restart resets the counter; a genuinely late chain is at most a few
-    // behind. Re-sync rather than freezing the display forever.
-    if (last - seq > 1) {
-      Log.warn("MMM-SPCOutlook: sequence regressed (" + seq + " after " + last +
-               "); assuming a helper restart and re-syncing");
-      this._lastSeq = seq;
-    } else {
-      Log.info("SPC Outlook: discarding out-of-order SPC_DATA_RESULT (seq " + seq + " <= " + last + ")");
-      return;
-    }
-  } else {
-    this._lastSeq = seq;
-  }
-}
-```
-
-Add a probe scenario that replays seq 1..N, then 1..M, and asserts the display advances.
-
-## Warnings
-
-### WR-01: `extractSoleKmlEntry`'s "only unforgeable" post-read bound is dead code, and the scenario that claims to pin it asserts nothing
-
-**File:** `node_helper.js:786-791`; scenario `scripts/probe-payload-resilience.js:2707-2727`
-
-**Issue:** the WR-03 fix comment (`node_helper.js:761-773`) says check 3 is "the length of
-the buffer that actually came out, which no header field can lie about", and the fix report
-says the scenario "pins the library behaviour so a future adm-zip upgrade that drops it
-turns the suite red". Neither is true of the shipped code.
-
-adm-zip 0.5.16 allocates its inflation target from the declared central-directory size and
-refuses to exceed it. Verified directly against a forged archive (16 MB deflate stream, CD
-uncompressed size forged to 100):
-
-```
-declared size 100 compressed 16311
-THREW: Cannot create a Buffer larger than 100 bytes
-```
-
-`ZIPper.readFile(entry)` therefore never returns a buffer longer than `declared`, and
-`declared` was already bounded by check 1 (`declared > KMZ_MAX_KML_BYTES`). The
-`buf.length > KMZ_MAX_KML_BYTES` branch at `786-791` is unreachable.
-
-The scenario's case 3 asserts only (a) that *some* error was thrown and (b) that its
-message is not one of the two header-check messages. The adm-zip error satisfies both. If
-the post-read check were deleted, the scenario stays green; if a future adm-zip *did*
-inflate fully and the post-read check fired, the scenario also stays green. It cannot
-distinguish the layer that refused, which is the one thing its comment says it exists to do.
-
-**Fix:** either delete the unreachable check and say plainly in the comment that inflation
-is bounded by adm-zip's declared-size allocation (with the version pinned), or keep it and
-make the scenario assert *which* refusal fired:
-
-```js
-// case 3 must be refused by adm-zip's declared-size allocation, not by our header checks
-if (!/Cannot create a Buffer larger than/.test(forgedErr.message)) {
-  throw new Error(
-    `the forged fixture was not refused by adm-zip's declared-size allocation ` +
-    `(${forgedErr.message}) — the library no longer bounds inflation, so ` +
-    `extractSoleKmlEntry's post-read length check is now the only thing that does`
-  );
-}
-```
-
-and pin the adm-zip version in `package.json` to an exact version rather than `^0.5.16`.
-
-### WR-02: the 200:1 compression-ratio threshold has no security value and can reject legitimate index KML
-
-**File:** `node_helper.js:89-95`, `node_helper.js:781-784`
-
-**Issue:** the ratio is computed from `entry.header.size / entry.header.compressedSize` —
-**both** attacker-chosen central-directory fields. An attacker who wants to defeat it
-simply writes a plausible pair; the check adds nothing that check 1 (`declared >
-KMZ_MAX_KML_BYTES`) plus adm-zip's declared-size allocation (WR-01) do not already provide.
-What it does add is false-rejection surface, against a threshold picked from the wrong
-sample.
-
-The comment justifies 200:1 with "live KML compresses at well under 20:1", measured against
-member KMZs (~3 KB polygons). But `extractSoleKmlEntry` also processes the SPC
-`ActiveMD.kmz` **index** (`_advisoryDiscovery["spc-active-index"]`, `node_helper.js:269`),
-whose sole KML member is a run of near-identical `<NetworkLink>` blocks. Measured here with
-`zlib.deflateRaw` level 9:
-
-| index KML shape | raw | deflate | ratio |
-|---|---|---|---|
-| 3 NetworkLinks (today's live count) | 350 B | 131 B | 2.7 : 1 |
-| 20 NetworkLinks | 2.0 KB | 182 B | 11.2 : 1 |
-| 100 NetworkLinks | 10 KB | 391 B | **25.5 : 1** |
-| 1000 NetworkLinks | 99 KB | 2.9 KB | **33.4 : 1** |
-| 20k-vertex MD polygon | 400 KB | 87 KB | 4.6 : 1 |
-
-A refusal here throws out of the `spc-active-index` strategy's `try`, which returns
-`{ urls: [], failed: true }` — i.e. **every active SPC MD disappears** for that poll,
-behind a `⚠` badge. That is a whole-product false negative triggered by upstream growth or
-by WPC/SPC pretty-printing their index, not by an attack.
-
-**Fix:** drop the ratio check (preferred — it is redundant, see WR-01) and record why in
-the comment; or, if it is kept as defence-in-depth against a future zip library that trusts
-the header, raise it to a value that cannot fire on any plausible XML (a real deflate bomb
-is 500:1–1032:1, so 1000:1 still catches the attack shape) and correct the comment to cite
-the index-KML measurements above rather than the member-KMZ ones.
-
-### WR-03: `PRODUCT_REGISTRY` declares each product's day span twice with no invariant, and post-CR-01 the mismatch latches `⚠ Stale` permanently
-
-**File:** `productRegistry.js:36`, `productRegistry.js:58`, `productRegistry.js:90-94`, `productRegistry.js:116-118`; consumer `node_helper.js:163-238`
-
-**Issue:** a row's span is stated once as `days: 5` and again as the key set of
-`dayLayers`. Nothing ties them together. `buildUrl(day)` reads `dayLayers[day]` and passes
-it to `buildArcGisQuery`, which throws on `undefined`:
-
-```
-ERO day6 buildUrl THREW: buildArcGisQuery: layerId must be a non-negative integer
-WSSI day4 buildUrl THREW: buildArcGisQuery: layerId must be a non-negative integer
-```
-
-`_runArcGisDayProduct` calls `row.buildUrl(d)` **inside** the per-day try (`node_helper.js:176`),
-and the CR-01 fix now sets `anyStale = true` in that catch. So raising `days` without
-extending `dayLayers` produces a payload that is flagged `_stale` on **every poll, forever**
-— the display permanently shows `⚠ Stale`, and (per the CR-01 frontend gate at
-`MMM-SPCOutlook.js:227`) the no-risk short-circuit is permanently disabled, so a quiet day
-renders `No Severe Weather Risk (unconfirmed)` indefinitely.
-
-This is not hypothetical: raising `days` from 5 to 7 is the exact edit the WR-08 rationale
-is written around, in four separate comments (`MMM-SPCOutlook.js:174-181`, `244-249`,
-`379-383`, `scripts/probe-payload-resilience.js:2949-2955`), and the fix report records
-performing it. The fix report concluded "the three resulting failures are all fixture-side…
-no failure came from the frontend" — correct as far as it goes, and it missed that days 6-7
-throw and latch staleness.
-
-**Fix:** derive the span rather than restating it, and validate at module load:
-
-```js
-function daySpanOf(dayLayers) {
-  const days = Object.keys(dayLayers).map(Number).sort((a, b) => a - b);
-  for (let i = 0; i < days.length; i++) {
-    if (days[i] !== i + 1) {
-      throw new Error("productRegistry: dayLayers must be a contiguous 1..N map, got " + JSON.stringify(days));
-    }
-  }
-  return days.length;
-}
-// ...
-days: daySpanOf(eroDayLayers),
-```
-
-A row then cannot declare a span its layer map cannot serve, and adding a Day 6 means
-adding one `dayLayers` entry — one edit, in one place, exactly as the phase's own rule
-intends.
-
-### WR-04: two configured module instances silently render each other's location
-
-**File:** `node_helper.js:583-587`, `node_helper.js:649`, `node_helper.js:1464-1477`
-
-**Issue:** MagicMirror runs **one** node_helper per module *type* and
-`sendSocketNotification` broadcasts to **every** frontend instance of that type. The
-frontend applies only the sequence filter (`MMM-SPCOutlook.js:82-89`), which is
-location-agnostic, so an instance configured for Norman OK accepts and renders the payload
-computed for an instance configured for Boston MA. The `_inFlight` guard makes this
-deterministic rather than occasional: the second instance's `GET_SPC_DATA` at the same tick
-is dropped outright (`583-586`), so it never gets a chance to run its own query — it only
-ever receives the other instance's answer.
-
-`_cachedLat`/`_cachedLon` compound it: whichever instance does win alternates the cached
-location, so `locationChanged` fires and `this._geoJsonCache.clear()` runs on essentially
-every poll (`1464-1477`), discarding all ETag/hash benefit and turning ~30 conditional
-requests into ~30 full body reads per poll against NOAA.
-
-The codebase is aware of the shared-helper problem for `_products` (`MMM-SPCOutlook.js:196-204`,
-`node_helper.js:613-619`) but not for the payload itself, which is the more serious half —
-a user watching the wrong city's tornado risk has no way to tell.
-
-**Fix:** key the exchange by identity so a payload can only be consumed by its requester.
-Echo the request's coordinates in the payload and have the frontend reject a mismatch:
-
-```js
-// node_helper.js — carry the request identity through
-this.sendSocketNotification("SPC_DATA_RESULT", [outlook, this._seq, { lat, lon }]);
-
-// MMM-SPCOutlook.js
-const forWhom = payload[2];
-if (forWhom && (forWhom.lat !== this.config.lat || forWhom.lon !== this.config.lon)) return;
-```
-
-and make the in-flight guard per-location (`this._inFlight` -> `Map` keyed by
-`lat,lon`) or queue the skipped request instead of dropping it. If multi-instance is not a
-supported configuration, say so in `README.md` and log a warning when a second distinct
-`lat,lon` is seen.
-
-### WR-05: `harness-leak-setup` / `harness-leak-check` are order-coupled with no guard, and the setup scenario asserts nothing
-
-**File:** `scripts/probe-payload-resilience.js:3017-3073`
-
-**Issue:** `harness-leak-setup-deliberately-dirties-the-seams` contains no assertion — it
-always passes and inflates the reported count by one. Its whole value depends on
-`harness-leak-check-resethelper-restores-every-seam` being the *immediately* next scenario,
-which nothing enforces or documents in machine-checkable form. Any scenario inserted
-between them calls `resetHelper(helper)` at its own start, cleaning both leaks, after which
-the check scenario passes vacuously — it never asserts that the seams were dirty on entry.
-
-This is the same vacuity class the suite is otherwise careful about (`WR-02's trap`,
-`assertGoldenPinsSomething`), left unguarded in the one place it is structurally hardest to
-see.
-
-**Fix:** make the check self-contained and assert its own precondition:
-
-```js
-name: "harness-leak-check-resethelper-restores-every-seam",
-run: async (helper) => {
-  // Dirty the seams here, in this scenario, so no ordering assumption is load-bearing.
-  helper.fetchBinBuffer = async () => { throw new Error("LEAKED fetchBinBuffer stub"); };
-  helper.checkInPolygon = () => { throw new Error("LEAKED checkInPolygon stub"); };
-  turfStub.pointInPolygon = () => true;
-  // Precondition: the dirt is actually present.
-  if (turfStub.pointInPolygon({}, {}) !== true) throw new Error("setup did not dirty the turf stub");
-  resetHelper(helper);
-  resetLogs();
-  // ...existing assertions unchanged...
-}
-```
-
-and delete the setup-only scenario.
-
-### WR-06: three unreachable helper methods remain in `node_helper.js`
-
-**File:** `node_helper.js:718-722` (`kmzToKmlfilename`), `node_helper.js:724-729` (`extractKmlFromKmz`), `node_helper.js:1152-1162` (`fetchGeoJson`)
-
-**Issue:** none of the three has a caller anywhere in the repository (verified across all
-`.js` files excluding `node_modules`). `fetchGeoJson` is the more dangerous of the three: it
-is a second, divergent fetch implementation that bypasses every control this phase added —
-no size bound, no `_isFeatureCollection` gate, no stale fallback, no `failed` flag,
-swallowing errors into a bare `return null`. A future caller reaching for the
-obviously-named `fetchGeoJson` instead of `fetchGeoJsonCached` reintroduces the entire
-CR-02/WR-14 class silently. `kmzToKmlfilename` is explicitly documented as superseded by
-`extractSoleKmlEntry` (`node_helper.js:713-717`) and `extractKmlFromKmz` is its only
-consumer pattern.
-
-**Fix:** delete all three. If `fetchGeoJson` is wanted as a documented escape hatch, route
-it through `fetchGeoJsonCached` rather than duplicating the transport.
-
-### WR-07: `spc-active-index` violates the ordering contract the truncation cap now depends on
-
-**File:** `node_helper.js:266-287`, contract stated at `node_helper.js:446-456`
-
-**Issue:** the WR-01 fix documents a contract at the generic cap: "each strategy is
-responsible for handing back a meaningfully ordered list — `wpc-mpd-listing` now sorts
-numerically and truncates to ADVISORY_MAX_CANDIDATES itself… A future strategy must do the
-same." The *existing* other strategy, `spc-active-index`, does not: it returns hrefs in raw
-NetworkLink document order with no sort and no truncation of its own, so the
-`candidates.slice(0, ADVISORY_MAX_CANDIDATES)` at `454` keeps an arbitrary 60 and drops the
-rest. The contract is asserted by comment against code that does not satisfy it, which is
-the shape that lets the next reader trust it wrongly.
-
-Practical exposure is low (SPC rarely has more than ~15 concurrent MDs), but the drop is
-silent apart from a `⚠`, and the same comment is what a Phase 16/17 author will read.
-
-**Fix:** either sort by MD number inside `spc-active-index` before returning (mirroring
-`wpc-mpd-listing`), or restate the contract honestly and make the generic cap's ordering
-explicit:
-
-```js
-// spc-active-index, before `return { urls, failed: false }`
-urls.sort((a, b) => mdNumberOf(a) - mdNumberOf(b));
-if (urls.length > ADVISORY_MAX_CANDIDATES) {
-  Log.error(`MMM-SPCOutlook ${row.id}: ${urls.length} NetworkLink candidates; keeping the ` +
-            `${ADVISORY_MAX_CANDIDATES} highest-numbered`);
-  return { urls: urls.slice(-ADVISORY_MAX_CANDIDATES), failed: true };
-}
-```
-
-### WR-08: the XSS-escaping guarantee (`escapeHtml`) is asserted by no scenario, and the DOM stub makes it unassertable
-
-**File:** `scripts/probe-lib/module-stubs.js:253`, `scripts/probe-lib/module-stubs.js:266-273`; subject `MMM-SPCOutlook.js:156-164`, `MMM-SPCOutlook.js:308-320`
-
-**Issue:** `MMM-SPCOutlook.js:156-161` states the threat model explicitly — advisory labels
-and hazard types are "unbounded remote KML text" reaching `innerHTML` — and `escapeHtml` is
-the sole control. No scenario in the 3,123-line suite feeds a label containing `<`, `>`,
-`&`, `"` or `'` through `renderDom`. Deleting `escapeHtml`'s body (`(value) => String(value)`)
-leaves the suite at 43/0.
-
-The harness cannot easily fix this by assertion alone: `document.createElement()` returns
-`{ innerHTML: "", textContent: "" }` (`module-stubs.js:253`), a plain object whose
-`innerHTML` is never parsed, so a scenario can only assert on the concatenated string. That
-is still enough to catch the deletion, and worth having.
-
-**Fix:** add a scenario that renders a hostile label and asserts the escape:
-
-```js
-{
-  name: "frontend-escapes-remote-advisory-text",
-  run: async (_helper) => {
-    const frontend = loadFrontendModule();
-    const hostile = '<img src=x onerror="alert(1)">';
-    const payload = noRiskPayloadWithAdvisory({
-      spcMD: [], mpd: [{ label: hostile, hazardType: hostile }]
-    });
-    const out = renderDom(frontend, {
-      config: { ...baseConfig, showMPD: true }, spcrisk: payload
-    });
-    if (out.includes("<img")) {
-      throw new Error(`remote advisory text reached innerHTML unescaped: ${out}`);
-    }
-    if (!out.includes("&lt;img")) {
-      throw new Error(`the advisory did not render at all — the assertion above is vacuous: ${out}`);
-    }
-  }
-}
-```
-
-## Info
-
-### IN-01: `buildArcGisQuery` allowlists by raw string prefix, the exact pattern `normalizeAdvisoryUrl` was written to replace
-
-**File:** `productRegistry.js:28-30`
-
-`node_helper.js:41-54` argues at length that "prefix matching on the raw string is also the
-wrong tool for the SSRF control it exists to be", citing `www.spc.noaa.gov.evil.test` and
-`https://www.spc.noaa.gov@evil.test/`. `buildArcGisQuery` still uses
-`baseUrl.startsWith("https://mapservices.weather.noaa.gov/")`. It is safe today only
-because of the trailing slash and because `baseUrl` is a module constant, but it is the
-same control stated two different ways in one codebase.
-
-**Fix:** parse and compare hostnames, matching `normalizeAdvisoryUrl`:
-
-```js
-let base;
-try { base = new URL(baseUrl); } catch { throw new Error("buildArcGisQuery: baseUrl is not a URL"); }
-if (base.protocol !== "https:" || base.hostname.toLowerCase() !== "mapservices.weather.noaa.gov") {
-  throw new Error("buildArcGisQuery: baseUrl must be an https mapservices.weather.noaa.gov URL");
-}
-```
-
-### IN-02: the `advisories` seed literal duplicates the registry's `kml-advisory` row ids
-
-**File:** `node_helper.js:2053`
-
-`const advisories = { spcMD: [], mpd: [] };` is a hand-written copy of the same row ids the
-loop immediately below iterates. Every other span/id in this function is registry-derived
-(the file's own rule: "no literal day count survives outside the registry"). A Phase 16
-`kml-advisory` row is still handled correctly, but only by accident of the loop's
-assignment.
-
-**Fix:** `const advisories = Object.fromEntries(Object.values(PRODUCT_REGISTRY).filter(r => r.kind === "kml-advisory").map(r => [r.id, []]));`
-
-### IN-03: loose `==`/`!=` against `"NONE"` sits beside the strict comparisons the WR-08 fix introduced
-
-**File:** `MMM-SPCOutlook.js:228-230`, `321`, `323`, `332`, `334`, `342`, `344`
-
-The WR-08 helpers use strict `!==` and document exactly why (`MMM-SPCOutlook.js:186-188`,
-`387`: `!= "NONE"` is true for `undefined`, which renders `color:#undefined`). The day1/2/3
-comparisons a few lines away were left at `==`/`!=` and carry that trap unfixed — a payload
-whose `day2.risk` is missing renders a row with `color:#undefined` and `text: undefined`.
-
-**Fix:** convert these seven sites to `===`/`!==`.
-
-### IN-04: `_advisoryDiscovery[row.discovery]` resolves through the prototype chain, and the "never throws" contract is not enforced
-
-**File:** `node_helper.js:432-438`, contract asserted at `node_helper.js:255-262` and `node_helper.js:622-627`
-
-`typeof this._advisoryDiscovery[row.discovery] === "function"` is true for inherited members
-(`"constructor"`, `"toString"`, `"valueOf"`). With such a value, `strategy.call(this, row)`
-returns something whose `urls` is `undefined`, and `candidates.length` at `451` throws — out
-of `_runKmlAdvisoryRow`, which `getSpcOutlook`'s comment at `622-627` explicitly relies on
-never throwing, and into the shared catch that collapses the whole payload to `{ error }`.
-Unreachable today (row ids are literals) but the guard is one word.
-
-**Fix:** `Object.prototype.hasOwnProperty.call(this._advisoryDiscovery, row.discovery)`, and
-defensively `const { urls = [], failed = true } = await strategy.call(this, row) || {};`
-
-### IN-05: `noRiskPayloadWithAdvisory` hardcodes 5- and 3-day spans
-
-**File:** `scripts/probe-payload-resilience.js:531`, `537`
-
-The WR-05 fix made `assertPayloadIntact` registry-driven for exactly this reason; the
-fixture builder twenty lines away still writes `d <= 5` and `d <= 3`. A registry span change
-leaves this fixture silently mis-shaped.
-
-**Fix:** drive both loops from `PRODUCT_REGISTRY.excessiveRain.days` / `.winterImpact.days`,
-or from a filter over `arcgis-day-layers` rows.
-
-### IN-06: `TURF_DEFAULTS` restores only `pointInPolygon`
-
-**File:** `scripts/probe-lib/module-stubs.js:221`
-
-Adequate today — all 53 mutations in the suite are `turfStub.pointInPolygon =` — but the
-WR-10 argument was precisely that hand-curated lists drift. A scenario that stubs
-`pointToLineDistance` (to exercise proximity) or `polygonToLine` leaks it into every later
-scenario with no assertion anywhere.
-
-**Fix:** capture the whole stub once and restore it wholesale, mirroring `ORIGINAL_SEAMS`:
-`const TURF_DEFAULTS = { ...turfStub };` at module scope, before any scenario runs.
-
-### IN-07: `resetHelper`'s shallow restore cannot undo nested mutation of `helper._advisoryDiscovery`
-
-**File:** `scripts/probe-lib/module-stubs.js:230-235`; affected scenario `scripts/probe-payload-resilience.js:2528-2545`
-
-`Object.assign(helper, originals)` restores a *replaced* `_advisoryDiscovery` object but not
-a *mutated* one. `mpd-empty-number-cell-falls-back-to-filename-not-dropped` replaces the
-whole object and restores it by hand in a `finally` — correct, but the harness cannot
-guarantee it, which is exactly the guarantee WR-10 set out to provide.
-
-**Fix:** deep-restore the known-container members, or freeze `helper._advisoryDiscovery` in
-`loadNodeHelper` so an in-place mutation fails loudly.
-
-### IN-08: the listing byte bound is applied to a JS string length, not to bytes
-
-**File:** `node_helper.js:322-326`
-
-`text.length` counts UTF-16 code units, so a body of multi-byte characters can exceed
-`ADVISORY_MAX_LISTING_BYTES` bytes while passing the check (and, conversely, a body of
-astral-plane characters over-counts). node-fetch's `size` option is the byte bound that
-matters, so exposure is nil; the comment calling this "the fallback for a runtime that
-ignores `size`" overstates what it does.
-
-**Fix:** `Buffer.byteLength(text, "utf8") > ADVISORY_MAX_LISTING_BYTES`, or reword the
-comment.
-
-### IN-09: `"No Severe Weather Risk (unconfirmed)"` can render for a payload that is not degraded
-
-**File:** `MMM-SPCOutlook.js:268`, `MMM-SPCOutlook.js:308-320`, `MMM-SPCOutlook.js:413-415`
-
-The gate counts `enabledAdvisories().length > 0` while the render loop skips entries that
-are `null`/non-object (`311`). A payload carrying `advisories.mpd = [null]` with the toggle
-on and no other risk therefore fails the short-circuit, renders nothing, and falls into the
-`contentMarker` branch — showing "(unconfirmed)" with no `⚠ Stale` badge above it, for a
-payload the backend never flagged.
-
-**Fix:** apply the same entry-shape filter in `enabledAdvisories()` so the gate and the
-render count the same set: `.filter((e) => e && typeof e === "object")`.
-
-### IN-10: Apache listing timestamps are parsed as UTC
-
-**File:** `node_helper.js:358`
-
-`Date.parse(timestamp.replace(" ", "T") + "Z")` treats the listing's Last-Modified column as
-UTC. Apache renders it in the server's local timezone by default. Harmless inside a 48-hour
-window and the branch fails open, but the assumption is undocumented and would matter if the
-window were ever tightened.
-
-**Fix:** note the assumption in the comment, or widen `FRESH_WINDOW_MS` by a timezone margin.
-
-### IN-11: `MPD_FILENAME_PATTERN`'s `\d+` is unbounded, and `numberOf` sorts unparseable names to the top of the kept set
-
-**File:** `productRegistry.js:81`; consumer `node_helper.js:399-403`
-
-A listing entry named `MPD_<300 digits>_final.kmz` passes the pattern; `Number(m[1])` then
-yields a value larger than any legitimate MPD number, so a hostile listing can guarantee its
-own entries survive the truncation. The listing is fully attacker-controlled in that threat
-model anyway, so this changes nothing materially — but the sort key deserves a bound.
-
-**Fix:** `/^MPD_(\d{1,6})_final\.kmz$/`.
-
-## Conventions
-
-### CV-01: review-finding IDs are reused across phases with different meanings inside source comments
-
-**Deviation:** `node_helper.js` and `MMM-SPCOutlook.js` carry ~60 inline citations of the
-form `WR-03:`, `CR-01:`, `WR-08:` etc. These IDs are per-phase-review and are recycled: the
-`WR-08` cited at `node_helper.js:864` (unusable geometry, Phase 14) is a different finding
-from the `WR-08` cited at `MMM-SPCOutlook.js:174` (day-span derivation, Phase 15), and
-`CR-01` names three different findings in three places.
-**Derived convention:** the file's own dominant practice is to cite a durable identifier
-alongside the review ID (`D-05`, `MPD-04`, `WSSI-02`, `PERF-02`, `T-15-24`) — those are
-phase-scoped and unique.
-**Suggested fix (recommend, non-blocking):** qualify review IDs with their phase
-(`15/WR-08:`) or drop the review ID in favour of the durable decision ID that already
-accompanies most of them.
-
-### CV-02: `helper._products = { ... }` in the probe is redundant setup in ~28 of 30 scenarios
-
-**Deviation:** nearly every scenario assigns `helper._products` and then passes the same
-toggles again as `getSpcOutlook`'s fourth argument, which takes precedence
-(`node_helper.js:1447`). Only `ero-wellformed-slgt`, `ero-toggle-off` and
-`spc-wellformed-baseline` actually depend on the field.
-**Derived convention:** the suite's dominant style is to state a scenario's inputs exactly
-once, at the seam that consumes them.
-**Suggested fix (recommend, non-blocking):** drop the `helper._products` assignment wherever
-the explicit `products` argument is also passed, and keep it only in the three scenarios that
-deliberately exercise the helper-global fallback — with a comment saying so.
-
-### CV-03: `_isFeatureCollection` / body-size discipline is applied to the advisory path but not to the ~30 GeoJSON fetches
-
-**Deviation:** `fetchBinBuffer` and the MPD listing carry a `size` cap, a `Content-Length`
-check and a post-read check, documented as "a security control, not tidiness"
-(`node_helper.js:81-87`, `675-693`). `fetchGeoJsonCached` calls
-`this._fetch(url, withTimeout({ headers }))` with no `size` at all (`node_helper.js:1209`)
-and then `await res.text()` on an unbounded body — ~30 times per poll, on a Raspberry Pi.
-**Derived convention:** every outbound body read in this file is bounded.
-**Suggested fix (recommend, non-blocking):** pass `size: GEOJSON_MAX_BODY_BYTES` (the live
-SPC categorical layer is ~100 KB; 8 MB is ample) so the rule holds uniformly and a
-hijacked/misbehaving upstream cannot OOM the process through the one unbounded path.
+This pass re-derived every finding from current source and, per the brief, spent most of its
+budget on the question "do iteration 2's fixes hold, and did they introduce regressions?"
+
+**Method.** Beyond reading, I built an isolated copy of the source tree (real `node_modules`
+symlinked) and ran 25 targeted mutations — deleting or reverting each iteration-2 fix and
+several iteration-1 fixes one at a time — to see whether any scenario turns red. Baseline
+reproduces at 48 passed / 0 failed / 0 skipped in 1.9 s. I also read the installed
+`adm-zip@0.5.16` source directly rather than trusting the source comments about it.
+
+**Verdict on the iteration-2 fixes.** They hold. Every one of them is genuinely pinned:
+
+| Fix | Mutation | Result |
+|---|---|---|
+| CR-01 window | `STALE_WINDOW_INTERVALS` 2 → 1 | RED |
+| CR-01 refresh | delete 304 `entry.timestamp = Date.now()` | RED |
+| CR-02 resync | delete frontend epoch block | RED |
+| WR-01 KMZ bound | delete `declared > KMZ_MAX_KML_BYTES` | RED |
+| WR-02 zero-size | delete `declared <= 0` refusal | RED |
+| WR-03 day span | hardcode `days: 6` | RED (5 scenarios) |
+| WR-04 addressing | delete frontend address check | RED |
+| WR-04 addressing | delete `_noteRequestLocation` call | RED |
+| WR-05 leak check | revert `ORIGINAL_SEAMS` to curated list | RED |
+| WR-07 MD ordering | delete `urls.sort(mdNumberOf)` | RED |
+| WR-08 XSS | `escapeHtml` → `String(value)` | RED |
+
+The adm-zip reasoning is also correct as written: `methods/inflater.js:4` gates
+`maxOutputLength` on `expectedLength > 0`, and `zipEntry.js:103` allocates
+`Buffer.alloc(_centralHeader.size)`, so the zero-declared hole is real, the
+`declared <= 0` refusal genuinely closes it, and the post-read length check genuinely is
+unreachable. Deleting the refusal produces `ADM-ZIP: CRC32 checksum failed` — i.e. the bomb
+detonates first — and the scenario catches exactly that.
+
+**What this pass found instead.** Two BLOCKERs, neither of them a regression from iteration
+2 — both are pre-existing defects that iteration 2's work walked past:
+
+1. A `kml-advisory` discovery run that fetches its index successfully but produces **zero
+   usable candidates** reports `failed: false`. Empirically verified for all three shapes
+   (every href refused, index format changed, listing format changed): the result is
+   `{ entries: [], anyStale: false }`, which is byte-identical to "no advisories active".
+   This is the *exact* silence that let the previously-shipped `startsWith("https://…")`
+   allowlist bug — which node_helper.js:41-47 documents as "a live, currently-shipping
+   availability defect" — run undetected. Iteration 2's WR-07 fixed the matcher inside this
+   function and left the silence in place.
+2. README.md, `_noteRequestLocation`'s JSDoc and the helper's own operator-facing warning all
+   assert "only the first location is polled" and "the second instance … stays on Loading".
+   Driven directly, the helper polls **both** locations alternately, both instances render,
+   and `_geoJsonCache.clear()` fires on **every** poll — which silently disables the stale
+   fallback CR-01 was just written to make reachable.
+
+**Probe-suite assessment.** The suite is genuinely strong — vacuity guards, positive controls
+and negative controls are used consistently and the mutation results above show they bite.
+But the mutation sweep found five live guards that can be deleted with the suite fully green,
+including the whole of iteration-1's WR-05 `updateInterval` validation at **both** ends, and
+two of the three timestamp-refresh sites CR-01 added. Those are recorded below because "a fix
+that passes only because its own scenario is too weak" is precisely the pattern this phase has
+already hit twice.
 
 ---
 
-_Reviewed: 2026-08-24T21:51:34Z_
+## Critical Issues
+
+### CR-01: A discovery run that yields zero usable candidates reports `failed: false` — every advisory vanishes with no ⚠ signal
+
+**File:** `node_helper.js:320-365` (`spc-active-index`), `node_helper.js:371-486` (`wpc-mpd-listing`), consumed at `node_helper.js:516-517`
+
+**Issue:** Neither discovery strategy treats "the index was fetched and parsed, but nothing
+survived" as a degrade. `failed` is set only when the fetch/parse *throws* or when the
+candidate list is *truncated*. A total refusal, a changed index format, or a changed listing
+format all fall through to `return { urls: [], failed: false }`, and `_runKmlAdvisoryRow` then
+returns `{ entries: [], anyStale: false }` — indistinguishable from the legitimate "no
+advisories active" state that holds most of the year.
+
+Verified by driving the real code paths (not asserted from reading):
+
+```
+A: every href refused (host changed) -> {"entries":[],"anyStale":false}
+B: index format changed (no NetworkLinks) -> {"entries":[],"anyStale":false}
+C: WPC listing format changed (no anchors matched) -> {"entries":[],"anyStale":false}
+```
+
+Because `anyStale` stays false, `getSpcOutlook` emits no `_stale`, the frontend's no-risk
+short-circuit is *not* disqualified, and a location sitting inside an active tornado-precursor
+MD or a flash-flood MPD renders the literal string **"No Severe Weather Risk"**. That is the
+false-negative class the whole product exists to prevent, and it is reachable today without any
+code change — SPC or WPC changing an href host, an anchor shape, or a NetworkLink wrapper is
+enough.
+
+This is not hypothetical. `node_helper.js:41-47` records that the previous
+`startsWith("https://www.spc.noaa.gov/")` allowlist refused *100% of live hrefs* and shipped
+that way: "a live, currently-shipping availability defect … not merely a bug in theory." It
+shipped undetected precisely because of this silence. Iteration 2's WR-07 changed the sort
+order in this same function and left the silence unaddressed.
+
+Note the two cases must be distinguished carefully: for `spc-active-index`, an index that
+legitimately contains **zero** NetworkLinks *is* the normal quiet state and must stay silent.
+The unambiguous degrade is "candidates were found and all of them were discarded".
+
+**Fix:**
+
+```js
+// spc-active-index, after the normalize loop (node_helper.js ~line 335)
+if (hrefs.length > 0 && urls.length === 0) {
+  Log.error(`MMM-SPCOutlook ${row.id}: all ${hrefs.length} NetworkLink hrefs were refused by ` +
+            `the allowlist — treating as a degrade, not as "no active discussions"`);
+  return { urls: [], failed: true };
+}
+
+// wpc-mpd-listing, before the truncation block (node_helper.js ~line 458)
+// The live directory holds 1000+ entries year-round, so a 200 that yields nothing is a
+// format break, never a quiet day.
+let failed = false;
+if (urls.length === 0) {
+  Log.error(`MMM-SPCOutlook ${row.id}: a 200 listing produced zero candidates — the anchor ` +
+            `format is no longer understood`);
+  failed = true;
+}
+```
+
+Add a scenario per strategy asserting `anyStale === true` for the total-refusal case, or this
+regresses the same way twice.
+
+---
+
+### CR-02: README, JSDoc and the operator warning all describe multi-instance behaviour the code does not implement — and the real behaviour disables the stale fallback
+
+**File:** `README.md:6-16`, `node_helper.js:659-690`, `node_helper.js:1622-1635`, `MMM-SPCOutlook.js:96-115`
+
+**Issue:** All three texts state the same two claims:
+
+- README.md:10-12 — "only the first location is polled: the second instance discards the
+  payloads it receives … and stays on 'Loading SPC Outlook...'"
+- node_helper.js:687-689 (the log line an operator actually sees) — "only the first location is
+  polled; the other instance will not update"
+- node_helper.js:670-674 (JSDoc) — "the in-flight guard drops the second instance's request
+  outright, so that instance receives nothing rather than something wrong"
+
+Nothing in the code enforces any of that. `_noteRequestLocation` **records** the first location
+and warns; it never **rejects** a request for a different one. `_inFlight` is a concurrency
+guard, not a location guard — it drops the second request only when it happens to arrive during
+an in-flight chain. Driving the real handler with sequential requests:
+
+```
+after A:  cache entries = 19  cachedLat = 35.22
+after B:  cache entries = 19  cachedLat = 42.36
+after A2: cache entries = 19  cachedLat = 35.22
+emissions addressed to: [ '35.22,-97.44', '42.36,-71.06', '35.22,-97.44' ]
+"location changed — cache results invalidated" log lines: 3
+boston instance rendered a payload? true
+```
+
+Both locations are polled, the Boston instance **does** render, and — the part that matters —
+`getSpcOutlook`'s `locationChanged` branch calls `this._geoJsonCache.clear()` on **every** poll.
+That has three consequences the docs do not mention:
+
+1. `fetchGeoJsonCached` finds no `entry` on any poll, so **the stale fallback never fires**.
+   Every transient upstream blip becomes a hard failure resolving to `"NONE"` — the precise
+   outcome iteration 2's CR-01 was written to make unreachable at the shipping cadence.
+2. No `If-None-Match` is ever sent, so all ~19-25 layers are re-fetched cold every poll for
+   every location: double the upstream volume against `www.spc.noaa.gov` and
+   `mapservices.weather.noaa.gov`, with the 304 path — the thing CR-01's timestamp refresh
+   exists for — never taken.
+3. The two instances' `_updateInterval` and `_products` overwrite each other on every poll,
+   which is the very hazard WR-13's per-request snapshot was introduced to contain (the
+   snapshot protects an in-flight chain, not `_isWithinStaleWindow`, which reads the global).
+
+The behaviour is timing-dependent, which makes it worse than a plain bug: with both instances
+on the same `updateInterval` and started in the same tick the README's description usually
+holds, and with different intervals or a fast first chain it does not.
+
+**Fix (cheapest, makes the docs true):**
+
+```js
+// node_helper.js, socketNotificationReceived, right after _noteRequestLocation(payload)
+if (this._requestLocation !== null && this._requestLocation !== payload.lat + "," + payload.lon) {
+  // The documented contract: one node_helper per module type means one polled location.
+  // Serving the second one alternately wipes the shared cache on every poll and takes the
+  // stale fallback offline for BOTH instances.
+  return;
+}
+```
+
+Otherwise correct all three texts to describe alternating service and its cache cost — but
+that is the worse option, because the alternating behaviour is not one anybody wants.
+
+---
+
+## Warnings
+
+### WR-01: Two of CR-01's three timestamp-refresh sites are pinned by nothing
+
+**File:** `node_helper.js:1459`, `node_helper.js:1474`
+
+**Issue:** `an-hour-old-reading-still-survives-a-hiccup-but-a-day-old-one-does-not` (step 2,
+probe line 3230) drives only the **304** branch. Deleting the ETag-match refresh (line 1459)
+and the hash-match refresh (line 1474) leaves the suite at **48 passed / 0 failed** — verified.
+Those are the two paths that carry the confirmation when a server ignores `If-None-Match` and
+answers 200 with an unchanged ETag, or serves no ETag at all (hash mode). Both are ordinary
+production shapes for SPC's `.lyr.geojson` layers.
+
+**Fix:** extend the same scenario with two more legs — a 200 whose ETag equals the cached one,
+and a no-ETag 200 whose body bytes are identical — each asserting
+`Date.now() - entry.timestamp < 60_000` after the poll, exactly as the 304 leg does.
+
+---
+
+### WR-02: WR-05's `updateInterval` validation can be deleted at BOTH ends with the suite green
+
+**File:** `node_helper.js:720-730`, `MMM-SPCOutlook.js:24-35`
+
+**Issue:** Two mutations, both leaving 48/48 green:
+
+- reverting the helper's validation to the pre-fix `if (updateInterval !== undefined) this._updateInterval = updateInterval;`
+- reducing `resolveUpdateInterval` to `return this.config.updateInterval;`
+
+Every scenario passes `updateInterval: 60`. No scenario passes `0`, a negative, a string, or
+omits the field. This is a guard whose own comment (node_helper.js:714-719) states the stakes:
+a non-numeric value makes `_isWithinStaleWindow` compute `NaN`, `x < NaN` is always false, and
+**every stale fallback in the file is silently disabled** — which is CR-01's entire subject
+matter. On the frontend side the same value reaches `setInterval`, which clamps `NaN`/`0` to
+~1 ms: an unbounded poll loop against NOAA from a Raspberry Pi.
+
+The code is correct today. The finding is that nothing would notice if it stopped being.
+
+**Fix:** one scenario driving `socketNotificationReceived` with `updateInterval: "hourly"`,
+`0` and `-5`, asserting `helper._updateInterval === 60` and that the fallback warning was
+logged; one frontend scenario asserting `resolveUpdateInterval.call({ config: { updateInterval: 0 } }) === 60`.
+
+---
+
+### WR-03: The stale window has no absolute ceiling
+
+**File:** `node_helper.js:126`, `node_helper.js:1305-1308`
+
+**Issue:** `_isWithinStaleWindow` is purely relative:
+`(Date.now() - timestamp) < intervalMinutes * 60_000 * STALE_WINDOW_INTERVALS`. Nothing bounds
+`intervalMinutes` above. A user configuring `updateInterval: 1440` ("check once a day") — which
+`resolveUpdateInterval` accepts, since it only rejects `< 1` — gets a **48-hour** stale window
+on SPC **Day 1** categorical outlooks, which SPC reissues five times a day. `updateInterval: 360`
+gives 12 hours. The badge does render the age via `moment().fromNow()`, which is the mitigation,
+but the design's own justification ("Serving an old reading is safe here precisely because it
+is never presented as current") is doing a lot of work for a 2-day-old tornado outlook.
+
+**Fix:**
+
+```js
+const STALE_WINDOW_INTERVALS = 2;
+// Absolute ceiling. SPC reissues the Day 1 categorical outlook five times a day, so a
+// reading older than this is not a degraded answer, it is a wrong one — no badge makes it
+// safe to render a tier from two days ago beside today's date.
+const STALE_WINDOW_MAX_MS = 3 * 60 * 60 * 1000;
+
+_isWithinStaleWindow(timestamp, intervalMinutes) {
+  const intervalMs = (intervalMinutes ?? 60) * 60 * 1000;
+  const window = Math.min(intervalMs * STALE_WINDOW_INTERVALS, STALE_WINDOW_MAX_MS);
+  return (Date.now() - timestamp) < window;
+}
+```
+
+---
+
+### WR-04: `_staleAsOf` ages only the cached contributors, so a mixed payload reports the age of its freshest failure
+
+**File:** `node_helper.js:1329-1335`, `node_helper.js:2227`, `MMM-SPCOutlook.js:317-330`
+
+**Issue:** `_noteStaleEntry` is called only from the three stale-fallback returns. A layer that
+**hard-fails** (no cache entry, `failed: true`) contributes to `anyStale` but contributes
+nothing to `_oldestStaleAt`. So a payload in which the day-1 categorical layer served a
+5-minute-old cached reading while the ERO layers hard-failed to `"NONE"` renders
+`⚠ Stale — 5 minutes ago`. The suffix asserts a data age for layers that have no data at all,
+and it is the only quantitative signal on screen. The comment at node_helper.js:2225-2226 calls
+this "the oldest cached reading that contributed to this payload", which is accurate about the
+implementation and misleading about what the user reads.
+
+**Fix:** suppress the age suffix whenever any contributor hard-failed, or carry both facts:
+
+```js
+// node_helper.js — alongside _oldestStaleAt
+if (fetchResult.failed && fetchResult.cachedResult === null) this._hadHardFailure = true;
+...
+...(anyStale ? { _stale: true, _staleAsOf: this._hadHardFailure ? null : this._oldestStaleAt } : {})
+```
+
+The frontend already omits the suffix on `null`, so no frontend change is needed.
+
+---
+
+### WR-05: `socketNotificationReceived` destructures `payload` outside any catch — the exact "stuck on Loading forever" failure CR-04 claims to have closed
+
+**File:** `node_helper.js:713`
+
+**Issue:** `_noteRequestLocation` guards `if (!payload) return;` (line 677). Two lines later,
+`const { lat, lon, extended, updateInterval, proximityWeighting, products } = payload;` runs
+with no such guard, inside a `try { … } finally { this._inFlight = false; }` that has **no
+catch**. A null or undefined payload therefore throws an unhandled rejection out of a handler
+MagicMirror does not await. Node 16+ terminates the process on unhandled rejections by default;
+if it does not, `sendSocketNotification` is never reached and the frontend sits on "Loading SPC
+Outlook..." forever — verbatim the failure mode node_helper.js:746-751 says CR-04 fixed. The
+containment was applied to `getSpcOutlook` but not to the seven lines above it.
+
+**Fix:**
+
+```js
+if (!payload || typeof payload !== "object") {
+  Log.error("MMM-SPCOutlook: GET_SPC_DATA with no payload, ignoring");
+  return;
+}
+```
+placed with `_noteRequestLocation`'s guard, before `this._inFlight = true`.
+
+---
+
+### WR-06: `helper.normalizeAdvisoryUrl` is exported "so offline probes can exercise the allowlist directly" — no probe does, and the guards it holds are unpinned
+
+**File:** `node_helper.js:129-133`, `node_helper.js:67-73`
+
+**Issue:** The member is placed on the helper object with an explicit justification: "Exposed on
+the helper object (rather than kept purely module-private) so offline probes can exercise the
+allowlist directly against the module-scope implementation above." Grepping the entire probe
+suite for `normalizeAdvisoryUrl` returns exactly one hit — a comment. No scenario calls it. It
+is a dead export whose reason for existing is stated and false.
+
+Consistent with that, mutation confirms the guards inside it are only partly covered: deleting
+both the userinfo check and the port check (lines 69-70) leaves the suite at 48/48. Those are
+defence-in-depth against the very attack the surrounding comment names
+(`https://www.spc.noaa.gov@evil.test/`), and the exact-hostname check happens to catch that
+particular payload — but nothing in the suite records which layer is doing the work, which is
+the same "asserting only that *some* refusal happened" weakness `kmz-decompression-bomb-is-refused`
+was rewritten to eliminate.
+
+**Fix:** add a table-driven scenario calling `helper.normalizeAdvisoryUrl(input, "www.spc.noaa.gov")`
+over `[http→https upgrade, exact host, lookalike host, userinfo, explicit port, non-http scheme,
+relative, empty, non-string]` and asserting the exact `null`/normalized result for each. That
+also makes the export's own justification true.
+
+---
+
+### WR-07: Three KMZ / listing security controls can each be deleted with the suite green
+
+**File:** `node_helper.js:877-879` (32-entry cap), `node_helper.js:883-886` (zip-slip entry name), `node_helper.js:424` (MPD filename re-validation)
+
+**Issue:** Individually mutated, each leaves 48 passed / 0 failed:
+
+- `if (entries.length > 32) throw …` — deleted, green.
+- `if (name.includes("..") || name.startsWith("/") || /^[A-Za-z]:/.test(name)) throw …` — deleted, green.
+- `if (!MPD_FILENAME_PATTERN.test(filename)) continue;` — deleted, green.
+
+All three are documented as deliberate hardening against a remote, attacker-influenceable
+archive/listing, and `extractSoleKmlEntry`'s own doc comment (node_helper.js:864-872) advertises
+the first two as guarantees. They currently hold only because nobody has edited them.
+
+**Fix:** three assertions inside the existing `kmz-decompression-bomb-is-refused` scenario
+(the fixture builder `makeKmzBuffer` already gives you everything needed):
+
+```js
+const many = makeKmzBuffer(Object.fromEntries(
+  Array.from({ length: 33 }, (_, i) => [`f${i}.txt`, "x"]).concat([["doc.kml", "<kml/>"]])));
+mustThrow(() => helper.extractSoleKmlEntry(many), /too many entries/);
+const slip = makeKmzBuffer({ "../../etc/evil.kml": "<kml/>" });
+mustThrow(() => helper.extractSoleKmlEntry(slip), /unsafe entry name/);
+```
+plus one `wpc-mpd-listing` case whose anchor text passes `ANCHOR_RE` but not
+`MPD_FILENAME_PATTERN`.
+
+---
+
+### WR-08: No lockfile, no `engines`, and the `npm ci` both the harness and the runner prescribe cannot run
+
+**File:** `package.json:15-29`, `scripts/probe-lib/module-stubs.js:292`, `scripts/probe-payload-resilience.js:3689`
+
+**Issue:** Verified against this repo:
+
+- No `package-lock.json` or `npm-shrinkwrap.json` is tracked (`git ls-files` shows none, and
+  `.gitignore` lists only GSD pause artifacts). `pnpm-lock.yaml` exists in the working tree but
+  is untracked **and not ignored** — a `git add -A` commits it, and would also commit
+  `node_modules/`, which `.gitignore` likewise does not list.
+- `npm ci` fails here with `EUSAGE: The npm ci command can only install with an existing
+  package-lock.json`. Both the harness's error text ("Run npm ci.") and the runner's
+  `REMEDIATE:` line instruct a user to run a command that cannot succeed — precisely in the
+  situation where the suite has just SKIPPED scenarios and the operator most needs the
+  instruction to work.
+- `npm audit` is likewise unusable (`ENOLOCK`).
+- No `engines` field.
+
+This also undercuts the adm-zip pin's stated purpose. `"adm-zip": "0.5.16"` is exact, but
+`@turf/turf`, `@tmcw/togeojson`, `@xmldom/xmldom`, `node-fetch` and `xpath` all float on `^`,
+and with no lockfile every transitive dependency floats too. Meanwhile adm-zip's current
+`latest` is **0.6.0**, so the exact pin is already a security-patch blind spot on the single
+dependency in the tree that parses attacker-supplied archives — and there is no audit path to
+notice.
+
+**Assessment of the exact pin as a tradeoff:** the pin itself is the right call, because
+`kmz-decompression-bomb-is-refused` asserts on `adm-zip`'s specific `Cannot create a Buffer
+larger than` message, and a silent minor bump that changed the clamp would promote a documented
+dead line to load-bearing. But a pin without a lockfile, without `engines`, and without a
+working `npm audit` is a pin that only *looks* like supply-chain discipline.
+
+**Fix:** commit `package-lock.json`; add `node_modules/` and the unused `pnpm-lock.yaml` to
+`.gitignore` (or commit one lockfile and delete the other); add `"engines": { "node": ">=20" }`;
+add `"scripts": { "probe": "node scripts/probe-payload-resilience.js" }`; and record the
+adm-zip pin's review cadence next to the pin rather than only in node_helper.js:924-930.
+
+---
+
+### WR-09: The adm-zip inflation clamp is also gated on `process.versions.node >= 15`, which nothing states and nothing enforces
+
+**File:** `node_helper.js:887-912`, `node_helper.js:914-930`; `node_modules/adm-zip/methods/inflater.js:1-5`
+
+**Issue:** The comments correctly identify `expectedLength > 0` as the switch that disables the
+clamp. They omit the other half of the same expression:
+
+```js
+const version = +(process.versions ? process.versions.node : "").split(".")[0] || 0;
+const option = version >= 15 && expectedLength > 0 ? { maxOutputLength: expectedLength } : {};
+```
+
+On Node < 15 the clamp is **never** applied regardless of the declared size, so the entire
+"declaring a small size buys a refusal from zlib, not an unbounded inflation" argument
+(node_helper.js:890-892) does not hold, and `extractSoleKmlEntry`'s post-read length check —
+documented as unreachable — becomes reachable only *after* the bomb has been fully materialised,
+which is the one moment it is useless on a Pi. There is no `engines` field (WR-08) and no
+runtime assertion, so nothing prevents that deployment.
+
+**Fix:** add `"engines": { "node": ">=20" }`, amend the comment at node_helper.js:890-892 to
+state both conditions, and consider a one-line load-time assertion in `extractSoleKmlEntry`'s
+module scope so an unsupported runtime is loud rather than silently unprotected.
+
+---
+
+### WR-10: The entire proximity-weighting feature is exercised by zero scenarios, and the turf stub makes it untestable as written
+
+**File:** `node_helper.js:1225-1284`, `node_helper.js:1544-1552`, `node_helper.js:1741-1749` (and six sibling call sites); `MMM-SPCOutlook.js:157-198`, `MMM-SPCOutlook.js:364-392`; `scripts/probe-lib/module-stubs.js:84-88`
+
+**Issue:** `grep -c "proximityWeighting: true"` over the probe returns **0**; so does
+`computeProximity|proximityBadge|hasRenderableProximity|nextTier`. `computeProximity`,
+`deriveLinesIfMissing`, every `turf.polygonToLine` call site, the `polys`/`lines` cache-entry
+shape, and roughly 40 lines of frontend badge rendering are executed by no scenario. This is a
+user-facing feature with its own dedicated debug artifact in `.planning/debug/` and a
+regression history (`day2-none-still-displays`, `turf-multilinestring-input`).
+
+It is also untestable in the current harness: `turfStub.pointToLineDistance` returns a constant
+`999`, well outside the 40 km cutoff, so `computeProximity` returns `null` for every input by
+construction. The stub comment states this as a feature ("proximity math never perturbs a
+scenario's expected values") — which is right for the other 48 scenarios and is exactly what
+blocks a 49th.
+
+**Fix:** make the stub's distance overridable the way `pointInPolygon` already is
+(`pointToLineDistance: (...args) => turfStub.lineDistance(...args)` with a default of `999`),
+add `pointToLineDistance` to `TURF_DEFAULTS`, then add one backend scenario
+(`proximityWeighting: true`, a higher-tier polygon at ~20 km → `{ value, nextTier }`) and one
+frontend scenario asserting the badge text and the `PROX_MIN_WEIGHT` noise floor.
+
+---
+
+### WR-11: `resetHelper`'s `Object.assign` cannot remove properties a scenario ADDS, contradicting the comment that says it needs no maintenance
+
+**File:** `scripts/probe-lib/module-stubs.js:196-235`
+
+**Issue:** The comment at lines 199-202 argues the curated seam list was wrong because
+hand-maintained lists drift, and concludes: "A shallow copy of the whole surface needs no
+maintenance and cannot drift." `Object.assign(helper, originals)` restores every seam a
+scenario **overwrote**, but silently keeps every property a scenario **added** — `ORIGINAL_SEAMS`
+has no key for it, so there is nothing to assign back.
+
+`sendSocketNotification` is exactly such a property: `nodeHelperStub.create` returns the raw
+object literal, so the real helper has no `sendSocketNotification` member at all, and the two
+scenarios that drive `socketNotificationReceived` add one and then hand-`delete` it in a
+`finally` (probe lines 3392, 3543). That is the hand-maintained cleanup the comment says is
+unnecessary, and `harness-leak-check-resethelper-restores-every-seam` cannot catch an omission
+because it only dirties two members that already exist.
+
+**Fix:**
+
+```js
+function resetHelper(helper) {
+  const originals = ORIGINAL_SEAMS.get(helper);
+  if (originals) {
+    for (const key of Object.keys(helper)) {
+      if (!Object.prototype.hasOwnProperty.call(originals, key)) delete helper[key];
+    }
+    Object.assign(helper, originals);
+  }
+  Object.assign(turfStub, TURF_DEFAULTS);
+  helper.start();
+}
+```
+
+(`start()` runs after, so its own fields are re-established.) Then extend the leak-check
+scenario to add a brand-new member and assert it is gone, and drop the two manual `delete`s.
+
+---
+
+### WR-12: `new ZIP(buffer)` materialises every central-directory entry before the 32-entry cap is consulted
+
+**File:** `node_helper.js:874-879`
+
+**Issue:** `extractSoleKmlEntry` refuses an archive with more than 32 entries — but only after
+`new ZIP(buffer)` and `getEntries()` have already parsed the whole central directory.
+`adm-zip/zipFile.js` bounds `diskEntries` only by `inBuffer.length / CENHDR` (46 bytes), so an
+8 MB body (the `ADVISORY_MAX_BODY_BYTES` ceiling) can legitimately declare ~180 000 entries and
+adm-zip will allocate a `ZipEntry` object plus name/extra/comment slices for each before
+`extractSoleKmlEntry` gets a word in. Multiplied by `ADVISORY_MAX_CANDIDATES` = 60 fetches per
+poll, on a Raspberry Pi, from URLs a remote document chose — the same threat model the
+surrounding hardening was written against.
+
+**Fix:** read the declared entry count before constructing the reader, or lower the archive
+ceiling for the advisory path:
+
+```js
+extractSoleKmlEntry(buffer){
+  // The entry cap has to bind BEFORE the central directory is parsed: adm-zip bounds the
+  // entry count only by buffer length / 46, so an 8 MB body can declare ~180k entries.
+  if (buffer.length > KMZ_MAX_ARCHIVE_BYTES) {  // e.g. 1 MB; live samples are ~3 KB
+    throw new Error(`KMZ downloaded is ${buffer.length} bytes, beyond the archive bound`);
+  }
+  const ZIPper = new ZIP(buffer);
+  ...
+```
+
+---
+
+### WR-13: Remote advisory label and hazard-type text reach the DOM with no length bound
+
+**File:** `node_helper.js:1102-1110`, `MMM-SPCOutlook.js:350-363`
+
+**Issue:** `extractMpdField` bounds only the *input* CDATA at 512 KB; the captured
+`m[1].trim()` is unbounded within it, and `MPD_FILENAME_PATTERN`'s `(\d+)` fallback number is
+likewise unbounded. `PRODUCT_REGISTRY.mpd.toEntry` concatenates it into `label`, and the
+frontend appends it to `wrapper.innerHTML` with no cap (D-07 explicitly forbids capping the
+*count* of advisories, which is a different question from capping the *length* of one). The text
+is correctly escaped, so this is not XSS — but a malformed or hostile MPD renders a
+half-megabyte string into the mirror and takes the display with it, on the module the user
+relies on for severe-weather awareness.
+
+**Fix:** truncate at the parse boundary, where the provenance is visible:
+
+```js
+const MPD_FIELD_MAX_CHARS = 120;   // live MPDNumber is 4 chars, MPDType ~40
+return m ? m[1].trim().slice(0, MPD_FIELD_MAX_CHARS) : null;
+```
+
+---
+
+## Info
+
+### IN-01: `buildArcGisQuery` is exported but has no consumer outside its own module
+
+**File:** `productRegistry.js:243`
+
+**Issue:** `module.exports = { buildArcGisQuery, daySpanOf, MPD_FILENAME_PATTERN, PRODUCT_REGISTRY }`.
+The probe imports only `PRODUCT_REGISTRY` and `daySpanOf`; node_helper imports only
+`PRODUCT_REGISTRY` and `MPD_FILENAME_PATTERN`. `buildArcGisQuery` is reached only through each
+row's own `buildUrl` closure.
+
+**Fix:** either drop it from the export list, or add the direct scenario its argument validation
+(`layerId` non-negative integer, `baseUrl` host allowlist) currently lacks — it is a URL-construction
+allowlist and deserves the same treatment WR-06 asks for on `normalizeAdvisoryUrl`.
+
+---
+
+### IN-02: Stale comment claims `extractSoleKmlEntry` does not exist yet
+
+**File:** `scripts/probe-payload-resilience.js:1827-1829`
+
+**Issue:** "extractSoleKmlEntry does not exist in node_helper.js yet (it lands in a later plan)
+— this scenario proves the KMZ layer itself, opening the archive with the same real adm-zip".
+It has existed since plan 15-05 (node_helper.js:874). A future reader reasonably concludes the
+scenario's `new RealZip(fetched)` detour is still necessary.
+
+**Fix:** update the comment to say why the scenario opens the archive directly *now* (it pins
+`@tmcw/togeojson`'s description shape independent of `extractSoleKmlEntry`'s entry selection,
+which `kmz-decompression-bomb-is-refused` covers separately).
+
+---
+
+### IN-03: The generic `ADVISORY_MAX_CANDIDATES` cap in `_runKmlAdvisoryRow` is now unreachable
+
+**File:** `node_helper.js:524-538`
+
+**Issue:** Both shipped strategies truncate to exactly `ADVISORY_MAX_CANDIDATES` themselves, so
+`candidates.length > ADVISORY_MAX_CANDIDATES` is never true and the `anyStale = true` inside it
+never runs. The comment says so and keeps it as "the backstop for a future strategy", which is a
+defensible call — but it is currently dead code that no mutation can turn red, sitting next to a
+`Log.error` that can never fire.
+
+**Fix:** no change required; if kept, consider a comment marking it explicitly unreachable in the
+same style as node_helper.js:914-930's post-read check, which does this well.
+
+---
+
+### IN-04: `npm start` runs a script that cannot work, and the probe suite has no npm script
+
+**File:** `package.json:6-8`
+
+**Issue:** `"start": "node node_helper.js"` executes `require("node_helper")`, a module supplied
+by the MagicMirror host and absent from `dependencies` — running it outside MagicMirror throws
+`MODULE_NOT_FOUND` immediately. Meanwhile the 3701-line probe suite that every plan in this
+phase treats as the verification gate has no entry point in `package.json` at all; it is invoked
+only by path.
+
+**Fix:** replace with `"probe": "node scripts/probe-payload-resilience.js"` and drop `start`.
+
+---
+
+### IN-05: ESLint is a declared devDependency with no configuration file
+
+**File:** `package.json:24-29`
+
+**Issue:** `eslint`, `@eslint/js`, `globals` and `typescript-eslint` are all declared, but there
+is no `eslint.config.js`/`.mjs` and no `.eslintrc*` anywhere in the tree, so `npx eslint .`
+cannot run. `.planning/codebase/CONVENTIONS.md` recorded this same gap on 2026-03-04 ("ESLint is
+included but not actively configured") and it is unchanged five phases later, while the file
+count under review has grown past 6 000 lines.
+
+**Fix:** add a minimal flat config (`@eslint/js` recommended + `globals.node` for the helper and
+`globals.browser` for the frontend) and an `"lint"` script; several findings above
+(unused exports, an unreachable branch) are things a linter would have surfaced for free.
+
+---
+
+## Convention
+
+_The shared `gsd-tools.cjs verify conventions` rule packs were not available in this environment
+(`CLAUDE_PLUGIN_ROOT` unset and no plugin cache found), so no findings are emitted from them.
+The items below are derived at review time from `.planning/codebase/CONVENTIONS.md` and from the
+dominant style in the files under review. All are advisory and none gates a merge._
+
+### CV-01: `.gitignore` omits `node_modules/`
+
+**File:** `.gitignore`
+
+**Deviation:** `git status` reports `?? node_modules/` and `?? pnpm-lock.yaml` — both untracked
+and both un-ignored, in a repo whose only `.gitignore` entries are GSD pause artifacts.
+**Convention:** every Node project in this stack (per `.planning/codebase/STACK.md`) keeps
+`node_modules` out of version control.
+**Suggested fix:** add `node_modules/` to `.gitignore`, and either commit or ignore the lockfile
+(see WR-08).
+
+### CV-02: `helper._products` is set to partial toggle literals in 30+ scenarios, a shape the production path never produces
+
+**File:** `scripts/probe-payload-resilience.js` (e.g. lines 888, 1019, 1235, 1653)
+
+**Deviation:** `helper._products = { showExcessiveRain: true }` omits the other three flags,
+whereas `_productToggles()` always emits one key per registry row.
+**Convention:** node_helper.js:189-195 establishes the registry-derived toggle map as the single
+shape; assertPayloadIntact was rewritten (probe lines 764, 802) to be registry-driven for exactly
+this reason.
+**Suggested fix:** route these through a `toggles({ showExcessiveRain: true })` helper that calls
+`helper._productToggles(...)`, so a Phase 16/17 row is covered without touching 30 literals.
+
+### CV-03: `getDom` mixes `innerHTML` string concatenation with a `textContent` branch
+
+**File:** `MMM-SPCOutlook.js:258-262`, `MMM-SPCOutlook.js:456-458`
+
+**Deviation:** the error branch uses `wrapper.textContent`, every other branch builds an
+`innerHTML` string; `wrapper.innerHTML === contentMarker` then compares a string that may have
+been produced by either mechanism.
+**Convention:** the dominant style in this function is `innerHTML +=` with `escapeHtml` at every
+remote-text boundary (documented at MMM-SPCOutlook.js:199-207).
+**Suggested fix:** use `escapeHtml` + `innerHTML` in the error branch too, so the
+`contentMarker` comparison has one mechanism to reason about — and note the probe's DOM stub
+(`module-stubs.js:259`) already returns a plain object with both fields, so `renderDom`'s
+`innerHTML || textContent` fallback exists solely to paper over this split.
+
+---
+
+_Reviewed: 2026-08-25T00:59:14Z_
 _Reviewer: Claude (gsd-code-reviewer)_
-_Depth: deep — iteration 2, adversarial re-review after fix pass `3622e19`..`4880b37`_
+_Depth: deep — 25 mutation experiments run against an isolated copy of the tree; adm-zip 0.5.16 source read directly_
