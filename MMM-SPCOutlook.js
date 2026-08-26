@@ -536,6 +536,49 @@
             hazardSpans.join(", ") + "<br/>";
         }
       };
+      // D-05: this is its own labeled region, below the day rows — deliberately NOT
+      // folded into the advisory band (15 D-05). That band holds things in effect NOW
+      // (MDs/MPDs are 1-6h nowcasts); "in effect" wording does not apply to a 5-to-7-day
+      // forecast window. Accepted cost: Phase 19 relocates two blocks rather than one.
+      const renderHazardsWindowBand = (block) => {
+        // ERO-03 / 15 D-09: absence is silence applies to the band as a whole — a
+        // missing/non-object block or an empty/non-array windowBand renders nothing,
+        // not even the heading.
+        if (!block || typeof block !== "object" || !Array.isArray(block.windowBand) || block.windowBand.length === 0) {
+          return;
+        }
+        let headingWritten = false;
+        // D-07: ordering is the payload array's order, untouched — the backend already
+        // applied the registry order (span start, ties broken by registry order);
+        // re-sorting here would put the ordering rule at two sites.
+        for (const entry of block.windowBand) {
+          if (!entry || typeof entry !== "object") continue;
+          // Deliberate rule, not an edge case: a window that has entirely elapsed is
+          // not a forecast, and rendering it would be worse than silence.
+          if (typeof entry.offsetEnd === "number" && entry.offsetEnd < 0) continue;
+          if (!headingWritten) {
+            wrapper.innerHTML += "Extended Hazards:<br/>";
+            headingWritten = true;
+          }
+          // D-08/D-06: both weekday and offset carry the feature's own observed span,
+          // never the layer's nominal window (D-06) — a D8-14 layer can carry a 2-day
+          // feature. Omit the weekday pair rather than leak NaN when either date is
+          // unparseable; the offset segment survives on its own.
+          const startWeekday = hazardsWeekdayFromDate(entry.startDate);
+          const endWeekday = hazardsWeekdayFromDate(entry.endDate);
+          const singleDay = entry.offsetStart === entry.offsetEnd;
+          let weekdaySegment = "";
+          if (startWeekday && endWeekday) {
+            weekdaySegment = (singleDay ? startWeekday : startWeekday + "–" + endWeekday) + " ";
+          }
+          const offsetSegment = singleDay
+            ? "(D" + entry.offsetStart + ")"
+            : "(D" + entry.offsetStart + "–" + entry.offsetEnd + ")";
+          const label = "<span style=\"color:#" + validHazardColor(entry.color) + "\">" +
+            escapeHtml(truncateHazardLabel(entry.label)) + "</span>";
+          wrapper.innerHTML += weekdaySegment + offsetSegment + ": " + label + "<br/>";
+        }
+      };
       if (this.config.showExcessiveRain) {
         renderDayBlock("Excessive Rain", this.spcrisk.excessiveRain);
       }
@@ -554,6 +597,7 @@
       // badge (D-16, CR-01).
       if (this.config.showHazardsOutlook) {
         renderHazardsDays(this.spcrisk.hazardsOutlook);
+        renderHazardsWindowBand(this.spcrisk.hazardsOutlook);
       }
       // CR-01: a stale payload with no renderable risk must not present as a bare ⚠ badge.
       // "unconfirmed" rather than "last known good" because the two cases are not
