@@ -240,6 +240,29 @@
       }
       return false;
     };
+    // WR-08: hazardsOutlook day keys have no `Risk` suffix (`day3`, not `day3Risk`), so this
+    // regex is disjoint from dayRiskCount's — the two never cross-match. The span is derived
+    // from the block's own keys, never a literal 3..14 range, matching WR-08's rule that no
+    // literal day count survives outside the registry. Tolerates a missing/non-object block
+    // (returns false) and a day entry whose `hazards` is absent or not an array (skipped),
+    // the same version-skew tolerance enabledAdvisories() already applies to advisories.
+    const hazardsOutlookHasAnyDay = (block) => {
+      if (!block || typeof block !== "object") return false;
+      const dayKeys = Object.keys(block).filter((k) => /^day\d+$/.test(k));
+      for (const key of dayKeys) {
+        const day = block[key];
+        if (day && typeof day === "object" && Array.isArray(day.hazards) && day.hazards.length > 0) {
+          return true;
+        }
+      }
+      return false;
+    };
+    // True when the block's windowBand array carries at least one entry. Same missing/
+    // non-object tolerance as hazardsOutlookHasAnyDay.
+    const hazardsOutlookHasWindowEntries = (block) => {
+      if (!block || typeof block !== "object") return false;
+      return Array.isArray(block.windowBand) && block.windowBand.length > 0;
+    };
     // WR-09: every other product row is gated on its own toggle (`this.config.showExcessiveRain
     // && ...`, `this.config.showWinterImpact && ...`); the advisory band was not, so it
     // rendered whatever arrived. That was safe only because _runKmlAdvisoryRow returns [] when
@@ -301,6 +324,16 @@
       // the false-negative class this project exists to prevent. WR-08: same derivation as
       // the ERO term above, tracking PRODUCT_REGISTRY.winterImpact.days.
       !(this.config.showWinterImpact && blockHasRisk(this.spcrisk.winterImpact)) &&
+      // Hazards Outlook extension of the no-risk gate (Phase 19 RPT-06 regression target). TWO
+      // independent terms, not one OR'd predicate, because this product renders TWO independent
+      // things: the day3-day14 grid and the window band below it. A location can sit inside a
+      // window-band `Hazardous Heat` polygon with every day array empty — Temperature and Wildfire
+      // features route to the band unconditionally (HAZ-02) and never populate a day. With only the
+      // day term, that location renders the literal 'No Severe Weather Risk' while an active
+      // multi-day heat hazard is in the payload. That is not a hypothetical: Phase 15 shipped exactly
+      // this defect, where the gate's missing advisory term made every MPD invisible.
+      !(this.config.showHazardsOutlook && hazardsOutlookHasAnyDay(this.spcrisk.hazardsOutlook)) &&
+      !(this.config.showHazardsOutlook && hazardsOutlookHasWindowEntries(this.spcrisk.hazardsOutlook)) &&
       // Advisory extension of the no-risk gate (Phase 19 RPT-06 regression target). Before
       // Phase 15 this gate had no advisory term at all, so a location inside an active
       // discussion with no other risk rendered the literal "No Severe Weather Risk" and the
