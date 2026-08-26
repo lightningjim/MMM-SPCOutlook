@@ -314,9 +314,66 @@ const PRODUCT_REGISTRY = {
       const hazardType = (ctx && ctx.hazardType) || null;
       return { label: "WPC MPD " + number, hazardType };
     }
+  },
+  hazardsOutlook: {
+    id: "hazardsOutlook",
+    // Third kind, beside "arcgis-day-layers" and "kml-advisory" — a
+    // node_helper.js sibling runner dispatches on it (15 D-01 left this slot
+    // open deliberately).
+    kind: "arcgis-hazard-window",
+    configFlag: "showHazardsOutlook",
+    baseUrl: HAZARDS_BASE_URL,
+    layers: hazardsOutlookLayers,
+    // Derived through the validator, never restated — see dayRangeOf.
+    dayRangeTotal: dayRangeOf([3, 14]),
+    excludedLabels: hazardsExcludedLabels,
+    droughtLabels: hazardsDroughtLabels,
+    order: hazardsOrder,
+    displayColor: hazardsDisplayColor,
+    defaultColor: HAZARDS_DEFAULT_COLOR,
+    // Argument is a LAYER ID, not a day — the inverse of
+    // excessiveRain.buildUrl(day). This product's day lives inside each
+    // feature's start_date/end_date, not in the URL. Every hazards URL must
+    // come from here (Pitfall 11, cache-key drift) — no inline
+    // buildArcGisQuery call at a second site.
+    buildUrl: (layerId) => buildArcGisQuery(HAZARDS_BASE_URL, layerId),
+    // HAZ-03 / Pitfall 8: extractPolygons hardcodes f.properties.LABEL
+    // (uppercase, SPC-only, node_helper.js:1005), so the `label` positional
+    // parameter is ALWAYS "" for this service. Read f.properties.label
+    // (lowercase) directly off `f` — the same idiom eroDnToValue and
+    // wssiRawToValue already use to route around this trap. A non-string
+    // label yields "" so a malformed feature is dropped by includesFeat
+    // rather than rendering `undefined`.
+    toValue: (label, f) => (f && f.properties && typeof f.properties.label === "string" ? f.properties.label : ""),
+    // D-13/D-14: 84 hours = Fri 17Z + 84h -> Mon 05Z, clearing a normal
+    // weekend with ~12h of slack before Monday's 17:00Z issuance and
+    // catching a mid-week stall within about a day. Live serviceDescription
+    // re-confirmed 2026-08-26: "Update Frequency: Daily Monday-Friday at
+    // 17:00Z". Known limitation: a federal-holiday Monday pushes the real
+    // gap to 96h, so the badge fires on roughly 10 days a year, where it is
+    // technically correct that nothing new has published. Applied against
+    // each layer's OWN idp_filedate — live evidence 2026-08-26 recorded
+    // three distinct filedates across the six layers in one poll, one ~23h
+    // staler than its siblings, so a single shared row-level timestamp does
+    // not exist.
+    maxDataAgeHours: 84,
+    // D-08 precedent (winterImpact above) and 14-REVIEW IN-01. Every hex in
+    // hazardsDisplayColor was read from
+    // drawingInfo.renderer.uniqueValueGroups[].classes[].symbol.color on all
+    // six layers, live 2026-08-26. {layerId} in the URL is a placeholder for
+    // 1|3|4|6|7|8. This supersedes FEATURES.md's "PNG swatches only, LOW
+    // confidence" claim — no visual verification against wpc.ncep.noaa.gov
+    // is needed.
+    paletteSource: "https://mapservices.weather.noaa.gov/vector/rest/services/hazards/cpc_weather_hazards/MapServer/{layerId}?f=json"
+    // Deliberately NO includesFeat here: D-10's Drought gate is
+    // request-scoped (productToggles.showDrought) and registry rows are pure
+    // static configuration with no `this` and no closure over request state
+    // (15 D-02), so the runner builds that closure at call time over
+    // excludedLabels + droughtLabels. Also no valueToTier/tierToText/
+    // tierToColor: this product has no severity ladder anywhere in its
+    // schema (Pitfall 1), so a max-comparator is meaningless (D-02).
   }
-  // Future rows (Hazards Outlook, HeatRisk) land in Phases 16-17 (D-08) —
-  // not added here.
+  // Future row (HeatRisk) lands in Phase 17 (D-08) — not added here.
 };
 
 module.exports = { buildArcGisQuery, daySpanOf, dayRangeOf, MPD_FILENAME_PATTERN, PRODUCT_REGISTRY };
