@@ -87,6 +87,10 @@ Items acknowledged and carried forward from previous milestone close:
 | Scope | National Flood Outlook (COVX-01) | Deferred to v2.x | v2.0 scoping |
 | Correctness | Multi-instance cache/broadcast isolation (round-2 CR-01/CR-02) | Deferred — unreachable single-instance | Phase 14 close |
 | Verification | UAT test 9 (two instances, two locations) | Skipped — not a realistic config for this deployment | Phase 14 close |
+| Verification | Live in-season confirmation of HAZ-01's per-day Precipitation bucketing | Deferred — both Precipitation layers (4, 6) returned zero features nationwide on 2026-08-26; the 10 mutation-proven `hazards-*` scenarios built on synthetic fixtures stand as evidence | Phase 16 close |
+| Verification | Live confirmation of D-04's full-window guard (a Precipitation feature spanning its layer's exact nominal window routes to the window band, not the day grid) | Deferred — same root cause: no live Precipitation feature exists to observe the guard against | Phase 16 close |
+| Verification | Live observation of `idp_filedate` across a weekend, to settle the STACK/FEATURES cadence conflict and potentially tighten D-14's 84h threshold | Deferred — not observable mid-week (2026-08-26 is a Wednesday) | Phase 16 close |
+| Verification | Phase 16 human UAT (ROADMAP success criteria C1–C5) on deployed MagicMirror hardware | PENDING — requires the Raspberry Pi installation; no MagicMirror install or config.js exists in this checkout | Phase 16 close |
 | Quality | Phase 14 IN-01..IN-08 (Info/CONVENTION findings) | Accepted | Phase 14 close |
 | Verification | Live in-season WSSI confirmation (winter product, verified Aug) | Deferred in-season per D-10; 6 `wssi-*` scenarios stand as evidence | Phase 15 close |
 | Verification | Live MPD-02 (two concurrent MPDs both rendering) | Not observable on demand; fixture-verified | Phase 15 close |
