@@ -472,6 +472,70 @@
           }
         }
       };
+      // T-16-20: the MapServer imposes no length bound on `label`, and D-11 renders
+      // unmapped remote labels verbatim, so a malformed or hostile 1 MB string would
+      // otherwise become a 1 MB DOM node on a Raspberry Pi. Truncation applies at the
+      // render boundary only — the payload keeps the full value for Phase 18's merge.
+      // Truncated BEFORE escaping so the bound counts source characters, not entity
+      // expansions. 60 chars exceeds every label in the MapServer's ~15-label legend
+      // (longest observed: "Much Above Normal Temperatures", 30 chars), so this can
+      // only ever fire on a malformed or hostile value (T-16-22, accepted).
+      const HAZARDS_LABEL_MAX_CHARS = 60;
+      // Shared by both hazards renderers below (WR-06: a fix applied to one twin and
+      // not the other is this codebase's recurring defect shape) — defined once, used
+      // twice.
+      const truncateHazardLabel = (label) => {
+        const text = String(label);
+        return text.length > HAZARDS_LABEL_MAX_CHARS
+          ? text.slice(0, HAZARDS_LABEL_MAX_CHARS) + "…"
+          : text;
+      };
+      // T-16-19: an unvalidated `color` reaching `style="color:#..."` is an attribute
+      // injection vector, and is also the `color:#undefined` IN-08 class. Substitute a
+      // safe default rather than interpolating an unvalidated value.
+      const validHazardColor = (color) => (
+        typeof color === "string" && /^[0-9a-fA-F]{6}$/.test(color) ? color : "aaaaaa"
+      );
+      // D-01: the weekday comes from the payload's resolved UTC date, never from
+      // dowToText(dow + N) — WPC's "Day N" boundary differs from SPC's (Pitfall 9), so
+      // offset arithmetic drifts by one; the backend already resolved the real date.
+      // Returns null when the date is unparseable rather than leaking NaN/undefined.
+      const hazardsWeekdayFromDate = (dateStr) => {
+        const dt = new Date(String(dateStr) + "T00:00:00Z");
+        return isFinite(dt.getTime()) ? dowToText(dt.getUTCDay()) : null;
+      };
+      // T-16-18/T-16-21: renders the day3..day14 grid. Guarded against a missing/
+      // non-object block (WR-07 — a throw here takes the whole render down).
+      const renderHazardsDays = (block) => {
+        if (!block || typeof block !== "object") return;
+        // WR-08: the day span is derived from the block's own keys, never a literal
+        // 3..14 range — the registry, not this renderer, owns the day count.
+        const dayKeys = Object.keys(block)
+          .filter((k) => /^day\d+$/.test(k))
+          .sort((a, b) => Number(a.slice(3)) - Number(b.slice(3)));
+        for (const key of dayKeys) {
+          const entry = block[key];
+          if (!entry || typeof entry !== "object" || !Array.isArray(entry.hazards) || entry.hazards.length === 0) {
+            // ERO-03 / 15 D-09: absence is silence, applied per day — no row, no "None".
+            continue;
+          }
+          const d = Number(key.slice(3));
+          const weekday = hazardsWeekdayFromDate(entry.date);
+          const weekdaySegment = weekday ? weekday + ", " : "";
+          // D-02: ordering within a row is the payload's array order, untouched — the
+          // backend already applied the registry-declared order; re-sorting here would
+          // put the ordering rule at two sites.
+          const hazardSpans = entry.hazards
+            .filter((h) => h && typeof h === "object")
+            .map((h) => (
+              "<span style=\"color:#" + validHazardColor(h.color) + "\">" +
+              escapeHtml(truncateHazardLabel(h.label)) + "</span>"
+            ));
+          if (hazardSpans.length === 0) continue;
+          wrapper.innerHTML += "Hazards (" + weekdaySegment + "Day " + d + "): " +
+            hazardSpans.join(", ") + "<br/>";
+        }
+      };
       if (this.config.showExcessiveRain) {
         renderDayBlock("Excessive Rain", this.spcrisk.excessiveRain);
       }
@@ -483,6 +547,13 @@
         // enforced in productRegistry.js, and recording it at both ends keeps the two
         // files' coupling visible.
         renderDayBlock("Winter Impact", this.spcrisk.winterImpact);
+      }
+      // Gated on the same flag the no-risk gate terms use (WR-09 — gate and render must
+      // agree about what is displayable). Placed before the contentMarker comparison so
+      // a stale payload carrying real hazards renders its content and not a bare ⚠
+      // badge (D-16, CR-01).
+      if (this.config.showHazardsOutlook) {
+        renderHazardsDays(this.spcrisk.hazardsOutlook);
       }
       // CR-01: a stale payload with no renderable risk must not present as a bare ⚠ badge.
       // "unconfirmed" rather than "last known good" because the two cases are not
