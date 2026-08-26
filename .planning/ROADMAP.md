@@ -163,7 +163,7 @@ Plans:
 D-10). Drought display is an explicit user opt-in, not a violation of this criterion. Flooding
 exclusion, by contrast, is absolute — D-09 provides no override.
 
-**Plans:** 3/8 plans executed
+**Plans:** 4/8 plans executed
 
 Plans:
 **Wave 1**
@@ -177,7 +177,7 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2)*
 
-- [ ] 16-04-PLAN.md — Config defaults and the TWO independent no-risk gate terms (wave 3)
+- [x] 16-04-PLAN.md — Config defaults and the TWO independent no-risk gate terms (wave 3)
 
 **Wave 4** *(blocked on Wave 3)*
 
@@ -265,7 +265,7 @@ Phases execute in numeric order: 14 → 15 → 16 → 17 → 18 → 19
 | 13. Proximity Frontend Render | v1.2 | 3/3 | Complete | 2026-05-03 |
 | 14. Foundation & WPC Excessive Rainfall Outlook | v2.0 | 7/7 | Complete | 2026-08-23 |
 | 15. WPC Winter Storm Severity & Mesoscale Precipitation Discussion | v2.0 | 6/9 | In Progress|  |
-| 16. WPC Day 3–7 / CPC Day 8–14 Hazards Outlook | v2.0 | 3/8 | In Progress|  |
+| 16. WPC Day 3–7 / CPC Day 8–14 Hazards Outlook | v2.0 | 4/8 | In Progress|  |
 | 17. NWS/WPC HeatRisk & Parallelized Fetching | v2.0 | 0/? | Not started | - |
 | 18. Merge, Precedence & Unified Payload Schema | v2.0 | 0/? | Not started | - |
 | 19. Unified Day Report — getDom() Rewrite | v2.0 | 0/? | Not started | - |
