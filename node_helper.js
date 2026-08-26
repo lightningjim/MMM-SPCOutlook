@@ -24,6 +24,12 @@ const select = xpath.useNamespaces({
   k: "http://www.opengis.net/kml/2.2"
 });
 const { PRODUCT_REGISTRY, MPD_FILENAME_PATTERN } = require("./productRegistry");
+// WR-16 / D-10: `showDrought` is NOT a product flag in the `configFlag` sense — it does
+// not gate a fetch, it gates which labels within an already-fetched product (Hazards
+// Outlook) are displayable — so it cannot be derived from `PRODUCT_REGISTRY` and needs
+// this explicit, single-source path. A future sub-toggle appends one string here and
+// nothing else.
+const SUB_TOGGLES = ["showDrought"];
 const valueToFullRisk = {
   NONE: "None", TSTM: "General Thunderstorms", MRGL: "Marginal", SLGT: "Slight", ENH: "Enhanced", MDT: "Moderate", HIGH: "High"
 };
@@ -201,6 +207,18 @@ module.exports = NodeHelper.create({
     const toggles = {};
     for (const row of Object.values(PRODUCT_REGISTRY)) {
       toggles[row.configFlag] = products?.[row.configFlag] === true;
+    }
+    // WR-16 / D-10: sub-toggles gate behavior WITHIN an already-fetched product (here,
+    // which Hazards Outlook labels are displayable) rather than gating a fetch, so they
+    // cannot be derived from a registry row's `configFlag`. Copied through here — the
+    // one place `_productToggles` is called from every path (start(), the socket
+    // handler, getSpcOutlook's own fallback) — with the same strict-`=== true`
+    // defaulting the row loop above uses, so a future sub-toggle needs no edit at any of
+    // those call sites. Threading this here rather than reading `this._products` inside
+    // the runner keeps the runner pure with respect to helper-global state, exactly as
+    // `_runArcGisDayProduct`'s `productToggles` parameter already does (WR-13).
+    for (const flag of SUB_TOGGLES) {
+      toggles[flag] = products?.[flag] === true;
     }
     return toggles;
   },
@@ -2075,6 +2093,12 @@ module.exports = NodeHelper.create({
    *   winterImpact with per-day Risk/Text/Color/ValidTime fields for days 1 through 3
    *   (always present, regardless of this._products.showWinterImpact — "NONE"/"None"/
    *   no-data color/null defaults when the toggle is off, D-05);
+   *   hazardsOutlook: { day3..day14: { date: "YYYY-MM-DD", hazards: [{ label, color,
+   *   mapped }] }, windowBand: [{ label, color, mapped, startDate, endDate, offsetStart,
+   *   offsetEnd }] } — always present, regardless of this._products.showHazardsOutlook
+   *   (empty hazards/windowBand arrays when the toggle is off, D-05). day9..day14 are
+   *   the first keys in this module past day8 and live INSIDE this block, not at the
+   *   payload's top level, so no existing day-bounded loop or assertion is affected;
    *   advisories: { spcMD: [...], mpd: [...] } — one { label, hazardType } entry per
    *   active SPC Mesoscale Discussion / WPC Mesoscale Precipitation Discussion covering
    *   the location (D-03). Both keys are always arrays, empty when the row's toggle is
@@ -2685,6 +2709,17 @@ module.exports = NodeHelper.create({
       const wssiPayload = wssiResult.payload;
       if (wssiResult.anyStale) anyStale = true;
 
+      // A direct named call, not a `kind`-loop — this row is singular (unlike the
+      // `kml-advisory` loop below, which iterates every row of that kind), matching the
+      // codebase's straight-line-dispatch style for a one-off product. Its `anyStale`
+      // folds into the same local every other product uses (Phase 14 D-04, global-only
+      // staleness); per D-15 this product can raise `anyStale` from a data-age trip
+      // without having contributed to `_oldestStaleAt`, so `_staleAsOf` may legitimately
+      // be `null` or older-than-this-product while the badge is on.
+      const hazardsResult = await this._runArcGisHazardWindowProduct(PRODUCT_REGISTRY.hazardsOutlook, loc, productToggles);
+      const hazardsPayload = hazardsResult.payload;
+      if (hazardsResult.anyStale) anyStale = true;
+
       // `kml-advisory` rows (SPC MD, WPC MPD) are driven here, inside getSpcOutlook, rather
       // than as a separate top-level fetch in socketNotificationReceived, so that an advisory
       // fetch failure folds into this run's own `anyStale` exactly like a product-layer
@@ -2812,6 +2847,9 @@ module.exports = NodeHelper.create({
         },
         excessiveRain: eroPayload,
         winterImpact: wssiPayload,
+        // Sibling block per Phase 14 D-02 — Phase 18 owns the merged schema; do not
+        // pre-adopt it here.
+        hazardsOutlook: hazardsPayload,
         advisories: advisories
       };
 
