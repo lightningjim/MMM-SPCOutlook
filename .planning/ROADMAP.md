@@ -163,13 +163,13 @@ Plans:
 D-10). Drought display is an explicit user opt-in, not a violation of this criterion. Flooding
 exclusion, by contrast, is absolute — D-09 provides no override.
 
-**Plans:** 8 plans
+**Plans:** 2/8 plans executed
 
 Plans:
 **Wave 1**
 
-- [ ] 16-01-PLAN.md — `hazardsOutlook` registry row: six layers, Flooding/Drought vocabularies, live-sourced palette, `maxDataAgeHours` (wave 1)
-- [ ] 16-02-PLAN.md — Clock seam, UTC date-bucketing helpers, collect-all evaluator (wave 1)
+- [x] 16-01-PLAN.md — `hazardsOutlook` registry row: six layers, Flooding/Drought vocabularies, live-sourced palette, `maxDataAgeHours` (wave 1)
+- [x] 16-02-PLAN.md — Clock seam, UTC date-bucketing helpers, collect-all evaluator (wave 1)
 
 **Wave 2** *(blocked on Wave 1)*
 
@@ -265,7 +265,7 @@ Phases execute in numeric order: 14 → 15 → 16 → 17 → 18 → 19
 | 13. Proximity Frontend Render | v1.2 | 3/3 | Complete | 2026-05-03 |
 | 14. Foundation & WPC Excessive Rainfall Outlook | v2.0 | 7/7 | Complete | 2026-08-23 |
 | 15. WPC Winter Storm Severity & Mesoscale Precipitation Discussion | v2.0 | 6/9 | In Progress|  |
-| 16. WPC Day 3–7 / CPC Day 8–14 Hazards Outlook | v2.0 | 0/8 | Planned | - |
+| 16. WPC Day 3–7 / CPC Day 8–14 Hazards Outlook | v2.0 | 2/8 | In Progress|  |
 | 17. NWS/WPC HeatRisk & Parallelized Fetching | v2.0 | 0/? | Not started | - |
 | 18. Merge, Precedence & Unified Payload Schema | v2.0 | 0/? | Not started | - |
 | 19. Unified Day Report — getDom() Rewrite | v2.0 | 0/? | Not started | - |
