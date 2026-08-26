@@ -1062,6 +1062,45 @@ module.exports = NodeHelper.create({
   },
 
   /**
+   * Evaluate a list of polygon items against a location, returning every item whose
+   * polygon contains it — not the single best. A sibling to `evaluatePolygons`, never a
+   * replacement: the Hazards Outlook has no severity ladder to reduce to a winner (D-02),
+   * so a day must carry every co-occurring hazard as a set.
+   *
+   * `evaluatePolygons` never wrapped `turf.booleanPointInPolygon` in a try/catch because
+   * `extractPolygons` already screens geometry *construction* — but the containment call
+   * can still throw independently (e.g. a self-intersecting ring). Under
+   * `evaluatePolygons`'s single-value reduce an uncaught throw there would have discarded
+   * the whole product's evaluation anyway; under collect-all it must not discard sibling
+   * hazards that share the same day (CR-02, extended one level — D-02 makes a day a set,
+   * so containment now needs per-item isolation).
+   *
+   * Incrementing `_unusableFeatureCount` on a caught throw matters beyond logging:
+   * `getSpcOutlook` samples that counter across a run and sets `anyStale` when it grew, so
+   * a dropped polygon surfaces as a ⚠ rather than as a confident partial answer.
+   *
+   * @param items - array of { label, value, poly, feature } from extractPolygons
+   * @param loc - turf point representing the query location
+   * @returns the full array of containing items (never a single winner)
+   */
+  evaluatePolygonsCollectAll(items, loc) {
+    const hits = [];
+    items.forEach((item) => {
+      let contains;
+      try {
+        contains = turf.booleanPointInPolygon(loc, item.poly);
+      } catch (err) {
+        Log.error("MMM-SPCOutlook evaluatePolygonsCollectAll: containment check failed for " +
+                  (item.label || item.value || "unlabeled feature"), err);
+        this._unusableFeatureCount = (this._unusableFeatureCount || 0) + 1;
+        return;
+      }
+      if (contains) hits.push(item);
+    });
+    return hits;
+  },
+
+  /**
    * Read a validity-window property off the polygon that produced the winning tier.
    * @param items - array of { label, value, poly, feature } from extractPolygons
    * @param loc - turf point representing the query location
