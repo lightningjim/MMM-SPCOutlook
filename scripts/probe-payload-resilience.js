@@ -4611,6 +4611,293 @@ const scenarios = [
       }
     }
   },
+  {
+    // DATA-02's headline requirement: a weekend poll's freshest available file is
+    // Friday's, aged by the Sat/Sun gap the confirmed Mon-Fri-only cadence produces.
+    // T-16-23 / Phase 15 D-10: FRIDAY_FILEDATE/WEDNESDAY_FILEDATE below are literal
+    // absolute timestamps (not derived from maxDataAgeHours), chosen to sit inside/outside
+    // the CURRENT 84h budget with margin on both sides of a plausible retune (e.g. 48h) —
+    // deriving them proportionally from maxDataAgeHours would make M4 (retuning the
+    // constant) unable to ever flip the primary assertion, the exact vacuity this file's
+    // Flooding-labels scenario already caught once. The guard immediately below instead
+    // validates the literals against the live registry value, so a future D-14 retune that
+    // invalidates them fails loudly rather than silently.
+    name: "hazards-weekend-poll-of-fridays-file-is-not-stale",
+    run: async (helper) => {
+      const maxAgeHours = PRODUCT_REGISTRY.hazardsOutlook.maxDataAgeHours;
+      const SUNDAY_POLL_MS = Date.UTC(2026, 7, 30, 19, 0); // Sunday, 7pm UTC
+      const FRIDAY_FILEDATE = Date.UTC(2026, 7, 28, 0, 0); // Friday, midnight UTC issuance
+      const WEDNESDAY_FILEDATE = Date.UTC(2026, 7, 26, 0, 0); // the prior Wednesday, midnight UTC
+
+      const fridayAgeHours = Math.round((SUNDAY_POLL_MS - FRIDAY_FILEDATE) / (60 * 60 * 1000));
+      const wednesdayAgeHours = Math.round((SUNDAY_POLL_MS - WEDNESDAY_FILEDATE) / (60 * 60 * 1000));
+      if (fridayAgeHours >= maxAgeHours) {
+        throw new Error(
+          `fixture drift: the Friday-file scenario's elapsed ${fridayAgeHours}h is not inside the current ` +
+          `maxDataAgeHours budget (${maxAgeHours}h) — update FRIDAY_FILEDATE/SUNDAY_POLL_MS`
+        );
+      }
+      if (wednesdayAgeHours <= maxAgeHours) {
+        throw new Error(
+          `fixture drift: the control's elapsed ${wednesdayAgeHours}h is not outside the current ` +
+          `maxDataAgeHours budget (${maxAgeHours}h) — update WEDNESDAY_FILEDATE`
+        );
+      }
+
+      const originalPointInPolygon = turfStub.pointInPolygon;
+      const runWithFiledate = async (filedate) => {
+        resetHelper(helper);
+        resetLogs();
+        turfStub.pointInPolygon = () => true; // resetHelper defaults this to false
+        helper._nowMs = () => SUNDAY_POLL_MS;
+        helper._products = { showHazardsOutlook: true };
+        const fixture = () => httpResponse({
+          body: hazardsCollection([
+            hazardsFeature({ label: "Heavy Rain", startDate: Date.UTC(2026, 8, 2), endDate: Date.UTC(2026, 8, 2), filedate })
+          ]),
+          etag: "hazards-weekend-v1"
+        });
+        installHttp(helper, hazardsRoutes({ 1: fixture, 3: fixture, 4: fixture, 6: fixture, 7: fixture, 8: fixture }));
+        const out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showHazardsOutlook: true });
+        assertPayloadIntact(out);
+        assertHazardsBlockIntact(out);
+        return out;
+      };
+
+      try {
+        const fridayOut = await runWithFiledate(FRIDAY_FILEDATE);
+        if (fridayOut._stale) {
+          throw new Error(
+            `DATA-02: a weekend poll of Friday's ${fridayAgeHours}h-old file (inside the ${maxAgeHours}h budget) ` +
+            "was flagged stale — today's _isWithinStaleWindow measures time since the last successful FETCH, so " +
+            "this false alarm can only come from a newly added data-age check that does not yet account for the " +
+            "weekend gap"
+          );
+        }
+
+        // Control: without this, "not stale on a weekend" would be satisfied by an
+        // implementation that never checks age at all — precisely the "no age check"
+        // option D-13 rejected.
+        const wednesdayOut = await runWithFiledate(WEDNESDAY_FILEDATE);
+        if (wednesdayOut._stale !== true) {
+          throw new Error(
+            `control: a ${wednesdayAgeHours}h-old file (outside the ${maxAgeHours}h budget) was not flagged stale — ` +
+            "without a working age check, the primary assertion above proves nothing"
+          );
+        }
+      } finally {
+        turfStub.pointInPolygon = originalPointInPolygon;
+      }
+    }
+  },
+  {
+    // D-13: idp_filedate is PER LAYER, not per service — live 2026-08-26 recorded three
+    // distinct filedates across six layers in one poll, one ~23h staler than its siblings.
+    // A row-level shared timestamp does not exist for this product; "any layer aged out"
+    // is the rule. Layer 3 (D8-14 Temperature) carries the aged-out feature here, matching
+    // the live finding.
+    name: "hazards-idp-filedate-is-evaluated-per-layer-not-shared",
+    run: async (helper) => {
+      const maxAgeHours = PRODUCT_REGISTRY.hazardsOutlook.maxDataAgeHours;
+      const nowMs = HAZARDS_NOW_MS;
+      const freshFiledate = nowMs - 1 * 60 * 60 * 1000; // 1h old, comfortably fresh
+      const staleFiledate = nowMs - (maxAgeHours + 5) * 60 * 60 * 1000; // 5h past budget
+
+      const freshBody = () => httpResponse({
+        body: hazardsCollection([
+          hazardsFeature({ label: "Heavy Rain", startDate: Date.UTC(2026, 7, 29), endDate: Date.UTC(2026, 7, 29), filedate: freshFiledate })
+        ]),
+        etag: "hazards-freshness-fresh-v1"
+      });
+
+      const originalPointInPolygon = turfStub.pointInPolygon;
+      const runWithLayer3Filedate = async (layer3Filedate) => {
+        resetHelper(helper);
+        resetLogs();
+        turfStub.pointInPolygon = () => true; // resetHelper defaults this to false
+        helper._nowMs = () => nowMs;
+        helper._products = { showHazardsOutlook: true };
+        const layer3Body = () => httpResponse({
+          body: hazardsCollection([
+            hazardsFeature({
+              label: "Much Above Normal Temperatures",
+              startDate: Date.UTC(2026, 7, 29), endDate: Date.UTC(2026, 8, 2), filedate: layer3Filedate
+            })
+          ]),
+          etag: "hazards-freshness-layer3-v1"
+        });
+        installHttp(helper, hazardsRoutes({
+          1: freshBody, 4: freshBody, 6: freshBody, 7: freshBody, 8: freshBody,
+          3: layer3Body
+        }));
+        const out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showHazardsOutlook: true });
+        assertPayloadIntact(out);
+        assertHazardsBlockIntact(out);
+        return out;
+      };
+
+      try {
+        const staleOut = await runWithLayer3Filedate(staleFiledate);
+        // Precondition guard: layer 3's feature actually reached the payload — "stale"
+        // cannot be explained by layer 3 having failed to parse.
+        const staleBandLabels = staleOut.hazardsOutlook.windowBand.map((e) => e.label);
+        if (!staleBandLabels.includes("Much Above Normal Temperatures")) {
+          throw new Error(`precondition failed: layer 3's feature did not reach windowBand: ${JSON.stringify(staleBandLabels)}`);
+        }
+        if (staleOut._stale !== true) {
+          throw new Error(
+            `D-13: layer 3's idp_filedate is ${maxAgeHours + 5}h old (past the ${maxAgeHours}h budget) while ` +
+            "every other layer is fresh, and _stale was not set — a row-level shared timestamp does not exist " +
+            "for this product; any layer aged out must trip the badge"
+          );
+        }
+
+        // Control: the identical fixture with layer 3's filedate fresh must produce a
+        // falsy _stale, proving the trip came from layer 3's own timestamp and not from
+        // anything else in the run.
+        const freshOut = await runWithLayer3Filedate(freshFiledate);
+        if (freshOut._stale) {
+          throw new Error("control: with every layer's idp_filedate fresh, _stale was still set — the earlier trip is not attributable to layer 3 specifically");
+        }
+      } finally {
+        turfStub.pointInPolygon = originalPointInPolygon;
+      }
+    }
+  },
+  {
+    // D-15's deliberate asymmetry: a data-age trip sets the ⚠ badge (`_stale`) but must
+    // NOT drag `_staleAsOf` along with it — that field describes FETCH/network recency
+    // (Phase 14 D-04), not WPC's own publish age, and a 60+ hour-old hazards file must not
+    // make the badge speak for SPC data fetched five minutes ago.
+    name: "hazards-data-age-sets-the-badge-but-not-the-age-figure",
+    run: async (helper) => {
+      const maxAgeHours = PRODUCT_REGISTRY.hazardsOutlook.maxDataAgeHours;
+      const nowMs = HAZARDS_NOW_MS;
+      const staleFiledate = nowMs - (maxAgeHours + 5) * 60 * 60 * 1000;
+
+      const originalPointInPolygon = turfStub.pointInPolygon;
+      try {
+        // Every OTHER product quiet — ERO/WSSI toggles omitted (falsy) skip their fetch
+        // loops entirely, and SPC MD/MPD's configFlags are likewise omitted, so
+        // _runKmlAdvisoryRow returns immediately — nothing else in this run can write
+        // _oldestStaleAt, isolating the data-age trip's own effect on _staleAsOf.
+        resetHelper(helper);
+        resetLogs();
+        turfStub.pointInPolygon = () => true; // resetHelper defaults this to false
+        helper._nowMs = () => nowMs;
+        helper._products = { showHazardsOutlook: true };
+        const agedBody = () => httpResponse({
+          body: hazardsCollection([
+            hazardsFeature({ label: "Heavy Rain", startDate: Date.UTC(2026, 7, 29), endDate: Date.UTC(2026, 7, 29), filedate: staleFiledate })
+          ]),
+          etag: "hazards-d15-v1"
+        });
+        installHttp(helper, hazardsRoutes({ 4: agedBody }));
+        const out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showHazardsOutlook: true });
+        assertPayloadIntact(out);
+        assertHazardsBlockIntact(out);
+        if (out._stale !== true) {
+          throw new Error(`precondition failed: expected the aged-out layer to set _stale, got ${out._stale}`);
+        }
+        if (out._staleAsOf !== null && out._staleAsOf !== undefined) {
+          throw new Error(
+            "D-15: a data-age trip dragged _staleAsOf along with it — this would make the badge speak for SPC " +
+            `data fetched moments ago while describing a WPC file up to ${maxAgeHours}h old, got _staleAsOf=${out._staleAsOf}`
+          );
+        }
+
+        // Control: a genuine fetch failure (warm, then fail within the stale-fallback
+        // window) must leave a NUMERIC _staleAsOf via _noteStaleEntry's stale-fallback
+        // path — proving the assertion above measures D-15's deliberate omission and not a
+        // _staleAsOf this harness simply never populates under any condition.
+        resetHelper(helper);
+        resetLogs();
+        turfStub.pointInPolygon = () => true; // resetHelper defaults this to false
+        helper._nowMs = () => nowMs;
+        helper._products = { showHazardsOutlook: true };
+        const freshBody = () => httpResponse({
+          body: hazardsCollection([
+            hazardsFeature({ label: "Heavy Rain", startDate: Date.UTC(2026, 7, 29), endDate: Date.UTC(2026, 7, 29) })
+          ]),
+          etag: "hazards-d15-control-v1"
+        });
+        installHttp(helper, hazardsRoutes({ 4: freshBody }));
+        const warm = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showHazardsOutlook: true });
+        if (warm._stale) {
+          throw new Error("control warm-up: an all-fresh poll was unexpectedly flagged stale");
+        }
+        helper._updateInterval = 60;
+        const entry = helper._geoJsonCache.get(HAZARDS_URLS[4]);
+        if (!entry) throw new Error("control warm-up: no cache entry for the hazards layer-4 URL");
+        entry.timestamp = Date.now() - 65 * 60 * 1000; // within the 2x-interval stale-fallback window
+        installHttp(helper, hazardsRoutes({ 4: () => httpResponse({ status: 503, text: "service unavailable" }) }));
+        const failed = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showHazardsOutlook: true });
+        if (typeof failed._staleAsOf !== "number") {
+          throw new Error(
+            `control: a genuine fetch failure did not leave a numeric _staleAsOf — got ${failed._staleAsOf}, ` +
+            "which would make the primary assertion above vacuous (this harness would never populate " +
+            "_staleAsOf under any condition)"
+          );
+        }
+      } finally {
+        turfStub.pointInPolygon = originalPointInPolygon;
+      }
+    }
+  },
+  {
+    // D-16, end to end: a data-age trip is an age signal, not a false negative.
+    // rejectBody's serve-last-known-good precedent exists precisely so a WPC hiccup during
+    // an active hazard does not blank the display; suppressing rows on `_stale` would
+    // convert an age signal into exactly that false negative.
+    name: "hazards-stale-data-still-renders-its-rows",
+    run: async (helper) => {
+      const maxAgeHours = PRODUCT_REGISTRY.hazardsOutlook.maxDataAgeHours;
+      resetHelper(helper);
+      resetLogs();
+      helper._nowMs = () => HAZARDS_NOW_MS;
+      helper._products = { showHazardsOutlook: true };
+      const originalPointInPolygon = turfStub.pointInPolygon;
+      turfStub.pointInPolygon = () => true;
+      let out;
+      try {
+        const staleFiledate = HAZARDS_NOW_MS - (maxAgeHours + 5) * 60 * 60 * 1000;
+        const layer4Body = hazardsCollection([
+          hazardsFeature({ label: "Heavy Rain", startDate: Date.UTC(2026, 7, 29), endDate: Date.UTC(2026, 7, 29), filedate: staleFiledate })
+        ]);
+        installHttp(helper, hazardsRoutes({
+          4: () => httpResponse({ body: layer4Body, etag: "hazards-d16-v1" })
+        }));
+        out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showHazardsOutlook: true });
+        assertPayloadIntact(out);
+        assertHazardsBlockIntact(out);
+      } finally {
+        turfStub.pointInPolygon = originalPointInPolygon;
+      }
+      if (out._stale !== true) {
+        throw new Error(`precondition failed: expected the aged-out layer to set _stale, got ${out._stale}`);
+      }
+      if (!out.hazardsOutlook.day3.hazards.some((h) => h.label === "Heavy Rain")) {
+        throw new Error(`precondition failed: Heavy Rain did not reach day3: ${JSON.stringify(out.hazardsOutlook.day3.hazards)}`);
+      }
+
+      const frontend = loadFrontendModule();
+      const config = {
+        lat: PROBE_LAT, lon: PROBE_LON, extended: false, updateInterval: 60,
+        proximityWeighting: false, showExcessiveRain: false, showWinterImpact: false,
+        showHazardsOutlook: true, showDrought: false
+      };
+      const rendered = renderDom(frontend, { config, spcrisk: out });
+      if (!rendered.includes("⚠")) {
+        throw new Error(`D-16: expected the stale badge to render alongside the hazard, got: ${rendered}`);
+      }
+      if (!rendered.includes("Heavy Rain")) {
+        throw new Error(`D-16: a data-age trip suppressed the hazard row instead of just badging it: ${rendered}`);
+      }
+      if (rendered === "No Severe Weather Risk" || rendered.endsWith("No Severe Weather Risk (unconfirmed)")) {
+        throw new Error(`D-16: stale hazard content rendered as an all-clear instead of its actual rows: ${rendered}`);
+      }
+    }
+  }
 ];
 
 // ---------------------------------------------------------------------
