@@ -186,3 +186,10 @@ None - no external service configuration required.
 ---
 *Phase: 16-wpc-day-3-7-cpc-day-8-14-hazards-outlook*
 *Completed: 2026-08-26*
+
+## Self-Check: PASSED
+- FOUND: `MMM-SPCOutlook.js`
+- FOUND: `.planning/phases/16-wpc-day-3-7-cpc-day-8-14-hazards-outlook/16-05-SUMMARY.md`
+- FOUND: `ed0aac0` (Task 1 commit)
+- FOUND: `972af42` (Task 2 commit)
+- FOUND: `158e952` (SUMMARY commit)
