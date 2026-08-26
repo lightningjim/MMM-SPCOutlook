@@ -318,6 +318,95 @@ module.exports = NodeHelper.create({
   },
 
   /**
+   * Pure normalizer for the Hazards Outlook: maps each hit from
+   * `evaluatePolygonsCollectAll` to exactly the four-field clock-independent match shape
+   * and nothing else — `{ label, startDate, endDate, idpFiledate }`. `label` is
+   * `hit.value` (already the lowercase `label` string, per the registry's own `toValue`).
+   * `idpFiledate` normalizes a missing/non-finite `idp_filedate` to `null` rather than
+   * `undefined`, so downstream freshness checks can test it with a single `typeof`.
+   *
+   * Per-item containment (the CR-02 lesson, extended to normalization): a hit whose
+   * `label` is not a non-empty string, or whose `start_date`/`end_date` is not a finite
+   * number, is dropped rather than thrown on — one malformed feature must not lose its
+   * siblings' matches.
+   * @param hits - array of { label, value, poly, feature } from evaluatePolygonsCollectAll
+   * @returns array of { label, startDate, endDate, idpFiledate }
+   */
+  _hazardMatchesFromHits(hits) {
+    const matches = [];
+    for (const hit of hits) {
+      const label = hit && hit.value;
+      if (typeof label !== "string" || label.length === 0) continue;
+
+      const props = hit.feature && hit.feature.properties;
+      const startDate = props ? props.start_date : undefined;
+      const endDate = props ? props.end_date : undefined;
+      if (typeof startDate !== "number" || !Number.isFinite(startDate) ||
+          typeof endDate !== "number" || !Number.isFinite(endDate)) {
+        continue;
+      }
+
+      const rawFiledate = props ? props.idp_filedate : undefined;
+      const idpFiledate = (typeof rawFiledate === "number" && Number.isFinite(rawFiledate))
+        ? rawFiledate
+        : null;
+
+      matches.push({ label, startDate, endDate, idpFiledate });
+    }
+    return matches;
+  },
+
+  /**
+   * The ONLY place the Hazards Outlook product writes to `_geoJsonCache`.
+   *
+   * `_runArcGisDayProduct` (above) caches a final, already-resolved day-keyed value
+   * (`result: { value, validTime }`) and that is correct for ERO/WSSI, because their day
+   * key is a property of the URL — `dayLayers[1]` is always Day 1, and WPC republishes
+   * fresh Day-1 content under that same URL. This product's day key is a property of the
+   * CLOCK: a feature fixed at Aug 29 00:00Z is day3 on Aug 26 and day2 on Aug 27, with
+   * unchanged bytes and an ETag that never fires. With the confirmed Mon–Fri-only
+   * cadence, every weekend poll is exactly that scenario. Copying the analog would
+   * silently shift every hazard one day earlier per elapsed day, with no error, no ⚠, and
+   * no failing assertion — the existing cache-hit probe scenarios assert byte-identical
+   * output across a hit, which is the correct invariant for ERO and the wrong one here.
+   * This function therefore caches only clock-INDEPENDENT data. The field-by-field
+   * whitelist (not a spread) is deliberate: it makes a day key or an offset physically
+   * unable to enter the cache, rather than relying on a future maintainer reading this
+   * comment.
+   * @param url - the layer's own URL, from row.buildUrl(layer.id)
+   * @param fetchResult - this layer's fetchGeoJsonCached() result (a cache miss)
+   * @param matches - the clock-independent match array from _hazardMatchesFromHits
+   */
+  _cacheHazardMatches(url, fetchResult, matches) {
+    const whitelisted = [];
+    for (const match of matches) {
+      // Defensive assertion: the whitelist below already makes a clock-dependent field
+      // structurally unable to enter the cache. This converts a future refactor that
+      // bypasses the whitelist (e.g. a spread added here later) from a silent misdating
+      // bug into a loud, immediate failure.
+      for (const key of Object.keys(match)) {
+        if (/^day\d+$/.test(key) || key === "offsetStart" || key === "offsetEnd" || key === "dayOffset") {
+          throw new Error("MMM-SPCOutlook _cacheHazardMatches: refusing to cache a clock-dependent field: " + key);
+        }
+      }
+      whitelisted.push({
+        label: match.label,
+        startDate: match.startDate,
+        endDate: match.endDate,
+        idpFiledate: match.idpFiledate
+      });
+    }
+
+    this._geoJsonCache.set(url, {
+      mode: fetchResult.mode,
+      etag: fetchResult.newEtag ?? null,
+      hash: fetchResult.newHash ?? null,
+      result: whitelisted,
+      timestamp: this._nowMs()
+    });
+  },
+
+  /**
    * Discovery strategies for `kml-advisory` registry rows, keyed by `row.discovery`.
    * Each strategy fetches whatever index document names the row's candidate member
    * KMZs and returns `{ urls, failed }` — `urls` normalized and allowlisted, `failed`
