@@ -576,6 +576,28 @@ function noRiskPayloadWithAdvisory(advisories) {
   };
 }
 
+// The same isolation noRiskPayloadWithAdvisory gives the advisory term of the no-risk
+// gate, applied to the Hazards Outlook terms: every other value is the no-risk/none
+// default, `advisories` is empty, `_stale` is absent, and `hazardsOutlook` is whatever
+// the caller supplies — used by frontend-hazards-window-band-only-is-not-an-all-clear and
+// its sibling to isolate hazardsOutlookHasAnyDay/hazardsOutlookHasWindowEntries from every
+// other gate term.
+function noRiskPayloadWithHazards(hazardsBlock) {
+  return { ...noRiskPayloadWithAdvisory({ spcMD: [], mpd: [] }), hazardsOutlook: hazardsBlock };
+}
+
+// The full day3..day14 + windowBand shape with everything empty — assertHazardsBlockIntact's
+// own 13-key contract, satisfied trivially. Used as the base for a fixture that populates
+// only the window band (HAZ-02's day-grid-vs-window-band isolation) or only specific days.
+function emptyHazardsBlock() {
+  const block = {};
+  for (let d = 3; d <= 14; d++) {
+    block[`day${d}`] = { date: "2026-08-26", hazards: [] };
+  }
+  block.windowBand = [];
+  return block;
+}
+
 // ---------------------------------------------------------------------
 // Fetch stubbing
 // ---------------------------------------------------------------------
@@ -4306,6 +4328,573 @@ const scenarios = [
       }
       if (!rendered.includes("Critical Wildfire Risk")) {
         throw new Error(`control failed: Critical Wildfire Risk missing from rendered markup: ${rendered}`);
+      }
+    }
+  },
+  {
+    // 16-RESEARCH.md "Newly identified pitfall: day-offset drift on a cache hit" — the
+    // phase's highest-risk item. This product's day key is a property of the CLOCK: a
+    // feature fixed at Aug 29 00:00Z is day3 on Aug 26 and day2 on Aug 27, with unchanged
+    // bytes and an ETag that never fires. ero-rejected-body-serves-last-known-good's
+    // warm/degrade two-phase structure is the model to COPY; its
+    // `out.excessiveRain.day1Risk !== "SLGT"` assertion of BYTE-IDENTICAL output across a
+    // cache hit is exactly INVERTED here — ERO's day key lives in the URL and cannot move
+    // on a hit; this product's day key lives in the clock and MUST move on a hit. With the
+    // confirmed Mon-Fri-only cadence, every weekend poll and every between-issuance poll is
+    // exactly this state.
+    name: "hazards-day-keys-shift-on-a-cache-hit-when-the-day-advances",
+    run: async (helper) => {
+      const originalPointInPolygon = turfStub.pointInPolygon;
+      try {
+        // --- Steps 1-6: the headline negative case — the hazard falls OFF the grid ---
+        resetHelper(helper);
+        resetLogs();
+        turfStub.pointInPolygon = () => true; // resetHelper defaults this to false
+        helper._nowMs = () => HAZARDS_NOW_MS; // Wed Aug 26 2026 13:00Z
+        helper._products = { showHazardsOutlook: true };
+        const singleFeature = hazardsCollection([
+          hazardsFeature({ label: "Heavy Rain", startDate: Date.UTC(2026, 7, 29), endDate: Date.UTC(2026, 7, 29) })
+        ]);
+        installHttp(helper, hazardsRoutes({
+          4: () => httpResponse({ body: singleFeature, etag: "hazards-v1" })
+        }));
+
+        const wed = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showHazardsOutlook: true });
+        assertPayloadIntact(wed);
+        assertHazardsBlockIntact(wed);
+        if (wed.hazardsOutlook.day3.hazards.length !== 1 || wed.hazardsOutlook.day3.hazards[0].label !== "Heavy Rain") {
+          throw new Error(`warm-up: expected day3 to carry one Heavy Rain hazard, got ${JSON.stringify(wed.hazardsOutlook.day3.hazards)}`);
+        }
+        if ("day2" in wed.hazardsOutlook) {
+          throw new Error("warm-up: hazardsOutlook unexpectedly carries a day2 key — the grid must start at day3");
+        }
+        if (wed.hazardsOutlook.day4.hazards.length !== 0) {
+          throw new Error(`warm-up: day4 expected empty, got ${JSON.stringify(wed.hazardsOutlook.day4.hazards)}`);
+        }
+
+        // Precondition guard — the cache must actually be warm and clock-independent, or
+        // the drift assertions below cannot distinguish a correct re-bucketing from a
+        // lucky replay (the exact vacuity mode that made Phase 15's 15-05 mutation yield
+        // zero RED scenarios).
+        const entry = helper._geoJsonCache.get(HAZARDS_URLS[4]);
+        if (!entry) {
+          throw new Error("precondition failed: no cache entry for the hazards layer-4 URL — the warm-up poll did not populate the cache");
+        }
+        const cachedJson = JSON.stringify(entry.result);
+        if (/day\d|offsetStart|offsetEnd|dayOffset/.test(cachedJson)) {
+          throw new Error(
+            "precondition failed: the cached entry carries a clock-dependent field, so the drift assertion below " +
+            `cannot distinguish a correct re-bucketing from a lucky replay: ${cachedJson}`
+          );
+        }
+
+        // Advance the clock 24h with NO upstream change — the SAME body, the SAME ETag, so
+        // the fetch legitimately hash/ETag-hits and the runner takes the cache path. Do not
+        // change a single byte of the fixture.
+        helper._nowMs = () => Date.UTC(2026, 7, 27, 13, 0); // Thursday
+        installHttp(helper, hazardsRoutes({
+          4: () => httpResponse({ body: singleFeature, etag: "hazards-v1" })
+        }));
+
+        const thu = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showHazardsOutlook: true });
+        assertPayloadIntact(thu);
+        assertHazardsBlockIntact(thu);
+        if (thu.hazardsOutlook.day2 !== undefined) {
+          throw new Error("thu: hazardsOutlook unexpectedly carries a day2 key — the grid must still start at day3");
+        }
+        for (let d = 3; d <= 14; d++) {
+          if (thu.hazardsOutlook[`day${d}`].hazards.length !== 0) {
+            throw new Error(
+              "day-offset drift: a cache hit replayed the previous day's bucketing — Heavy Rain fixed at Aug 29 " +
+              "is day3 on Aug 26 and day2 on Aug 27 (offset 2, outside the 3..14 grid, so it must render on NO " +
+              `day), and the ETag never fires because the bytes did not change. Found a hazard surviving on ` +
+              `day${d}: ${JSON.stringify(thu.hazardsOutlook[`day${d}`].hazards)}`
+            );
+          }
+        }
+        if (thu.hazardsOutlook.day3.date !== "2026-08-30") {
+          throw new Error(`D-01: thu.hazardsOutlook.day3.date expected 2026-08-30 (the date labels advance too), got ${thu.hazardsOutlook.day3.date}`);
+        }
+
+        // --- Step 7: the positive half — proves re-bucketing actually RECOMPUTES rather
+        // than merely emptying. Warm on a Monday (Aug 29 is offset 5), advance to the
+        // following Wednesday (offset 3) with the same bytes/etag, and the hazard must MOVE
+        // from day5 to day3, not simply vanish from day5.
+        resetHelper(helper);
+        resetLogs();
+        turfStub.pointInPolygon = () => true; // resetHelper defaults this to false
+        helper._nowMs = () => Date.UTC(2026, 7, 24); // Monday
+        helper._products = { showHazardsOutlook: true };
+        const fetchFn = installHttp(helper, hazardsRoutes({
+          4: () => httpResponse({ body: singleFeature, etag: "hazards-v1" })
+        }));
+
+        const mon = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showHazardsOutlook: true });
+        assertPayloadIntact(mon);
+        assertHazardsBlockIntact(mon);
+        if (mon.hazardsOutlook.day5.hazards.length !== 1 || mon.hazardsOutlook.day5.hazards[0].label !== "Heavy Rain") {
+          throw new Error(`positive-half warm-up: expected day5 (Monday + 5 = Aug 29) to carry Heavy Rain, got ${JSON.stringify(mon.hazardsOutlook.day5.hazards)}`);
+        }
+        if (mon.hazardsOutlook.day3.hazards.length !== 0) {
+          throw new Error(`positive-half warm-up: expected day3 empty, got ${JSON.stringify(mon.hazardsOutlook.day3.hazards)}`);
+        }
+
+        helper._nowMs = () => Date.UTC(2026, 7, 26); // Wednesday, 2 days later — a cache hit
+        const wed2 = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showHazardsOutlook: true });
+        assertPayloadIntact(wed2);
+        assertHazardsBlockIntact(wed2);
+        if (wed2.hazardsOutlook.day3.hazards.length !== 1 || wed2.hazardsOutlook.day3.hazards[0].label !== "Heavy Rain") {
+          throw new Error(
+            `expected day key 3 (Wednesday + 3 = Aug 29) after a cache hit, got day3=${JSON.stringify(wed2.hazardsOutlook.day3.hazards)}, ` +
+            `day5=${JSON.stringify(wed2.hazardsOutlook.day5.hazards)} — a cache hit must re-derive the day key against the new clock, not replay the old one`
+          );
+        }
+        if (wed2.hazardsOutlook.day5.hazards.length !== 0) {
+          throw new Error(`expected day5 now empty (the hazard moved to day3), got ${JSON.stringify(wed2.hazardsOutlook.day5.hazards)}`);
+        }
+
+        // Step 9: the cache path taken on the second poll above is a real conditional
+        // request against a warm cache entry, not a skipped fetch and not "recompute from
+        // scratch every poll" (the vacuity M4 proves against) — "the day keys changed"
+        // cannot be explained by the second poll never having run, and the second
+        // request's If-None-Match proves a real cache entry was written and consulted.
+        const layer4Requests = fetchFn.calls.filter((c) => c.url === HAZARDS_URLS[4]);
+        if (layer4Requests.length !== 2) {
+          throw new Error(`expected the layer-4 URL requested on both polls of the positive half, got ${layer4Requests.length} calls`);
+        }
+        if (layer4Requests[1].headers["If-None-Match"] !== "hazards-v1") {
+          throw new Error(
+            "expected the second poll's request to carry If-None-Match: hazards-v1, proving a real cache entry " +
+            `was written by the first poll and consulted by the second, got headers=${JSON.stringify(layer4Requests[1].headers)}`
+          );
+        }
+
+        // --- Step 8: control — with the clock held FIXED across two polls and the same
+        // bytes, the two payloads' hazardsOutlook blocks must be deep-equal. Without this,
+        // the drift assertions above would be satisfied by an implementation that simply
+        // discards its cache and produces arbitrary-but-correct output on every poll — the
+        // fix degrading into "never cache anything".
+        resetHelper(helper);
+        resetLogs();
+        turfStub.pointInPolygon = () => true; // resetHelper defaults this to false
+        helper._nowMs = () => Date.UTC(2026, 7, 24);
+        helper._products = { showHazardsOutlook: true };
+        installHttp(helper, hazardsRoutes({
+          4: () => httpResponse({ body: singleFeature, etag: "hazards-v1" })
+        }));
+        const controlA = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showHazardsOutlook: true });
+        const controlB = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showHazardsOutlook: true });
+        if (JSON.stringify(controlA.hazardsOutlook) !== JSON.stringify(controlB.hazardsOutlook)) {
+          throw new Error(
+            "control failed: two polls with the clock held fixed and identical bytes produced different " +
+            `hazardsOutlook blocks — the fix degraded into "never cache anything": ` +
+            `${JSON.stringify(controlA.hazardsOutlook)} vs ${JSON.stringify(controlB.hazardsOutlook)}`
+          );
+        }
+      } finally {
+        turfStub.pointInPolygon = originalPointInPolygon;
+      }
+    }
+  },
+  {
+    // HAZ-02 / T-16-28: Temperature and Wildfire/Drought hazards route to the window band
+    // unconditionally (HAZ-02), independent of the day3..day14 grid — a location inside a
+    // live "Hazardous Heat" window can have every day array empty. Before this scenario the
+    // no-risk gate's day-grid term alone would let exactly this payload short-circuit to a
+    // confident "No Severe Weather Risk" — the Phase 15 getDom regression class, which
+    // shipped live once (the MPD-invisible defect).
+    name: "frontend-hazards-window-band-only-is-not-an-all-clear",
+    run: async (helper) => {
+      const frontend = loadFrontendModule();
+      const config = {
+        lat: PROBE_LAT, lon: PROBE_LON, extended: false, updateInterval: 60,
+        proximityWeighting: false, showExcessiveRain: false, showWinterImpact: false,
+        showHazardsOutlook: true, showDrought: false
+      };
+
+      const windowOnlyBlock = emptyHazardsBlock();
+      windowOnlyBlock.windowBand = [{
+        label: "Hazardous Heat", color: "a80000", mapped: true,
+        startDate: "2026-08-29", endDate: "2026-09-02", offsetStart: 3, offsetEnd: 7
+      }];
+
+      // Precondition guard: prove the fixture actually produced an empty day grid before
+      // asserting anything about the window-band term — otherwise this scenario would pass
+      // through the day-grid gate term and prove nothing about the window-band term.
+      for (let d = 3; d <= 14; d++) {
+        if (windowOnlyBlock[`day${d}`].hazards.length !== 0) {
+          throw new Error(`precondition failed: day${d} is not empty, so this scenario would pass through the day-grid gate term and prove nothing about the window-band term`);
+        }
+      }
+      if (windowOnlyBlock.windowBand.length !== 1) {
+        throw new Error(`precondition failed: expected exactly one windowBand entry, got ${windowOnlyBlock.windowBand.length}`);
+      }
+
+      const payload = noRiskPayloadWithHazards(windowOnlyBlock);
+      const rendered = renderDom(frontend, { config, spcrisk: payload });
+      if (rendered === "No Severe Weather Risk") {
+        throw new Error(
+          "HAZ-02: a window-band-only payload short-circuited to a confident all-clear — a location inside a " +
+          "Hazardous Heat polygon with no day-resolved hazards. This is the Phase 15 getDom regression class, " +
+          "which shipped live once."
+        );
+      }
+      if (!rendered.includes("Hazardous Heat")) {
+        throw new Error(`expected the window-band hazard to render, got: ${rendered}`);
+      }
+
+      // Control 1: the same shape with an empty windowBand must render exactly the plain
+      // no-risk line, or the positive assertion above is satisfied by the gate simply
+      // never firing.
+      const controlPayload = noRiskPayloadWithHazards(emptyHazardsBlock());
+      const controlRendered = renderDom(frontend, { config, spcrisk: controlPayload });
+      if (controlRendered !== "No Severe Weather Risk") {
+        throw new Error(`control: an empty-windowBand payload no longer short-circuits, it rendered: ${controlRendered}`);
+      }
+
+      // Control 2 (WR-09): the same populated payload with showHazardsOutlook: false must
+      // still short-circuit — content the config disabled must not disqualify the gate for
+      // a band that will not render.
+      const disabledConfig = { ...config, showHazardsOutlook: false };
+      const disabledRendered = renderDom(frontend, { config: disabledConfig, spcrisk: payload });
+      if (disabledRendered !== "No Severe Weather Risk") {
+        throw new Error(`control: a populated windowBand payload with showHazardsOutlook:false no longer short-circuits, it rendered: ${disabledRendered}`);
+      }
+    }
+  },
+  {
+    // HAZ-02's second half: a window-band hazard must appear exactly once in the rendered
+    // markup, never repeated across the days of its window — the window band and the day
+    // grid are two different renderers, and a window-band entry must never also emit a
+    // day-row.
+    name: "frontend-hazards-window-hazard-appears-once-not-per-day",
+    run: async (helper) => {
+      const frontend = loadFrontendModule();
+      const config = {
+        lat: PROBE_LAT, lon: PROBE_LON, extended: false, updateInterval: 60,
+        proximityWeighting: false, showExcessiveRain: false, showWinterImpact: false,
+        showHazardsOutlook: true, showDrought: false
+      };
+
+      const windowOnlyBlock = emptyHazardsBlock();
+      windowOnlyBlock.windowBand = [{
+        label: "Hazardous Heat", color: "a80000", mapped: true,
+        startDate: "2026-08-29", endDate: "2026-09-02", offsetStart: 3, offsetEnd: 7
+      }];
+      const payload = noRiskPayloadWithHazards(windowOnlyBlock);
+      const rendered = renderDom(frontend, { config, spcrisk: payload });
+      const occurrences = (rendered.match(/Hazardous Heat/g) || []).length;
+      if (occurrences !== 1) {
+        throw new Error(`expected "Hazardous Heat" to appear exactly once (the window band, not once per day in its span), got ${occurrences}: ${rendered}`);
+      }
+      for (let d = 3; d <= 7; d++) {
+        if (rendered.includes(`Day ${d})`)) {
+          throw new Error(`expected no day-grid row for Day ${d}, but one appears: ${rendered}`);
+        }
+      }
+
+      // Control: the same label appearing on three separate DAYS in the day grid must
+      // render three times — proving the count assertion above is measuring something
+      // real, not a renderer that emits nothing for this label.
+      const perDayBlock = emptyHazardsBlock();
+      for (const d of [3, 4, 5]) {
+        perDayBlock[`day${d}`] = {
+          date: "2026-08-26",
+          hazards: [{ label: "Hazardous Heat", color: "a80000", mapped: true }]
+        };
+      }
+      const perDayPayload = noRiskPayloadWithHazards(perDayBlock);
+      const perDayRendered = renderDom(frontend, { config, spcrisk: perDayPayload });
+      const perDayOccurrences = (perDayRendered.match(/Hazardous Heat/g) || []).length;
+      if (perDayOccurrences !== 3) {
+        throw new Error(`control: expected "Hazardous Heat" on three separate days to render three times, got ${perDayOccurrences}: ${perDayRendered}`);
+      }
+    }
+  },
+  {
+    // DATA-02's headline requirement: a weekend poll's freshest available file is
+    // Friday's, aged by the Sat/Sun gap the confirmed Mon-Fri-only cadence produces.
+    // T-16-23 / Phase 15 D-10: FRIDAY_FILEDATE/WEDNESDAY_FILEDATE below are literal
+    // absolute timestamps (not derived from maxDataAgeHours), chosen to sit inside/outside
+    // the CURRENT 84h budget with margin on both sides of a plausible retune (e.g. 48h) —
+    // deriving them proportionally from maxDataAgeHours would make M4 (retuning the
+    // constant) unable to ever flip the primary assertion, the exact vacuity this file's
+    // Flooding-labels scenario already caught once. The guard immediately below instead
+    // validates the literals against the live registry value, so a future D-14 retune that
+    // invalidates them fails loudly rather than silently.
+    name: "hazards-weekend-poll-of-fridays-file-is-not-stale",
+    run: async (helper) => {
+      const maxAgeHours = PRODUCT_REGISTRY.hazardsOutlook.maxDataAgeHours;
+      const SUNDAY_POLL_MS = Date.UTC(2026, 7, 30, 19, 0); // Sunday, 7pm UTC
+      const FRIDAY_FILEDATE = Date.UTC(2026, 7, 28, 0, 0); // Friday, midnight UTC issuance
+      const WEDNESDAY_FILEDATE = Date.UTC(2026, 7, 26, 0, 0); // the prior Wednesday, midnight UTC
+
+      const fridayAgeHours = Math.round((SUNDAY_POLL_MS - FRIDAY_FILEDATE) / (60 * 60 * 1000));
+      const wednesdayAgeHours = Math.round((SUNDAY_POLL_MS - WEDNESDAY_FILEDATE) / (60 * 60 * 1000));
+      if (fridayAgeHours >= maxAgeHours) {
+        throw new Error(
+          `fixture drift: the Friday-file scenario's elapsed ${fridayAgeHours}h is not inside the current ` +
+          `maxDataAgeHours budget (${maxAgeHours}h) — update FRIDAY_FILEDATE/SUNDAY_POLL_MS`
+        );
+      }
+      if (wednesdayAgeHours <= maxAgeHours) {
+        throw new Error(
+          `fixture drift: the control's elapsed ${wednesdayAgeHours}h is not outside the current ` +
+          `maxDataAgeHours budget (${maxAgeHours}h) — update WEDNESDAY_FILEDATE`
+        );
+      }
+
+      const originalPointInPolygon = turfStub.pointInPolygon;
+      const runWithFiledate = async (filedate) => {
+        resetHelper(helper);
+        resetLogs();
+        turfStub.pointInPolygon = () => true; // resetHelper defaults this to false
+        helper._nowMs = () => SUNDAY_POLL_MS;
+        helper._products = { showHazardsOutlook: true };
+        const fixture = () => httpResponse({
+          body: hazardsCollection([
+            hazardsFeature({ label: "Heavy Rain", startDate: Date.UTC(2026, 8, 2), endDate: Date.UTC(2026, 8, 2), filedate })
+          ]),
+          etag: "hazards-weekend-v1"
+        });
+        installHttp(helper, hazardsRoutes({ 1: fixture, 3: fixture, 4: fixture, 6: fixture, 7: fixture, 8: fixture }));
+        const out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showHazardsOutlook: true });
+        assertPayloadIntact(out);
+        assertHazardsBlockIntact(out);
+        return out;
+      };
+
+      try {
+        const fridayOut = await runWithFiledate(FRIDAY_FILEDATE);
+        if (fridayOut._stale) {
+          throw new Error(
+            `DATA-02: a weekend poll of Friday's ${fridayAgeHours}h-old file (inside the ${maxAgeHours}h budget) ` +
+            "was flagged stale — today's _isWithinStaleWindow measures time since the last successful FETCH, so " +
+            "this false alarm can only come from a newly added data-age check that does not yet account for the " +
+            "weekend gap"
+          );
+        }
+
+        // Control: without this, "not stale on a weekend" would be satisfied by an
+        // implementation that never checks age at all — precisely the "no age check"
+        // option D-13 rejected.
+        const wednesdayOut = await runWithFiledate(WEDNESDAY_FILEDATE);
+        if (wednesdayOut._stale !== true) {
+          throw new Error(
+            `control: a ${wednesdayAgeHours}h-old file (outside the ${maxAgeHours}h budget) was not flagged stale — ` +
+            "without a working age check, the primary assertion above proves nothing"
+          );
+        }
+      } finally {
+        turfStub.pointInPolygon = originalPointInPolygon;
+      }
+    }
+  },
+  {
+    // D-13: idp_filedate is PER LAYER, not per service — live 2026-08-26 recorded three
+    // distinct filedates across six layers in one poll, one ~23h staler than its siblings.
+    // A row-level shared timestamp does not exist for this product; "any layer aged out"
+    // is the rule. Layer 3 (D8-14 Temperature) carries the aged-out feature here, matching
+    // the live finding.
+    name: "hazards-idp-filedate-is-evaluated-per-layer-not-shared",
+    run: async (helper) => {
+      const maxAgeHours = PRODUCT_REGISTRY.hazardsOutlook.maxDataAgeHours;
+      const nowMs = HAZARDS_NOW_MS;
+      const freshFiledate = nowMs - 1 * 60 * 60 * 1000; // 1h old, comfortably fresh
+      const staleFiledate = nowMs - (maxAgeHours + 5) * 60 * 60 * 1000; // 5h past budget
+
+      const freshBody = () => httpResponse({
+        body: hazardsCollection([
+          hazardsFeature({ label: "Heavy Rain", startDate: Date.UTC(2026, 7, 29), endDate: Date.UTC(2026, 7, 29), filedate: freshFiledate })
+        ]),
+        etag: "hazards-freshness-fresh-v1"
+      });
+
+      const originalPointInPolygon = turfStub.pointInPolygon;
+      const runWithLayer3Filedate = async (layer3Filedate) => {
+        resetHelper(helper);
+        resetLogs();
+        turfStub.pointInPolygon = () => true; // resetHelper defaults this to false
+        helper._nowMs = () => nowMs;
+        helper._products = { showHazardsOutlook: true };
+        const layer3Body = () => httpResponse({
+          body: hazardsCollection([
+            hazardsFeature({
+              label: "Much Above Normal Temperatures",
+              startDate: Date.UTC(2026, 7, 29), endDate: Date.UTC(2026, 8, 2), filedate: layer3Filedate
+            })
+          ]),
+          etag: "hazards-freshness-layer3-v1"
+        });
+        installHttp(helper, hazardsRoutes({
+          1: freshBody, 4: freshBody, 6: freshBody, 7: freshBody, 8: freshBody,
+          3: layer3Body
+        }));
+        const out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showHazardsOutlook: true });
+        assertPayloadIntact(out);
+        assertHazardsBlockIntact(out);
+        return out;
+      };
+
+      try {
+        const staleOut = await runWithLayer3Filedate(staleFiledate);
+        // Precondition guard: layer 3's feature actually reached the payload — "stale"
+        // cannot be explained by layer 3 having failed to parse.
+        const staleBandLabels = staleOut.hazardsOutlook.windowBand.map((e) => e.label);
+        if (!staleBandLabels.includes("Much Above Normal Temperatures")) {
+          throw new Error(`precondition failed: layer 3's feature did not reach windowBand: ${JSON.stringify(staleBandLabels)}`);
+        }
+        if (staleOut._stale !== true) {
+          throw new Error(
+            `D-13: layer 3's idp_filedate is ${maxAgeHours + 5}h old (past the ${maxAgeHours}h budget) while ` +
+            "every other layer is fresh, and _stale was not set — a row-level shared timestamp does not exist " +
+            "for this product; any layer aged out must trip the badge"
+          );
+        }
+
+        // Control: the identical fixture with layer 3's filedate fresh must produce a
+        // falsy _stale, proving the trip came from layer 3's own timestamp and not from
+        // anything else in the run.
+        const freshOut = await runWithLayer3Filedate(freshFiledate);
+        if (freshOut._stale) {
+          throw new Error("control: with every layer's idp_filedate fresh, _stale was still set — the earlier trip is not attributable to layer 3 specifically");
+        }
+      } finally {
+        turfStub.pointInPolygon = originalPointInPolygon;
+      }
+    }
+  },
+  {
+    // D-15's deliberate asymmetry: a data-age trip sets the ⚠ badge (`_stale`) but must
+    // NOT drag `_staleAsOf` along with it — that field describes FETCH/network recency
+    // (Phase 14 D-04), not WPC's own publish age, and a 60+ hour-old hazards file must not
+    // make the badge speak for SPC data fetched five minutes ago.
+    name: "hazards-data-age-sets-the-badge-but-not-the-age-figure",
+    run: async (helper) => {
+      const maxAgeHours = PRODUCT_REGISTRY.hazardsOutlook.maxDataAgeHours;
+      const nowMs = HAZARDS_NOW_MS;
+      const staleFiledate = nowMs - (maxAgeHours + 5) * 60 * 60 * 1000;
+
+      const originalPointInPolygon = turfStub.pointInPolygon;
+      try {
+        // Every OTHER product quiet — ERO/WSSI toggles omitted (falsy) skip their fetch
+        // loops entirely, and SPC MD/MPD's configFlags are likewise omitted, so
+        // _runKmlAdvisoryRow returns immediately — nothing else in this run can write
+        // _oldestStaleAt, isolating the data-age trip's own effect on _staleAsOf.
+        resetHelper(helper);
+        resetLogs();
+        turfStub.pointInPolygon = () => true; // resetHelper defaults this to false
+        helper._nowMs = () => nowMs;
+        helper._products = { showHazardsOutlook: true };
+        const agedBody = () => httpResponse({
+          body: hazardsCollection([
+            hazardsFeature({ label: "Heavy Rain", startDate: Date.UTC(2026, 7, 29), endDate: Date.UTC(2026, 7, 29), filedate: staleFiledate })
+          ]),
+          etag: "hazards-d15-v1"
+        });
+        installHttp(helper, hazardsRoutes({ 4: agedBody }));
+        const out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showHazardsOutlook: true });
+        assertPayloadIntact(out);
+        assertHazardsBlockIntact(out);
+        if (out._stale !== true) {
+          throw new Error(`precondition failed: expected the aged-out layer to set _stale, got ${out._stale}`);
+        }
+        if (out._staleAsOf !== null && out._staleAsOf !== undefined) {
+          throw new Error(
+            "D-15: a data-age trip dragged _staleAsOf along with it — this would make the badge speak for SPC " +
+            `data fetched moments ago while describing a WPC file up to ${maxAgeHours}h old, got _staleAsOf=${out._staleAsOf}`
+          );
+        }
+
+        // Control: a genuine fetch failure (warm, then fail within the stale-fallback
+        // window) must leave a NUMERIC _staleAsOf via _noteStaleEntry's stale-fallback
+        // path — proving the assertion above measures D-15's deliberate omission and not a
+        // _staleAsOf this harness simply never populates under any condition.
+        resetHelper(helper);
+        resetLogs();
+        turfStub.pointInPolygon = () => true; // resetHelper defaults this to false
+        helper._nowMs = () => nowMs;
+        helper._products = { showHazardsOutlook: true };
+        const freshBody = () => httpResponse({
+          body: hazardsCollection([
+            hazardsFeature({ label: "Heavy Rain", startDate: Date.UTC(2026, 7, 29), endDate: Date.UTC(2026, 7, 29) })
+          ]),
+          etag: "hazards-d15-control-v1"
+        });
+        installHttp(helper, hazardsRoutes({ 4: freshBody }));
+        const warm = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showHazardsOutlook: true });
+        if (warm._stale) {
+          throw new Error("control warm-up: an all-fresh poll was unexpectedly flagged stale");
+        }
+        helper._updateInterval = 60;
+        const entry = helper._geoJsonCache.get(HAZARDS_URLS[4]);
+        if (!entry) throw new Error("control warm-up: no cache entry for the hazards layer-4 URL");
+        entry.timestamp = Date.now() - 65 * 60 * 1000; // within the 2x-interval stale-fallback window
+        installHttp(helper, hazardsRoutes({ 4: () => httpResponse({ status: 503, text: "service unavailable" }) }));
+        const failed = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showHazardsOutlook: true });
+        if (typeof failed._staleAsOf !== "number") {
+          throw new Error(
+            `control: a genuine fetch failure did not leave a numeric _staleAsOf — got ${failed._staleAsOf}, ` +
+            "which would make the primary assertion above vacuous (this harness would never populate " +
+            "_staleAsOf under any condition)"
+          );
+        }
+      } finally {
+        turfStub.pointInPolygon = originalPointInPolygon;
+      }
+    }
+  },
+  {
+    // D-16, end to end: a data-age trip is an age signal, not a false negative.
+    // rejectBody's serve-last-known-good precedent exists precisely so a WPC hiccup during
+    // an active hazard does not blank the display; suppressing rows on `_stale` would
+    // convert an age signal into exactly that false negative.
+    name: "hazards-stale-data-still-renders-its-rows",
+    run: async (helper) => {
+      const maxAgeHours = PRODUCT_REGISTRY.hazardsOutlook.maxDataAgeHours;
+      resetHelper(helper);
+      resetLogs();
+      helper._nowMs = () => HAZARDS_NOW_MS;
+      helper._products = { showHazardsOutlook: true };
+      const originalPointInPolygon = turfStub.pointInPolygon;
+      turfStub.pointInPolygon = () => true;
+      let out;
+      try {
+        const staleFiledate = HAZARDS_NOW_MS - (maxAgeHours + 5) * 60 * 60 * 1000;
+        const layer4Body = hazardsCollection([
+          hazardsFeature({ label: "Heavy Rain", startDate: Date.UTC(2026, 7, 29), endDate: Date.UTC(2026, 7, 29), filedate: staleFiledate })
+        ]);
+        installHttp(helper, hazardsRoutes({
+          4: () => httpResponse({ body: layer4Body, etag: "hazards-d16-v1" })
+        }));
+        out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showHazardsOutlook: true });
+        assertPayloadIntact(out);
+        assertHazardsBlockIntact(out);
+      } finally {
+        turfStub.pointInPolygon = originalPointInPolygon;
+      }
+      if (out._stale !== true) {
+        throw new Error(`precondition failed: expected the aged-out layer to set _stale, got ${out._stale}`);
+      }
+      if (!out.hazardsOutlook.day3.hazards.some((h) => h.label === "Heavy Rain")) {
+        throw new Error(`precondition failed: Heavy Rain did not reach day3: ${JSON.stringify(out.hazardsOutlook.day3.hazards)}`);
+      }
+
+      const frontend = loadFrontendModule();
+      const config = {
+        lat: PROBE_LAT, lon: PROBE_LON, extended: false, updateInterval: 60,
+        proximityWeighting: false, showExcessiveRain: false, showWinterImpact: false,
+        showHazardsOutlook: true, showDrought: false
+      };
+      const rendered = renderDom(frontend, { config, spcrisk: out });
+      if (!rendered.includes("⚠")) {
+        throw new Error(`D-16: expected the stale badge to render alongside the hazard, got: ${rendered}`);
+      }
+      if (!rendered.includes("Heavy Rain")) {
+        throw new Error(`D-16: a data-age trip suppressed the hazard row instead of just badging it: ${rendered}`);
+      }
+      if (rendered === "No Severe Weather Risk" || rendered.endsWith("No Severe Weather Risk (unconfirmed)")) {
+        throw new Error(`D-16: stale hazard content rendered as an all-clear instead of its actual rows: ${rendered}`);
       }
     }
   }
