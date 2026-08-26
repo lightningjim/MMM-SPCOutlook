@@ -125,6 +125,11 @@ const KMZ_MAX_KML_BYTES = 8 * 1024 * 1024;
 // reading's real age.
 const STALE_WINDOW_INTERVALS = 2;
 
+// The Hazards Outlook's day-bucketing arithmetic (`_hazardDayOffset`) divides an
+// epoch-ms span by this to get a day count — no date library is used anywhere in this
+// file, so this is the one place that fact is spelled out.
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
 module.exports = NodeHelper.create({
   // Exposed on the helper object (rather than kept purely module-private) so offline
   // probes can exercise the allowlist directly against the module-scope implementation
@@ -175,6 +180,12 @@ module.exports = NodeHelper.create({
     this._unusableFeatureCount = 0;
     // WR-04: oldest cached timestamp contributing to the payload under assembly.
     this._oldestStaleAt = null;
+    // D-11: an unmapped Hazards Outlook label must render verbatim and be logged
+    // *once*, not once per feature/poll. This Set is that once-per-process ledger.
+    // Initialised here (not lazily) so resetHelper clears it between probe scenarios —
+    // otherwise a log assertion in one scenario could be satisfied by a previous
+    // scenario's entry.
+    this._loggedUnmappedHazardLabels = new Set();
     this._products = this._productToggles();
   },
 
@@ -1331,6 +1342,152 @@ module.exports = NodeHelper.create({
     if (this._oldestStaleAt === null || this._oldestStaleAt === undefined ||
         entry.timestamp < this._oldestStaleAt) {
       this._oldestStaleAt = entry.timestamp;
+    }
+  },
+
+  /**
+   * The current time in epoch milliseconds — a seam, in the same spirit as `_fetch(url,
+   * options)`. The Hazards Outlook's day keys are derived by comparing a static remote
+   * date (a feature's own `start_date`/`end_date`) against a live clock; a probe cannot
+   * advance the system clock, so without this seam the day-offset-drift regression (the
+   * phase's highest-risk item — 16-RESEARCH.md "Freshness Integration") is untestable.
+   * `resetHelper` restores it automatically via `ORIGINAL_SEAMS` — no harness change
+   * needed.
+   * @returns epoch milliseconds
+   */
+  _nowMs() {
+    return Date.now();
+  },
+
+  /**
+   * UTC midnight of the current day, derived from `_nowMs()` so a probe overriding that
+   * seam moves this too. Only `getUTC*` getters and `Date.UTC` are permitted here —
+   * `getFullYear()`/`getMonth()`/`getDate()` or `new Date(y, m, d)` would silently
+   * reintroduce a timezone bug on a Raspberry Pi whose system clock is not UTC, and
+   * there is no date library on this backend to enforce it, so this is enforced by
+   * review and by the grep gate in the Hazards Outlook plan's acceptance criteria.
+   * @returns epoch milliseconds of today's UTC midnight
+   */
+  _todayUtcMs() {
+    const d = new Date(this._nowMs());
+    return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+  },
+
+  /**
+   * The signed day offset of an epoch-ms value relative to today's UTC midnight. Every
+   * `start_date`/`end_date` observed live on 2026-08-26 across 32 Hazards Outlook
+   * features was exact UTC midnight, so this division is exact; `Math.round` is a
+   * defensive guard against a future WPC payload that is not midnight-aligned, not a
+   * workaround for a known case.
+   * @param epochMs - a feature's start_date/end_date, epoch milliseconds
+   * @param todayUtcMs - this poll's `_todayUtcMs()` value
+   * @returns integer day offset (0 = today, negative = past, positive = future)
+   */
+  _hazardDayOffset(epochMs, todayUtcMs) {
+    return Math.round((epochMs - todayUtcMs) / MS_PER_DAY);
+  },
+
+  /**
+   * The `YYYY-MM-DD` UTC calendar date for an epoch-ms value. This is the Hazards
+   * Outlook's per-day `date` field, and the `startDate`/`endDate` its window band
+   * carries. The frontend derives the weekday from this string rather than computing
+   * `dowToText(dow + N)`, because WPC's "Day N" boundary differs from SPC's and offset
+   * arithmetic drifts by one.
+   * @param epochMs - epoch milliseconds
+   * @returns "YYYY-MM-DD", or null for a non-finite input
+   */
+  _utcDateString(epochMs) {
+    if (typeof epochMs !== "number" || !Number.isFinite(epochMs)) return null;
+    const d = new Date(epochMs);
+    const year = d.getUTCFullYear();
+    const month = String(d.getUTCMonth() + 1).padStart(2, "0");
+    const day = String(d.getUTCDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  },
+
+  /**
+   * The LOCKED reading of the Hazards Outlook's full-nominal-window guard: "full
+   * nominal window" means exact offset alignment to the layer's own `[first, last]`
+   * (`[3,7]` / `[8,14]`), NOT merely "same duration, any position." A 5-day feature
+   * positioned off-window is genuinely day-resolved information and belongs in the day
+   * rows, not the window band — do not "fix" this into a duration check.
+   * @param offsetStart - a feature's start offset (from _hazardDayOffset)
+   * @param offsetEnd - a feature's end offset (from _hazardDayOffset)
+   * @param dayRange - the layer's own [first, last] nominal window
+   * @returns true only on exact alignment to dayRange
+   */
+  _isFullNominalWindow(offsetStart, offsetEnd, dayRange) {
+    return offsetStart === dayRange[0] && offsetEnd === dayRange[1];
+  },
+
+  /**
+   * Route one normalized Hazards Outlook match into either the per-day bucket grid or
+   * the window band, mutating both accumulators in place. Performs no fetching and no
+   * ordering — ordering is owned by the runner that assembles the final payload.
+   *
+   * `match` is this product's clock-independent unit — the same shape a fresh fetch and
+   * a cache-hit replay both produce, so bucketing cannot diverge between the two paths:
+   *   { label: string, startDate: number, endDate: number, idpFiledate: number|null }
+   * `startDate`/`endDate` are the feature's raw epoch-ms `start_date`/`end_date`. It
+   * carries no day key and no offset — a cached unit must never contain a value whose
+   * correctness depends on an external clock (16-RESEARCH.md "Freshness Integration").
+   *
+   * @param match - the normalized match (see shape above)
+   * @param layer - { id, group, dayRange } — the registry row's layer descriptor
+   * @param todayUtcMs - this poll's `_todayUtcMs()` value
+   * @param dayBuckets - { [offset]: [{label}] } accumulator, mutated in place
+   * @param windowEntries - [] accumulator for window-band entries, mutated in place
+   */
+  _bucketHazardMatch(match, layer, todayUtcMs, dayBuckets, windowEntries) {
+    // A malformed match is contained here so its siblings' day and window entries
+    // survive (CR-02 lesson, extended to the bucketing step). Nothing is logged — a
+    // per-feature date miss is not actionable and would be noisy at ~27 features/layer.
+    if (!match || typeof match.startDate !== "number" || typeof match.endDate !== "number" ||
+        !Number.isFinite(match.startDate) || !Number.isFinite(match.endDate)) {
+      return;
+    }
+
+    const offsetStart = this._hazardDayOffset(match.startDate, todayUtcMs);
+    const offsetEnd = this._hazardDayOffset(match.endDate, todayUtcMs);
+    // An inverted span from a malformed upstream feature — contained, not thrown.
+    if (offsetEnd < offsetStart) return;
+
+    const entry = {
+      label: match.label,
+      startDate: this._utcDateString(match.startDate),
+      endDate: this._utcDateString(match.endDate),
+      offsetStart,
+      offsetEnd
+    };
+
+    if (layer.group !== "precipitation") {
+      // HAZ-02: Temperature and Wildfire/Drought carry no per-day resolution and route
+      // to the window band unconditionally, regardless of observed span. Live
+      // 2026-08-26 the Temperature layer alone produced 1-day, 4-day and 5-day spans in
+      // one poll, so any "these always span the whole window" assumption is empirically
+      // false (refines Pitfall 3). The entry carries its own observed span, never the
+      // layer's nominal window.
+      windowEntries.push(entry);
+      return;
+    }
+
+    if (this._isFullNominalWindow(offsetStart, offsetEnd, layer.dayRange)) {
+      // D-04's guard: a Precipitation feature spanning its layer's entire nominal
+      // window is window-level information, and repeating it identically on every day
+      // would advertise a daily resolution the data does not have (Pitfall 3's spread
+      // failure). LOCKED reading: exact offset alignment to [3,7]/[8,14], not
+      // duration-only.
+      windowEntries.push(entry);
+      return;
+    }
+
+    // D-04: a 2-day "Heavy Rain" renders on both days, because the day grid answers "is
+    // there a hazard on this day" and on day two the answer is yes. Clamp the loop
+    // bounds at the header (Math.max/Math.min) rather than filtering inside the body,
+    // so a hostile [-1e9, 1e9] span cannot produce an unbounded iteration (T-16-05).
+    for (let d = Math.max(offsetStart, 3); d <= Math.min(offsetEnd, 14); d++) {
+      if (!dayBuckets[d]) dayBuckets[d] = [];
+      dayBuckets[d].push({ label: match.label });
     }
   },
 
