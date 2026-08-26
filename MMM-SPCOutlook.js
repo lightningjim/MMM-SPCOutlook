@@ -8,6 +8,8 @@
     showExcessiveRain: false,   // WPC Excessive Rainfall Outlook toggle; every new product flag defaults to false
     showWinterImpact: false,    // WPC WSSI Overall Impact toggle; every new product flag defaults to false
     showMPD: false,             // WPC Mesoscale Precipitation Discussion toggle; every new product flag defaults to false
+    showHazardsOutlook: false,  // WPC Day 3-7 / CPC Day 8-14 US Hazards Outlook toggle; every new product flag defaults to false
+    showDrought: false,         // D-10: sub-toggle WITHIN hazardsOutlook - shows Severe Drought / Rapid Onset Drought Risk labels. Not a product flag: it gates labels inside an already-fetched product rather than gating a fetch, so it has no registry configFlag and travels via node_helper's SUB_TOGGLES list.
     // Deviation from CFG-01 ("every new product flag defaults to false"): SPC Mesoscale
     // Discussions are a shipping, always-on feature being migrated into the registry under
     // D-02, not a new product. Defaulting this false would silently delete a live
@@ -50,7 +52,9 @@
         showExcessiveRain: this.config.showExcessiveRain,
         showWinterImpact: this.config.showWinterImpact,
         showMPD: this.config.showMPD,
-        showSPCMD: this.config.showSPCMD
+        showSPCMD: this.config.showSPCMD,
+        showHazardsOutlook: this.config.showHazardsOutlook,
+        showDrought: this.config.showDrought
       }
     };
   },
