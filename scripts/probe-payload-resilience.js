@@ -4308,7 +4308,172 @@ const scenarios = [
         throw new Error(`control failed: Critical Wildfire Risk missing from rendered markup: ${rendered}`);
       }
     }
-  }
+  },
+  {
+    // 16-RESEARCH.md "Newly identified pitfall: day-offset drift on a cache hit" — the
+    // phase's highest-risk item. This product's day key is a property of the CLOCK: a
+    // feature fixed at Aug 29 00:00Z is day3 on Aug 26 and day2 on Aug 27, with unchanged
+    // bytes and an ETag that never fires. ero-rejected-body-serves-last-known-good's
+    // warm/degrade two-phase structure is the model to COPY; its
+    // `out.excessiveRain.day1Risk !== "SLGT"` assertion of BYTE-IDENTICAL output across a
+    // cache hit is exactly INVERTED here — ERO's day key lives in the URL and cannot move
+    // on a hit; this product's day key lives in the clock and MUST move on a hit. With the
+    // confirmed Mon-Fri-only cadence, every weekend poll and every between-issuance poll is
+    // exactly this state.
+    name: "hazards-day-keys-shift-on-a-cache-hit-when-the-day-advances",
+    run: async (helper) => {
+      const originalPointInPolygon = turfStub.pointInPolygon;
+      try {
+        // --- Steps 1-6: the headline negative case — the hazard falls OFF the grid ---
+        resetHelper(helper);
+        resetLogs();
+        turfStub.pointInPolygon = () => true; // resetHelper defaults this to false
+        helper._nowMs = () => HAZARDS_NOW_MS; // Wed Aug 26 2026 13:00Z
+        helper._products = { showHazardsOutlook: true };
+        const singleFeature = hazardsCollection([
+          hazardsFeature({ label: "Heavy Rain", startDate: Date.UTC(2026, 7, 29), endDate: Date.UTC(2026, 7, 29) })
+        ]);
+        installHttp(helper, hazardsRoutes({
+          4: () => httpResponse({ body: singleFeature, etag: "hazards-v1" })
+        }));
+
+        const wed = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showHazardsOutlook: true });
+        assertPayloadIntact(wed);
+        assertHazardsBlockIntact(wed);
+        if (wed.hazardsOutlook.day3.hazards.length !== 1 || wed.hazardsOutlook.day3.hazards[0].label !== "Heavy Rain") {
+          throw new Error(`warm-up: expected day3 to carry one Heavy Rain hazard, got ${JSON.stringify(wed.hazardsOutlook.day3.hazards)}`);
+        }
+        if ("day2" in wed.hazardsOutlook) {
+          throw new Error("warm-up: hazardsOutlook unexpectedly carries a day2 key — the grid must start at day3");
+        }
+        if (wed.hazardsOutlook.day4.hazards.length !== 0) {
+          throw new Error(`warm-up: day4 expected empty, got ${JSON.stringify(wed.hazardsOutlook.day4.hazards)}`);
+        }
+
+        // Precondition guard — the cache must actually be warm and clock-independent, or
+        // the drift assertions below cannot distinguish a correct re-bucketing from a
+        // lucky replay (the exact vacuity mode that made Phase 15's 15-05 mutation yield
+        // zero RED scenarios).
+        const entry = helper._geoJsonCache.get(HAZARDS_URLS[4]);
+        if (!entry) {
+          throw new Error("precondition failed: no cache entry for the hazards layer-4 URL — the warm-up poll did not populate the cache");
+        }
+        const cachedJson = JSON.stringify(entry.result);
+        if (/day\d|offsetStart|offsetEnd|dayOffset/.test(cachedJson)) {
+          throw new Error(
+            "precondition failed: the cached entry carries a clock-dependent field, so the drift assertion below " +
+            `cannot distinguish a correct re-bucketing from a lucky replay: ${cachedJson}`
+          );
+        }
+
+        // Advance the clock 24h with NO upstream change — the SAME body, the SAME ETag, so
+        // the fetch legitimately hash/ETag-hits and the runner takes the cache path. Do not
+        // change a single byte of the fixture.
+        helper._nowMs = () => Date.UTC(2026, 7, 27, 13, 0); // Thursday
+        installHttp(helper, hazardsRoutes({
+          4: () => httpResponse({ body: singleFeature, etag: "hazards-v1" })
+        }));
+
+        const thu = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showHazardsOutlook: true });
+        assertPayloadIntact(thu);
+        assertHazardsBlockIntact(thu);
+        if (thu.hazardsOutlook.day2 !== undefined) {
+          throw new Error("thu: hazardsOutlook unexpectedly carries a day2 key — the grid must still start at day3");
+        }
+        for (let d = 3; d <= 14; d++) {
+          if (thu.hazardsOutlook[`day${d}`].hazards.length !== 0) {
+            throw new Error(
+              "day-offset drift: a cache hit replayed the previous day's bucketing — Heavy Rain fixed at Aug 29 " +
+              "is day3 on Aug 26 and day2 on Aug 27 (offset 2, outside the 3..14 grid, so it must render on NO " +
+              `day), and the ETag never fires because the bytes did not change. Found a hazard surviving on ` +
+              `day${d}: ${JSON.stringify(thu.hazardsOutlook[`day${d}`].hazards)}`
+            );
+          }
+        }
+        if (thu.hazardsOutlook.day3.date !== "2026-08-30") {
+          throw new Error(`D-01: thu.hazardsOutlook.day3.date expected 2026-08-30 (the date labels advance too), got ${thu.hazardsOutlook.day3.date}`);
+        }
+
+        // --- Step 7: the positive half — proves re-bucketing actually RECOMPUTES rather
+        // than merely emptying. Warm on a Monday (Aug 29 is offset 5), advance to the
+        // following Wednesday (offset 3) with the same bytes/etag, and the hazard must MOVE
+        // from day5 to day3, not simply vanish from day5.
+        resetHelper(helper);
+        resetLogs();
+        turfStub.pointInPolygon = () => true; // resetHelper defaults this to false
+        helper._nowMs = () => Date.UTC(2026, 7, 24); // Monday
+        helper._products = { showHazardsOutlook: true };
+        const fetchFn = installHttp(helper, hazardsRoutes({
+          4: () => httpResponse({ body: singleFeature, etag: "hazards-v1" })
+        }));
+
+        const mon = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showHazardsOutlook: true });
+        assertPayloadIntact(mon);
+        assertHazardsBlockIntact(mon);
+        if (mon.hazardsOutlook.day5.hazards.length !== 1 || mon.hazardsOutlook.day5.hazards[0].label !== "Heavy Rain") {
+          throw new Error(`positive-half warm-up: expected day5 (Monday + 5 = Aug 29) to carry Heavy Rain, got ${JSON.stringify(mon.hazardsOutlook.day5.hazards)}`);
+        }
+        if (mon.hazardsOutlook.day3.hazards.length !== 0) {
+          throw new Error(`positive-half warm-up: expected day3 empty, got ${JSON.stringify(mon.hazardsOutlook.day3.hazards)}`);
+        }
+
+        helper._nowMs = () => Date.UTC(2026, 7, 26); // Wednesday, 2 days later — a cache hit
+        const wed2 = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showHazardsOutlook: true });
+        assertPayloadIntact(wed2);
+        assertHazardsBlockIntact(wed2);
+        if (wed2.hazardsOutlook.day3.hazards.length !== 1 || wed2.hazardsOutlook.day3.hazards[0].label !== "Heavy Rain") {
+          throw new Error(
+            `expected day key 3 (Wednesday + 3 = Aug 29) after a cache hit, got day3=${JSON.stringify(wed2.hazardsOutlook.day3.hazards)}, ` +
+            `day5=${JSON.stringify(wed2.hazardsOutlook.day5.hazards)} — a cache hit must re-derive the day key against the new clock, not replay the old one`
+          );
+        }
+        if (wed2.hazardsOutlook.day5.hazards.length !== 0) {
+          throw new Error(`expected day5 now empty (the hazard moved to day3), got ${JSON.stringify(wed2.hazardsOutlook.day5.hazards)}`);
+        }
+
+        // Step 9: the cache path taken on the second poll above is a real conditional
+        // request against a warm cache entry, not a skipped fetch and not "recompute from
+        // scratch every poll" (the vacuity M4 proves against) — "the day keys changed"
+        // cannot be explained by the second poll never having run, and the second
+        // request's If-None-Match proves a real cache entry was written and consulted.
+        const layer4Requests = fetchFn.calls.filter((c) => c.url === HAZARDS_URLS[4]);
+        if (layer4Requests.length !== 2) {
+          throw new Error(`expected the layer-4 URL requested on both polls of the positive half, got ${layer4Requests.length} calls`);
+        }
+        if (layer4Requests[1].headers["If-None-Match"] !== "hazards-v1") {
+          throw new Error(
+            "expected the second poll's request to carry If-None-Match: hazards-v1, proving a real cache entry " +
+            `was written by the first poll and consulted by the second, got headers=${JSON.stringify(layer4Requests[1].headers)}`
+          );
+        }
+
+        // --- Step 8: control — with the clock held FIXED across two polls and the same
+        // bytes, the two payloads' hazardsOutlook blocks must be deep-equal. Without this,
+        // the drift assertions above would be satisfied by an implementation that simply
+        // discards its cache and produces arbitrary-but-correct output on every poll — the
+        // fix degrading into "never cache anything".
+        resetHelper(helper);
+        resetLogs();
+        turfStub.pointInPolygon = () => true; // resetHelper defaults this to false
+        helper._nowMs = () => Date.UTC(2026, 7, 24);
+        helper._products = { showHazardsOutlook: true };
+        installHttp(helper, hazardsRoutes({
+          4: () => httpResponse({ body: singleFeature, etag: "hazards-v1" })
+        }));
+        const controlA = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showHazardsOutlook: true });
+        const controlB = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showHazardsOutlook: true });
+        if (JSON.stringify(controlA.hazardsOutlook) !== JSON.stringify(controlB.hazardsOutlook)) {
+          throw new Error(
+            "control failed: two polls with the clock held fixed and identical bytes produced different " +
+            `hazardsOutlook blocks — the fix degraded into "never cache anything": ` +
+            `${JSON.stringify(controlA.hazardsOutlook)} vs ${JSON.stringify(controlB.hazardsOutlook)}`
+          );
+        }
+      } finally {
+        turfStub.pointInPolygon = originalPointInPolygon;
+      }
+    }
+  },
 ];
 
 // ---------------------------------------------------------------------
