@@ -301,6 +301,20 @@ const WSSI_URLS = {
   3: PRODUCT_REGISTRY.winterImpact.buildUrl(3)
 };
 
+// Never hardcode a hazards URL — derived by iterating PRODUCT_REGISTRY.hazardsOutlook.layers
+// and calling its own buildUrl, exactly like ERO_URLS/WSSI_URLS, so a layer-id change in
+// productRegistry.js cannot leave a stale literal here (Pitfall 11, cache-key drift).
+const HAZARDS_URLS = {};
+for (const layer of PRODUCT_REGISTRY.hazardsOutlook.layers) {
+  HAZARDS_URLS[layer.id] = PRODUCT_REGISTRY.hazardsOutlook.buildUrl(layer.id);
+}
+
+// The pinned "now" for every Hazards Outlook scenario in this file — Wed Aug 26 2026
+// 13:00Z, matching 16-RESEARCH.md's live pull. Every hazards scenario overrides
+// helper._nowMs with this constant as its first act after resetHelper, so day offsets are
+// deterministic and the suite cannot go red at a date boundary (T-16-26).
+const HAZARDS_NOW_MS = Date.UTC(2026, 7, 26, 13, 0);
+
 // The live MPD hazard-type table, verbatim from RESEARCH.md's MPD_1118_final.kmz sample.
 // Used by harness-real-kml-deps-round-trip to pin togeojson's description-object shape
 // (RESEARCH.md Pitfall 3) as executable ground truth before any product code depends on it.
@@ -709,6 +723,53 @@ function wssiRoutes(day1Handler) {
   ];
 }
 
+// Routes for the Hazards Outlook HTTP-seam scenarios, mirroring eroHttpRoutes/wssiRoutes:
+// ALL SIX hazards URLs answer 200 with an empty collection by default, plus every ERO/WSSI
+// URL and the SPC/fire-weather ".lyr.geojson" catch-all — nothing outside the scenario's
+// subject may hard-fail, or anyStale is set by a layer the scenario is not testing and its
+// `_stale` assertion becomes vacuous (WR-02's trap, T-16-25). `overrides` is keyed by layer
+// id (1, 3, 4, 6, 7, 8, per hazardsOutlookLayers); a layer id present there gets its own
+// handler instead of the quiet default.
+function hazardsRoutes(overrides = {}) {
+  const okEmpty = () => httpResponse({ body: EMPTY_FEATURE_COLLECTION, etag: "hazards-empty-v1" });
+  const routes = [];
+  for (const layer of PRODUCT_REGISTRY.hazardsOutlook.layers) {
+    routes.push([HAZARDS_URLS[layer.id], overrides[layer.id] || okEmpty]);
+  }
+  routes.push(
+    [ERO_URLS[1], okEmpty], [ERO_URLS[2], okEmpty], [ERO_URLS[3], okEmpty],
+    [ERO_URLS[4], okEmpty], [ERO_URLS[5], okEmpty],
+    [WSSI_URLS[1], okEmpty], [WSSI_URLS[2], okEmpty], [WSSI_URLS[3], okEmpty],
+    [".lyr.geojson", okEmpty]
+  );
+  return routes;
+}
+
+// Builds one Hazards Outlook GeoJSON feature. 16-RESEARCH.md live-verified every
+// start_date/end_date on this service is exact UTC midnight epoch ms, so fixtures must
+// match that shape — startDate/endDate are epoch ms, not date strings. HAZ-03 / Pitfall 8
+// (T-16-24): carries ONLY a lowercase `label` property, deliberately NO uppercase `LABEL`
+// — a fixture that also carried `LABEL` could satisfy extractPolygons's hardcoded
+// uppercase read and mask a HAZ-03 regression. `filedate` defaults to `startDate` when
+// omitted, which is safe against every pinned-clock scenario in this file (a future
+// startDate is never stale relative to HAZARDS_NOW_MS).
+function hazardsFeature({ label, startDate, endDate, filedate }) {
+  return {
+    type: "Feature",
+    properties: {
+      label,
+      start_date: startDate,
+      end_date: endDate,
+      idp_filedate: filedate !== undefined ? filedate : startDate
+    },
+    geometry: { type: "Polygon", coordinates: [SAMPLE_RING] }
+  };
+}
+
+function hazardsCollection(features) {
+  return { type: "FeatureCollection", features };
+}
+
 // ---------------------------------------------------------------------
 // Payload contract assertion
 // ---------------------------------------------------------------------
@@ -807,6 +868,38 @@ function assertPayloadIntact(out) {
         `(got ${JSON.stringify(out.advisories[row.id])})`
       );
     }
+  }
+}
+
+// Phase 14 D-05: one payload shape always — a toggle being off never changes it.
+// assertPayloadIntact deliberately covers only the top-level day1..day8, so this is the
+// Hazards Outlook block's own shape gate, exercised by every hazards-* scenario.
+function assertHazardsBlockIntact(out) {
+  const block = out && out.hazardsOutlook;
+  if (typeof block !== "object" || block === null) {
+    throw new Error("assertHazardsBlockIntact: hazardsOutlook missing or not an object");
+  }
+  const keys = Object.keys(block);
+  if (keys.length !== 13) {
+    throw new Error(
+      `assertHazardsBlockIntact: hazardsOutlook has ${keys.length} keys, expected 13 (day3..day14 + windowBand)`
+    );
+  }
+  for (let d = 3; d <= 14; d++) {
+    const key = `day${d}`;
+    const entry = block[key];
+    if (typeof entry !== "object" || entry === null) {
+      throw new Error(`assertHazardsBlockIntact: ${key} missing or not an object`);
+    }
+    if (typeof entry.date !== "string") {
+      throw new Error(`assertHazardsBlockIntact: ${key}.date is not a string (got ${JSON.stringify(entry.date)})`);
+    }
+    if (!Array.isArray(entry.hazards)) {
+      throw new Error(`assertHazardsBlockIntact: ${key}.hazards is not an array`);
+    }
+  }
+  if (!Array.isArray(block.windowBand)) {
+    throw new Error("assertHazardsBlockIntact: windowBand is not an array");
   }
 }
 
@@ -3647,6 +3740,572 @@ const scenarios = [
         if (!out.includes(escaped)) {
           throw new Error(`remote text containing ${raw} did not render as ${escaped}: ${out}`);
         }
+      }
+    }
+  },
+  {
+    // T-16-25: hazardsRoutes()'s default table must itself be quiet — installed via
+    // installHttp with zero overrides, it must not set anyStale on its own. This is pinned
+    // separately from every other hazards-* scenario (which override one or more layers)
+    // because a quiet-by-default regression in an UNoverridden layer could hide behind an
+    // override elsewhere; this scenario overrides nothing.
+    name: "hazards-routes-are-quiet-by-default",
+    run: async (helper) => {
+      resetHelper(helper);
+      resetLogs();
+      helper._nowMs = () => HAZARDS_NOW_MS;
+      helper._products = { showHazardsOutlook: true };
+      installHttp(helper, hazardsRoutes());
+      const out = await helper.getSpcOutlook(
+        PROBE_LAT, PROBE_LON, false, { showHazardsOutlook: true }
+      );
+      assertPayloadIntact(out);
+      assertHazardsBlockIntact(out);
+      const keyCount = Object.keys(out.hazardsOutlook).length;
+      if (keyCount !== 13) {
+        throw new Error(`hazardsRoutes()'s default table produced ${keyCount} hazardsOutlook keys, expected 13`);
+      }
+      if (out._stale) {
+        throw new Error("hazardsRoutes()'s default (all-quiet) table set anyStale — WR-02's trap");
+      }
+    }
+  },
+  {
+    // HAZ-01, D-04: the day-bucketing arithmetic has no live example to validate against —
+    // both live Precipitation layers returned zero features on 2026-08-26 — so this
+    // synthetic fixture carries that weight. Layer 4 (precipitation, dayRange [3,7]) is
+    // given a two-day "Heavy Rain" span (offsets 3-4, NOT the full [3,7] nominal window, so
+    // it must bucket per-day rather than route to the window band) and a one-day "Heavy
+    // Snow" (offset 5).
+    name: "hazards-precip-spread-buckets-every-day-in-span",
+    run: async (helper) => {
+      resetHelper(helper);
+      resetLogs();
+      helper._nowMs = () => HAZARDS_NOW_MS;
+      helper._products = { showHazardsOutlook: true };
+      const originalPointInPolygon = turfStub.pointInPolygon;
+      turfStub.pointInPolygon = () => true;
+      try {
+        const layer4Body = hazardsCollection([
+          hazardsFeature({ label: "Heavy Rain", startDate: Date.UTC(2026, 7, 29), endDate: Date.UTC(2026, 7, 30) }),
+          hazardsFeature({ label: "Heavy Snow", startDate: Date.UTC(2026, 7, 31), endDate: Date.UTC(2026, 7, 31) })
+        ]);
+        installHttp(helper, hazardsRoutes({
+          4: () => httpResponse({ body: layer4Body, etag: "hazards-precip-v1" })
+        }));
+        const out = await helper.getSpcOutlook(
+          PROBE_LAT, PROBE_LON, false, { showHazardsOutlook: true }
+        );
+        assertPayloadIntact(out);
+        assertHazardsBlockIntact(out);
+
+        // Precondition guard: prove the fixture actually reached the payload before
+        // asserting on emptiness elsewhere, so a fixture that never reached the runner
+        // cannot pass by rendering nothing everywhere.
+        const reachedCount = out.hazardsOutlook.day3.hazards.length + out.hazardsOutlook.day5.hazards.length;
+        if (reachedCount !== 2) {
+          throw new Error(
+            `precondition failed: expected the fixture's two features to reach day3/day5, ` +
+            `got day3=${out.hazardsOutlook.day3.hazards.length} day5=${out.hazardsOutlook.day5.hazards.length}`
+          );
+        }
+
+        if (!out.hazardsOutlook.day3.hazards.some((h) => h.label === "Heavy Rain")) {
+          throw new Error(`day3 expected to contain Heavy Rain, got ${JSON.stringify(out.hazardsOutlook.day3.hazards)}`);
+        }
+        if (!out.hazardsOutlook.day4.hazards.some((h) => h.label === "Heavy Rain")) {
+          throw new Error(`day4 expected to contain Heavy Rain, got ${JSON.stringify(out.hazardsOutlook.day4.hazards)}`);
+        }
+        if (!out.hazardsOutlook.day5.hazards.some((h) => h.label === "Heavy Snow")) {
+          throw new Error(`day5 expected to contain Heavy Snow, got ${JSON.stringify(out.hazardsOutlook.day5.hazards)}`);
+        }
+        for (let d = 6; d <= 14; d++) {
+          if (out.hazardsOutlook[`day${d}`].hazards.length !== 0) {
+            throw new Error(`day${d} expected empty, got ${JSON.stringify(out.hazardsOutlook[`day${d}`].hazards)}`);
+          }
+        }
+        if (out.hazardsOutlook.windowBand.length !== 0) {
+          throw new Error(`windowBand expected empty, got ${JSON.stringify(out.hazardsOutlook.windowBand)}`);
+        }
+        if (out.hazardsOutlook.day3.date !== "2026-08-29") {
+          throw new Error(`day3.date expected 2026-08-29, got ${out.hazardsOutlook.day3.date}`);
+        }
+      } finally {
+        turfStub.pointInPolygon = originalPointInPolygon;
+      }
+    }
+  },
+  {
+    // HAZ-03 / Pitfall 8: extractPolygons hardcodes f.properties.LABEL (uppercase) at
+    // node_helper.js:1005, so this service's row.toValue must read f.properties.label
+    // (lowercase) directly off the feature. The control feature carries ONLY the
+    // uppercase LABEL — no lowercase label — and must produce NO entry, proving the row
+    // reads the lowercase field specifically rather than falling back to whatever the
+    // positional parameter happens to carry.
+    name: "hazards-lowercase-label-is-read-not-dropped",
+    run: async (helper) => {
+      resetHelper(helper);
+      resetLogs();
+      helper._nowMs = () => HAZARDS_NOW_MS;
+      helper._products = { showHazardsOutlook: true };
+      const originalPointInPolygon = turfStub.pointInPolygon;
+      turfStub.pointInPolygon = () => true;
+      try {
+        const lowercaseFeature = hazardsFeature({
+          label: "Heavy Rain", startDate: Date.UTC(2026, 7, 29), endDate: Date.UTC(2026, 7, 29)
+        });
+        // Control: ONLY an uppercase LABEL, no lowercase label at all.
+        const uppercaseOnlyFeature = {
+          type: "Feature",
+          properties: {
+            LABEL: "Heavy Snow",
+            start_date: Date.UTC(2026, 7, 29),
+            end_date: Date.UTC(2026, 7, 29),
+            idp_filedate: Date.UTC(2026, 7, 29)
+          },
+          geometry: { type: "Polygon", coordinates: [SAMPLE_RING] }
+        };
+        const layer4Body = hazardsCollection([lowercaseFeature, uppercaseOnlyFeature]);
+        installHttp(helper, hazardsRoutes({
+          4: () => httpResponse({ body: layer4Body, etag: "hazards-label-v1" })
+        }));
+        const out = await helper.getSpcOutlook(
+          PROBE_LAT, PROBE_LON, false, { showHazardsOutlook: true }
+        );
+        assertPayloadIntact(out);
+        assertHazardsBlockIntact(out);
+
+        if (!out.hazardsOutlook.day3.hazards.some((h) => h.label === "Heavy Rain")) {
+          throw new Error(
+            `expected day3.hazards to contain Heavy Rain (the lowercase-label feature), ` +
+            `got ${JSON.stringify(out.hazardsOutlook.day3.hazards)}`
+          );
+        }
+        if (out.hazardsOutlook.day3.hazards.some((h) => h.label === "Heavy Snow")) {
+          throw new Error(
+            `control failed: the LABEL-only feature (Heavy Snow) produced an entry — ` +
+            `the row is reading the uppercase positional parameter instead of f.properties.label`
+          );
+        }
+      } finally {
+        turfStub.pointInPolygon = originalPointInPolygon;
+      }
+    }
+  },
+  {
+    // D-02: same-day co-occurring hazards must render in the registry's declared order,
+    // never the ArcGIS response order, because that order can flip between polls on an
+    // unchanged forecast. Two runs with two different WRONG response orders must produce
+    // the SAME output order — proving the ordering comes from the registry, not the
+    // response, which a single-order fixture cannot show.
+    name: "hazards-day-order-follows-the-registry-not-the-response",
+    run: async (helper) => {
+      const registryOrder = PRODUCT_REGISTRY.hazardsOutlook.order;
+      const rank = (label) => {
+        const idx = registryOrder.indexOf(label);
+        return idx === -1 ? registryOrder.length : idx;
+      };
+      const labels = ["Heavy Ice", "Heavy Rain", "Severe Weather"];
+      const expectedOrder = [...labels].sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
+
+      const runWithOrder = async (orderedLabels) => {
+        resetHelper(helper);
+        resetLogs();
+        helper._nowMs = () => HAZARDS_NOW_MS;
+        helper._products = { showHazardsOutlook: true };
+        const originalPointInPolygon = turfStub.pointInPolygon;
+        turfStub.pointInPolygon = () => true;
+        try {
+          const layer4Body = hazardsCollection(
+            orderedLabels.map((label) => hazardsFeature({
+              label, startDate: Date.UTC(2026, 7, 29), endDate: Date.UTC(2026, 7, 29)
+            }))
+          );
+          installHttp(helper, hazardsRoutes({
+            4: () => httpResponse({ body: layer4Body, etag: "hazards-order-v1" })
+          }));
+          const out = await helper.getSpcOutlook(
+            PROBE_LAT, PROBE_LON, false, { showHazardsOutlook: true }
+          );
+          assertPayloadIntact(out);
+          assertHazardsBlockIntact(out);
+          return out.hazardsOutlook.day3.hazards.map((h) => h.label);
+        } finally {
+          turfStub.pointInPolygon = originalPointInPolygon;
+        }
+      };
+
+      const firstRun = await runWithOrder(["Heavy Ice", "Heavy Rain", "Severe Weather"]);
+      if (JSON.stringify(firstRun) !== JSON.stringify(expectedOrder)) {
+        throw new Error(
+          `first response order: expected day3 order ${JSON.stringify(expectedOrder)}, got ${JSON.stringify(firstRun)}`
+        );
+      }
+
+      // Control: a DIFFERENT wrong response order must produce the SAME output order.
+      const secondRun = await runWithOrder(["Heavy Rain", "Severe Weather", "Heavy Ice"]);
+      if (JSON.stringify(secondRun) !== JSON.stringify(expectedOrder)) {
+        throw new Error(
+          `control (second response order): expected day3 order ${JSON.stringify(expectedOrder)}, ` +
+          `got ${JSON.stringify(secondRun)}`
+        );
+      }
+    }
+  },
+  {
+    // D-11: an unmapped label must render verbatim in the default style AND be logged
+    // exactly once per process, not once per feature — the runner's
+    // `_loggedUnmappedHazardLabels` ledger is what makes that possible. The control is a
+    // mapped label in the same run, which must produce no log line at all — proving the
+    // log fires on the unmapped condition specifically, not on every feature.
+    // Assumption drift (advisory): the plan names "Frost/Freeze" as the never-observed-live
+    // unmapped label, but PRODUCT_REGISTRY.hazardsOutlook.displayColor already maps it
+    // ("c500ff") in the current registry — using it here would make this a mapped-label
+    // scenario, not an unmapped one. "Dense Fog" is used instead: confirmed absent from
+    // both displayColor and every other label set (excludedLabels/droughtLabels/order) at
+    // the time this scenario was written.
+    name: "hazards-unmapped-label-renders-verbatim-and-logs-once",
+    run: async (helper) => {
+      resetHelper(helper);
+      resetLogs();
+      helper._nowMs = () => HAZARDS_NOW_MS;
+      helper._products = { showHazardsOutlook: true };
+      const originalPointInPolygon = turfStub.pointInPolygon;
+      turfStub.pointInPolygon = () => true;
+      try {
+        const layer4Body = hazardsCollection([
+          hazardsFeature({ label: "Dense Fog", startDate: Date.UTC(2026, 7, 29), endDate: Date.UTC(2026, 7, 29) }),
+          hazardsFeature({ label: "Dense Fog", startDate: Date.UTC(2026, 7, 31), endDate: Date.UTC(2026, 7, 31) }),
+          hazardsFeature({ label: "Heavy Rain", startDate: Date.UTC(2026, 7, 30), endDate: Date.UTC(2026, 7, 30) })
+        ]);
+        installHttp(helper, hazardsRoutes({
+          4: () => httpResponse({ body: layer4Body, etag: "hazards-unmapped-v1" })
+        }));
+        const out = await helper.getSpcOutlook(
+          PROBE_LAT, PROBE_LON, false, { showHazardsOutlook: true }
+        );
+        assertPayloadIntact(out);
+        assertHazardsBlockIntact(out);
+
+        const fogDay3 = out.hazardsOutlook.day3.hazards.find((h) => h.label === "Dense Fog");
+        const fogDay5 = out.hazardsOutlook.day5.hazards.find((h) => h.label === "Dense Fog");
+        if (!fogDay3 || fogDay3.mapped !== false || fogDay3.color !== PRODUCT_REGISTRY.hazardsOutlook.defaultColor) {
+          throw new Error(`day3 Dense Fog expected mapped:false, color:${PRODUCT_REGISTRY.hazardsOutlook.defaultColor}, got ${JSON.stringify(fogDay3)}`);
+        }
+        if (!fogDay5 || fogDay5.mapped !== false || fogDay5.color !== PRODUCT_REGISTRY.hazardsOutlook.defaultColor) {
+          throw new Error(`day5 Dense Fog expected mapped:false, color:${PRODUCT_REGISTRY.hazardsOutlook.defaultColor}, got ${JSON.stringify(fogDay5)}`);
+        }
+
+        // Control: a mapped label in the same run must have mapped:true, its registry
+        // color, and produce NO log line.
+        const heavyRain = out.hazardsOutlook.day4.hazards.find((h) => h.label === "Heavy Rain");
+        const expectedHeavyRainColor = PRODUCT_REGISTRY.hazardsOutlook.displayColor["Heavy Rain"];
+        if (!heavyRain || heavyRain.mapped !== true || heavyRain.color !== expectedHeavyRainColor) {
+          throw new Error(`day4 Heavy Rain expected mapped:true, color:${expectedHeavyRainColor}, got ${JSON.stringify(heavyRain)}`);
+        }
+
+        const fogLogLines = logCalls.filter((line) => line.includes("Dense Fog"));
+        if (fogLogLines.length !== 1) {
+          throw new Error(`expected exactly one log line naming Dense Fog, got ${fogLogLines.length}: ${JSON.stringify(logCalls)}`);
+        }
+        const heavyRainLogLines = logCalls.filter((line) => line.includes("Heavy Rain"));
+        if (heavyRainLogLines.length !== 0) {
+          throw new Error(`control failed: the mapped label Heavy Rain produced a log line: ${JSON.stringify(heavyRainLogLines)}`);
+        }
+      } finally {
+        turfStub.pointInPolygon = originalPointInPolygon;
+      }
+    }
+  },
+  {
+    // WSSI-03 precedent, DATA-02: all six layers return a genuinely empty
+    // FeatureCollection. This must resolve to a clean, unflagged all-clear, and the
+    // precondition guard proves the six URLs were actually requested — otherwise "no
+    // rows and not stale" would be satisfied by the runner never having run at all.
+    name: "hazards-zero-feature-layers-render-nothing-and-are-not-stale",
+    run: async (helper) => {
+      resetHelper(helper);
+      resetLogs();
+      helper._nowMs = () => HAZARDS_NOW_MS;
+      helper._products = { showHazardsOutlook: true };
+      const fetchFn = installHttp(helper, hazardsRoutes());
+      const out = await helper.getSpcOutlook(
+        PROBE_LAT, PROBE_LON, false, { showHazardsOutlook: true }
+      );
+      assertPayloadIntact(out);
+      assertHazardsBlockIntact(out);
+
+      for (const layer of PRODUCT_REGISTRY.hazardsOutlook.layers) {
+        const url = HAZARDS_URLS[layer.id];
+        if (!fetchFn.calls.some((c) => c.url === url)) {
+          throw new Error(`precondition failed: hazards layer ${layer.id}'s URL was never requested (${url})`);
+        }
+      }
+      for (let d = 3; d <= 14; d++) {
+        if (out.hazardsOutlook[`day${d}`].hazards.length !== 0) {
+          throw new Error(`day${d} expected empty, got ${JSON.stringify(out.hazardsOutlook[`day${d}`].hazards)}`);
+        }
+      }
+      if (out.hazardsOutlook.windowBand.length !== 0) {
+        throw new Error(`windowBand expected empty, got ${JSON.stringify(out.hazardsOutlook.windowBand)}`);
+      }
+      if (out._stale) {
+        throw new Error("a zero-feature response on every layer must not be flagged stale");
+      }
+    }
+  },
+  {
+    // Phase 14 D-05: the toggle off must still emit the full zero-valued hazardsOutlook
+    // block, and no hazards URL may ever be requested while the toggle is off — real
+    // (non-empty) bodies are routed on every layer specifically to prove the toggle, not
+    // an empty-body coincidence, is what keeps the block empty.
+    name: "hazards-toggle-off-emits-the-full-block-and-fetches-nothing",
+    run: async (helper) => {
+      resetHelper(helper);
+      resetLogs();
+      helper._nowMs = () => HAZARDS_NOW_MS;
+      helper._products = { showHazardsOutlook: false };
+      const realBody = () => httpResponse({
+        body: hazardsCollection([
+          hazardsFeature({ label: "Heavy Rain", startDate: Date.UTC(2026, 7, 29), endDate: Date.UTC(2026, 7, 29) })
+        ]),
+        etag: "hazards-toggle-off-v1"
+      });
+      const fetchFn = installHttp(helper, hazardsRoutes({ 1: realBody, 3: realBody, 4: realBody, 6: realBody, 7: realBody, 8: realBody }));
+      const out = await helper.getSpcOutlook(
+        PROBE_LAT, PROBE_LON, false, { showHazardsOutlook: false }
+      );
+      assertPayloadIntact(out);
+      assertHazardsBlockIntact(out);
+      for (let d = 3; d <= 14; d++) {
+        if (out.hazardsOutlook[`day${d}`].hazards.length !== 0) {
+          throw new Error(`day${d} expected empty with the toggle off, got ${JSON.stringify(out.hazardsOutlook[`day${d}`].hazards)}`);
+        }
+      }
+      if (out.hazardsOutlook.windowBand.length !== 0) {
+        throw new Error(`windowBand expected empty with the toggle off, got ${JSON.stringify(out.hazardsOutlook.windowBand)}`);
+      }
+      if (out._stale) {
+        throw new Error("the toggle-off block must not be flagged stale");
+      }
+      const hazardsUrlValues = Object.values(HAZARDS_URLS);
+      const fetchedHazardsUrl = fetchFn.calls.find((c) => hazardsUrlValues.includes(c.url));
+      if (fetchedHazardsUrl) {
+        throw new Error(`fetchGeoJsonCached was called with a hazards URL while the toggle was off: ${fetchedHazardsUrl.url}`);
+      }
+    }
+  },
+  {
+    // D-09: these three labels originate from the National Flood Outlook, a separate NOAA
+    // product outside v2.0's scope that rides inside the Precipitation layers' attributes;
+    // rendering them would attribute another product's data to the Hazards Outlook. There is
+    // deliberately no config path that re-enables them. Three runs — bare toggle-on,
+    // showDrought:true, and a truthy non-boolean showDrought — prove a truthy showDrought
+    // cannot become an accidental un-filter for a completely unrelated exclusion (HAZ-04).
+    // Control (this is what makes the scenario non-vacuous): Heavy Rain must be present in
+    // all three runs — without it, "no Flooding" would be satisfied by the fixture never
+    // reaching the runner at all.
+    name: "hazards-flooding-labels-never-appear-under-any-toggle",
+    run: async (helper) => {
+      // T-16-23 / Phase 15 D-10: the three labels are literals here (RESEARCH.md's Colors
+      // table), NOT read from PRODUCT_REGISTRY.hazardsOutlook.excludedLabels for FIXTURE
+      // construction. Building the fixture that tests a filter from the exact mutable field
+      // that filter reads is the "fixture that cannot express its own condition" vacuity
+      // mode: emptying the registry's excludedLabels would silently empty this fixture too,
+      // and the scenario would pass while proving nothing (confirmed live against this exact
+      // mutation while writing this scenario). The registry is still consulted immediately
+      // below, as a staleness guard on the literals, not as the fixture's input.
+      const floodingLabels = ["Flooding Likely", "Flooding Occurring or Imminent", "Flooding Possible"];
+      const registryLabels = PRODUCT_REGISTRY.hazardsOutlook.excludedLabels;
+      if (JSON.stringify([...floodingLabels].sort()) !== JSON.stringify([...registryLabels].sort())) {
+        throw new Error(
+          `this scenario's literal Flooding label set has drifted from the registry's excludedLabels — ` +
+          `update both: literal=${JSON.stringify(floodingLabels)}, registry=${JSON.stringify(registryLabels)}`
+        );
+      }
+
+      const runWithToggles = async (toggles) => {
+        resetHelper(helper);
+        resetLogs();
+        helper._nowMs = () => HAZARDS_NOW_MS;
+        helper._products = toggles;
+        const originalPointInPolygon = turfStub.pointInPolygon;
+        turfStub.pointInPolygon = () => true;
+        try {
+          const layer4Body = hazardsCollection([
+            ...floodingLabels.map((label) => hazardsFeature({
+              label, startDate: Date.UTC(2026, 7, 29), endDate: Date.UTC(2026, 7, 29)
+            })),
+            hazardsFeature({ label: "Heavy Rain", startDate: Date.UTC(2026, 7, 29), endDate: Date.UTC(2026, 7, 29) })
+          ]);
+          installHttp(helper, hazardsRoutes({
+            4: () => httpResponse({ body: layer4Body, etag: "hazards-flooding-v1" })
+          }));
+          const out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, toggles);
+          assertPayloadIntact(out);
+          assertHazardsBlockIntact(out);
+          return out;
+        } finally {
+          turfStub.pointInPolygon = originalPointInPolygon;
+        }
+      };
+
+      for (const toggles of [
+        { showHazardsOutlook: true },
+        { showHazardsOutlook: true, showDrought: true },
+        { showHazardsOutlook: true, showDrought: "yes" }
+      ]) {
+        const out = await runWithToggles(toggles);
+        const serialized = JSON.stringify(out.hazardsOutlook);
+        if (serialized.includes("Flooding")) {
+          throw new Error(`toggles=${JSON.stringify(toggles)}: a Flooding label reached the payload: ${serialized}`);
+        }
+        if (!out.hazardsOutlook.day3.hazards.some((h) => h.label === "Heavy Rain")) {
+          throw new Error(
+            `toggles=${JSON.stringify(toggles)}: control failed — Heavy Rain did not reach the payload, ` +
+            `so "no Flooding" proves nothing`
+          );
+        }
+      }
+    }
+  },
+  {
+    // D-10: Drought is gated by showDrought (strict === true), NOT excluded — it must be
+    // hidden at the shipped default and shown only on explicit opt-in. The truthy
+    // non-boolean run ("yes") proves the gate is strict-true, not merely truthy. The
+    // control in every run is "Critical Wildfire Risk": the Wildfire/Drought layer
+    // multiplexes both families on the same `label` attribute, so a filter that removed the
+    // WHOLE layer rather than just the drought labels would pass a naive "no drought" check.
+    // Live finding (2026-08-26): layer 7 returned 26x Severe Drought and zero Critical
+    // Wildfire Risk, so at the shipped default this layer currently renders nothing — a
+    // correct outcome, not a bug, and not what this scenario is pinning (this fixture drives
+    // both labels synthetically to prove the gate, independent of what is live today).
+    // ROADMAP criterion 4 is verified at the shipped default (showDrought: false), which
+    // this satisfies — drought display is an explicit user opt-in, not a violation, so a
+    // verifier reading criterion 4 as an absolute prohibition would fail a correct
+    // implementation.
+    name: "hazards-drought-is-hidden-at-the-default-and-shown-only-on-opt-in",
+    run: async (helper) => {
+      const layer7Body = hazardsCollection([
+        hazardsFeature({ label: "Severe Drought", startDate: Date.UTC(2026, 7, 29), endDate: Date.UTC(2026, 8, 2) }),
+        hazardsFeature({ label: "Critical Wildfire Risk", startDate: Date.UTC(2026, 7, 29), endDate: Date.UTC(2026, 8, 2) })
+      ]);
+      const layer8Body = hazardsCollection([
+        hazardsFeature({ label: "Rapid Onset Drought Risk", startDate: Date.UTC(2026, 8, 3), endDate: Date.UTC(2026, 8, 9) })
+      ]);
+
+      const runWithToggles = async (toggles) => {
+        resetHelper(helper);
+        resetLogs();
+        helper._nowMs = () => HAZARDS_NOW_MS;
+        helper._products = toggles;
+        const originalPointInPolygon = turfStub.pointInPolygon;
+        turfStub.pointInPolygon = () => true;
+        try {
+          installHttp(helper, hazardsRoutes({
+            7: () => httpResponse({ body: layer7Body, etag: "hazards-drought-7-v1" }),
+            8: () => httpResponse({ body: layer8Body, etag: "hazards-drought-8-v1" })
+          }));
+          const out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, toggles);
+          assertPayloadIntact(out);
+          assertHazardsBlockIntact(out);
+          return out;
+        } finally {
+          turfStub.pointInPolygon = originalPointInPolygon;
+        }
+      };
+
+      const atDefault = await runWithToggles({ showHazardsOutlook: true });
+      const defaultBand = JSON.stringify(atDefault.hazardsOutlook.windowBand);
+      if (defaultBand.includes("Severe Drought") || defaultBand.includes("Rapid Onset Drought Risk")) {
+        throw new Error(`default toggles: a drought label reached windowBand: ${defaultBand}`);
+      }
+      if (!atDefault.hazardsOutlook.windowBand.some((e) => e.label === "Critical Wildfire Risk")) {
+        throw new Error(`default toggles: control failed — Critical Wildfire Risk did not reach windowBand: ${defaultBand}`);
+      }
+
+      // Truthy non-boolean opt-in must NOT unlock drought — D-10's strict `=== true` gate.
+      const truthyNonBoolean = await runWithToggles({ showHazardsOutlook: true, showDrought: "yes" });
+      const truthyBand = JSON.stringify(truthyNonBoolean.hazardsOutlook.windowBand);
+      if (truthyBand.includes("Severe Drought") || truthyBand.includes("Rapid Onset Drought Risk")) {
+        throw new Error(`showDrought:"yes" (truthy non-boolean): a drought label reached windowBand: ${truthyBand}`);
+      }
+      if (!truthyNonBoolean.hazardsOutlook.windowBand.some((e) => e.label === "Critical Wildfire Risk")) {
+        throw new Error(`showDrought:"yes": control failed — Critical Wildfire Risk did not reach windowBand: ${truthyBand}`);
+      }
+
+      const optedIn = await runWithToggles({ showHazardsOutlook: true, showDrought: true });
+      const bandLabels = optedIn.hazardsOutlook.windowBand.map((e) => e.label);
+      for (const label of PRODUCT_REGISTRY.hazardsOutlook.droughtLabels) {
+        if (!bandLabels.includes(label)) {
+          throw new Error(`showDrought:true: expected ${label} in windowBand, got ${JSON.stringify(bandLabels)}`);
+        }
+      }
+      if (!bandLabels.includes("Critical Wildfire Risk")) {
+        throw new Error(`showDrought:true: control failed — Critical Wildfire Risk missing from windowBand: ${JSON.stringify(bandLabels)}`);
+      }
+    }
+  },
+  {
+    // HAZ-04, end to end: CR-01's lesson — the suite asserted on the payload and stopped
+    // there, which is how a total outage came to render as a confident all-clear while a
+    // payload assertion reported the guarantee as met. HAZ-04 is a *display* requirement;
+    // it must be proven at the display, not just in the payload.
+    name: "hazards-frontend-renders-no-flooding-or-drought-at-the-default",
+    run: async (helper) => {
+      resetHelper(helper);
+      resetLogs();
+      helper._nowMs = () => HAZARDS_NOW_MS;
+      const toggles = { showHazardsOutlook: true };
+      helper._products = toggles;
+      const originalPointInPolygon = turfStub.pointInPolygon;
+      turfStub.pointInPolygon = () => true;
+      let out;
+      try {
+        const layer4Body = hazardsCollection([
+          hazardsFeature({ label: "Heavy Rain", startDate: Date.UTC(2026, 7, 29), endDate: Date.UTC(2026, 7, 29) }),
+          hazardsFeature({
+            label: PRODUCT_REGISTRY.hazardsOutlook.excludedLabels[0],
+            startDate: Date.UTC(2026, 7, 29), endDate: Date.UTC(2026, 7, 29)
+          })
+        ]);
+        const layer7Body = hazardsCollection([
+          hazardsFeature({ label: "Severe Drought", startDate: Date.UTC(2026, 7, 29), endDate: Date.UTC(2026, 8, 2) }),
+          hazardsFeature({ label: "Critical Wildfire Risk", startDate: Date.UTC(2026, 7, 29), endDate: Date.UTC(2026, 8, 2) })
+        ]);
+        const layer8Body = hazardsCollection([
+          hazardsFeature({ label: "Rapid Onset Drought Risk", startDate: Date.UTC(2026, 8, 3), endDate: Date.UTC(2026, 8, 9) })
+        ]);
+        installHttp(helper, hazardsRoutes({
+          4: () => httpResponse({ body: layer4Body, etag: "hazards-e2e-4-v1" }),
+          7: () => httpResponse({ body: layer7Body, etag: "hazards-e2e-7-v1" }),
+          8: () => httpResponse({ body: layer8Body, etag: "hazards-e2e-8-v1" })
+        }));
+        out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, toggles);
+        assertPayloadIntact(out);
+        assertHazardsBlockIntact(out);
+      } finally {
+        turfStub.pointInPolygon = originalPointInPolygon;
+      }
+
+      const frontend = loadFrontendModule();
+      const config = {
+        lat: PROBE_LAT, lon: PROBE_LON, extended: false, updateInterval: 60,
+        proximityWeighting: false, showExcessiveRain: false, showWinterImpact: false,
+        showHazardsOutlook: true, showDrought: false
+      };
+      const rendered = renderDom(frontend, { config, spcrisk: out });
+      if (rendered.includes("Flooding")) {
+        throw new Error(`rendered markup contains Flooding at the shipped default: ${rendered}`);
+      }
+      if (rendered.includes("Drought")) {
+        throw new Error(`rendered markup contains Drought at the shipped default: ${rendered}`);
+      }
+      if (!rendered.includes("Heavy Rain")) {
+        throw new Error(`control failed: Heavy Rain missing from rendered markup: ${rendered}`);
+      }
+      if (!rendered.includes("Critical Wildfire Risk")) {
+        throw new Error(`control failed: Critical Wildfire Risk missing from rendered markup: ${rendered}`);
       }
     }
   }
