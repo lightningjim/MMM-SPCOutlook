@@ -2,9 +2,9 @@
 gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: WPC & CPC Integration + Unified Day Report
-status: executing
-stopped_at: Phase 15 complete (9/9 plans, verified 7/7)
-last_updated: "2026-08-24T20:30:00.000Z"
+status: planning
+stopped_at: Phase 16 context gathered
+last_updated: "2026-08-26T18:30:52.562Z"
 last_activity: 2026-08-24 -- Phase 15 complete; live MPD verified on hardware
 progress:
   total_phases: 6
@@ -97,6 +97,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-08-24T20:30:00.000Z
-Stopped at: Phase 15 complete (9/9 plans merged, verifier PASSED 7/7)
-Resume file: .planning/phases/15-wpc-winter-storm-severity-mesoscale-precipitation-discussion/15-VERIFICATION.md
+Last session: 2026-08-26T18:30:52.553Z
+Stopped at: Phase 16 context gathered
+Resume file: .planning/phases/16-wpc-day-3-7-cpc-day-8-14-hazards-outlook/16-CONTEXT.md
