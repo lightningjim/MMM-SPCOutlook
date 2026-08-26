@@ -4094,6 +4094,220 @@ const scenarios = [
         throw new Error(`fetchGeoJsonCached was called with a hazards URL while the toggle was off: ${fetchedHazardsUrl.url}`);
       }
     }
+  },
+  {
+    // D-09: these three labels originate from the National Flood Outlook, a separate NOAA
+    // product outside v2.0's scope that rides inside the Precipitation layers' attributes;
+    // rendering them would attribute another product's data to the Hazards Outlook. There is
+    // deliberately no config path that re-enables them. Three runs — bare toggle-on,
+    // showDrought:true, and a truthy non-boolean showDrought — prove a truthy showDrought
+    // cannot become an accidental un-filter for a completely unrelated exclusion (HAZ-04).
+    // Control (this is what makes the scenario non-vacuous): Heavy Rain must be present in
+    // all three runs — without it, "no Flooding" would be satisfied by the fixture never
+    // reaching the runner at all.
+    name: "hazards-flooding-labels-never-appear-under-any-toggle",
+    run: async (helper) => {
+      // T-16-23 / Phase 15 D-10: the three labels are literals here (RESEARCH.md's Colors
+      // table), NOT read from PRODUCT_REGISTRY.hazardsOutlook.excludedLabels for FIXTURE
+      // construction. Building the fixture that tests a filter from the exact mutable field
+      // that filter reads is the "fixture that cannot express its own condition" vacuity
+      // mode: emptying the registry's excludedLabels would silently empty this fixture too,
+      // and the scenario would pass while proving nothing (confirmed live against this exact
+      // mutation while writing this scenario). The registry is still consulted immediately
+      // below, as a staleness guard on the literals, not as the fixture's input.
+      const floodingLabels = ["Flooding Likely", "Flooding Occurring or Imminent", "Flooding Possible"];
+      const registryLabels = PRODUCT_REGISTRY.hazardsOutlook.excludedLabels;
+      if (JSON.stringify([...floodingLabels].sort()) !== JSON.stringify([...registryLabels].sort())) {
+        throw new Error(
+          `this scenario's literal Flooding label set has drifted from the registry's excludedLabels — ` +
+          `update both: literal=${JSON.stringify(floodingLabels)}, registry=${JSON.stringify(registryLabels)}`
+        );
+      }
+
+      const runWithToggles = async (toggles) => {
+        resetHelper(helper);
+        resetLogs();
+        helper._nowMs = () => HAZARDS_NOW_MS;
+        helper._products = toggles;
+        const originalPointInPolygon = turfStub.pointInPolygon;
+        turfStub.pointInPolygon = () => true;
+        try {
+          const layer4Body = hazardsCollection([
+            ...floodingLabels.map((label) => hazardsFeature({
+              label, startDate: Date.UTC(2026, 7, 29), endDate: Date.UTC(2026, 7, 29)
+            })),
+            hazardsFeature({ label: "Heavy Rain", startDate: Date.UTC(2026, 7, 29), endDate: Date.UTC(2026, 7, 29) })
+          ]);
+          installHttp(helper, hazardsRoutes({
+            4: () => httpResponse({ body: layer4Body, etag: "hazards-flooding-v1" })
+          }));
+          const out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, toggles);
+          assertPayloadIntact(out);
+          assertHazardsBlockIntact(out);
+          return out;
+        } finally {
+          turfStub.pointInPolygon = originalPointInPolygon;
+        }
+      };
+
+      for (const toggles of [
+        { showHazardsOutlook: true },
+        { showHazardsOutlook: true, showDrought: true },
+        { showHazardsOutlook: true, showDrought: "yes" }
+      ]) {
+        const out = await runWithToggles(toggles);
+        const serialized = JSON.stringify(out.hazardsOutlook);
+        if (serialized.includes("Flooding")) {
+          throw new Error(`toggles=${JSON.stringify(toggles)}: a Flooding label reached the payload: ${serialized}`);
+        }
+        if (!out.hazardsOutlook.day3.hazards.some((h) => h.label === "Heavy Rain")) {
+          throw new Error(
+            `toggles=${JSON.stringify(toggles)}: control failed — Heavy Rain did not reach the payload, ` +
+            `so "no Flooding" proves nothing`
+          );
+        }
+      }
+    }
+  },
+  {
+    // D-10: Drought is gated by showDrought (strict === true), NOT excluded — it must be
+    // hidden at the shipped default and shown only on explicit opt-in. The truthy
+    // non-boolean run ("yes") proves the gate is strict-true, not merely truthy. The
+    // control in every run is "Critical Wildfire Risk": the Wildfire/Drought layer
+    // multiplexes both families on the same `label` attribute, so a filter that removed the
+    // WHOLE layer rather than just the drought labels would pass a naive "no drought" check.
+    // Live finding (2026-08-26): layer 7 returned 26x Severe Drought and zero Critical
+    // Wildfire Risk, so at the shipped default this layer currently renders nothing — a
+    // correct outcome, not a bug, and not what this scenario is pinning (this fixture drives
+    // both labels synthetically to prove the gate, independent of what is live today).
+    // ROADMAP criterion 4 is verified at the shipped default (showDrought: false), which
+    // this satisfies — drought display is an explicit user opt-in, not a violation, so a
+    // verifier reading criterion 4 as an absolute prohibition would fail a correct
+    // implementation.
+    name: "hazards-drought-is-hidden-at-the-default-and-shown-only-on-opt-in",
+    run: async (helper) => {
+      const layer7Body = hazardsCollection([
+        hazardsFeature({ label: "Severe Drought", startDate: Date.UTC(2026, 7, 29), endDate: Date.UTC(2026, 8, 2) }),
+        hazardsFeature({ label: "Critical Wildfire Risk", startDate: Date.UTC(2026, 7, 29), endDate: Date.UTC(2026, 8, 2) })
+      ]);
+      const layer8Body = hazardsCollection([
+        hazardsFeature({ label: "Rapid Onset Drought Risk", startDate: Date.UTC(2026, 8, 3), endDate: Date.UTC(2026, 8, 9) })
+      ]);
+
+      const runWithToggles = async (toggles) => {
+        resetHelper(helper);
+        resetLogs();
+        helper._nowMs = () => HAZARDS_NOW_MS;
+        helper._products = toggles;
+        const originalPointInPolygon = turfStub.pointInPolygon;
+        turfStub.pointInPolygon = () => true;
+        try {
+          installHttp(helper, hazardsRoutes({
+            7: () => httpResponse({ body: layer7Body, etag: "hazards-drought-7-v1" }),
+            8: () => httpResponse({ body: layer8Body, etag: "hazards-drought-8-v1" })
+          }));
+          const out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, toggles);
+          assertPayloadIntact(out);
+          assertHazardsBlockIntact(out);
+          return out;
+        } finally {
+          turfStub.pointInPolygon = originalPointInPolygon;
+        }
+      };
+
+      const atDefault = await runWithToggles({ showHazardsOutlook: true });
+      const defaultBand = JSON.stringify(atDefault.hazardsOutlook.windowBand);
+      if (defaultBand.includes("Severe Drought") || defaultBand.includes("Rapid Onset Drought Risk")) {
+        throw new Error(`default toggles: a drought label reached windowBand: ${defaultBand}`);
+      }
+      if (!atDefault.hazardsOutlook.windowBand.some((e) => e.label === "Critical Wildfire Risk")) {
+        throw new Error(`default toggles: control failed — Critical Wildfire Risk did not reach windowBand: ${defaultBand}`);
+      }
+
+      // Truthy non-boolean opt-in must NOT unlock drought — D-10's strict `=== true` gate.
+      const truthyNonBoolean = await runWithToggles({ showHazardsOutlook: true, showDrought: "yes" });
+      const truthyBand = JSON.stringify(truthyNonBoolean.hazardsOutlook.windowBand);
+      if (truthyBand.includes("Severe Drought") || truthyBand.includes("Rapid Onset Drought Risk")) {
+        throw new Error(`showDrought:"yes" (truthy non-boolean): a drought label reached windowBand: ${truthyBand}`);
+      }
+      if (!truthyNonBoolean.hazardsOutlook.windowBand.some((e) => e.label === "Critical Wildfire Risk")) {
+        throw new Error(`showDrought:"yes": control failed — Critical Wildfire Risk did not reach windowBand: ${truthyBand}`);
+      }
+
+      const optedIn = await runWithToggles({ showHazardsOutlook: true, showDrought: true });
+      const bandLabels = optedIn.hazardsOutlook.windowBand.map((e) => e.label);
+      for (const label of PRODUCT_REGISTRY.hazardsOutlook.droughtLabels) {
+        if (!bandLabels.includes(label)) {
+          throw new Error(`showDrought:true: expected ${label} in windowBand, got ${JSON.stringify(bandLabels)}`);
+        }
+      }
+      if (!bandLabels.includes("Critical Wildfire Risk")) {
+        throw new Error(`showDrought:true: control failed — Critical Wildfire Risk missing from windowBand: ${JSON.stringify(bandLabels)}`);
+      }
+    }
+  },
+  {
+    // HAZ-04, end to end: CR-01's lesson — the suite asserted on the payload and stopped
+    // there, which is how a total outage came to render as a confident all-clear while a
+    // payload assertion reported the guarantee as met. HAZ-04 is a *display* requirement;
+    // it must be proven at the display, not just in the payload.
+    name: "hazards-frontend-renders-no-flooding-or-drought-at-the-default",
+    run: async (helper) => {
+      resetHelper(helper);
+      resetLogs();
+      helper._nowMs = () => HAZARDS_NOW_MS;
+      const toggles = { showHazardsOutlook: true };
+      helper._products = toggles;
+      const originalPointInPolygon = turfStub.pointInPolygon;
+      turfStub.pointInPolygon = () => true;
+      let out;
+      try {
+        const layer4Body = hazardsCollection([
+          hazardsFeature({ label: "Heavy Rain", startDate: Date.UTC(2026, 7, 29), endDate: Date.UTC(2026, 7, 29) }),
+          hazardsFeature({
+            label: PRODUCT_REGISTRY.hazardsOutlook.excludedLabels[0],
+            startDate: Date.UTC(2026, 7, 29), endDate: Date.UTC(2026, 7, 29)
+          })
+        ]);
+        const layer7Body = hazardsCollection([
+          hazardsFeature({ label: "Severe Drought", startDate: Date.UTC(2026, 7, 29), endDate: Date.UTC(2026, 8, 2) }),
+          hazardsFeature({ label: "Critical Wildfire Risk", startDate: Date.UTC(2026, 7, 29), endDate: Date.UTC(2026, 8, 2) })
+        ]);
+        const layer8Body = hazardsCollection([
+          hazardsFeature({ label: "Rapid Onset Drought Risk", startDate: Date.UTC(2026, 8, 3), endDate: Date.UTC(2026, 8, 9) })
+        ]);
+        installHttp(helper, hazardsRoutes({
+          4: () => httpResponse({ body: layer4Body, etag: "hazards-e2e-4-v1" }),
+          7: () => httpResponse({ body: layer7Body, etag: "hazards-e2e-7-v1" }),
+          8: () => httpResponse({ body: layer8Body, etag: "hazards-e2e-8-v1" })
+        }));
+        out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, toggles);
+        assertPayloadIntact(out);
+        assertHazardsBlockIntact(out);
+      } finally {
+        turfStub.pointInPolygon = originalPointInPolygon;
+      }
+
+      const frontend = loadFrontendModule();
+      const config = {
+        lat: PROBE_LAT, lon: PROBE_LON, extended: false, updateInterval: 60,
+        proximityWeighting: false, showExcessiveRain: false, showWinterImpact: false,
+        showHazardsOutlook: true, showDrought: false
+      };
+      const rendered = renderDom(frontend, { config, spcrisk: out });
+      if (rendered.includes("Flooding")) {
+        throw new Error(`rendered markup contains Flooding at the shipped default: ${rendered}`);
+      }
+      if (rendered.includes("Drought")) {
+        throw new Error(`rendered markup contains Drought at the shipped default: ${rendered}`);
+      }
+      if (!rendered.includes("Heavy Rain")) {
+        throw new Error(`control failed: Heavy Rain missing from rendered markup: ${rendered}`);
+      }
+      if (!rendered.includes("Critical Wildfire Risk")) {
+        throw new Error(`control failed: Critical Wildfire Risk missing from rendered markup: ${rendered}`);
+      }
+    }
   }
 ];
 
