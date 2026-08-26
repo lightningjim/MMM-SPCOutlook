@@ -407,6 +407,205 @@ module.exports = NodeHelper.create({
   },
 
   /**
+   * Fetch, filter, cache and re-bucket the `arcgis-hazard-window` registry row (Hazards
+   * Outlook) across all six layers, returning the `{ payload, anyStale }` shape every
+   * runner in this file shares.
+   *
+   * This signature deliberately does NOT accept a `todayUtcMs` — the runner computes its
+   * own, once per poll, so no caller can hand it a stale value. `_cacheHazardMatches`
+   * (above) makes a clock-dependent cache entry unwritable; this signature makes a
+   * clock-dependent input unpassable. Together they are the structural half of the
+   * phase's highest-risk mitigation (16-RESEARCH.md "Freshness Integration" — day-offset
+   * drift on a cache hit).
+   * @param row - PRODUCT_REGISTRY.hazardsOutlook
+   * @param loc - turf point representing the query location
+   * @param productToggles - this request's own toggle snapshot (WR-13), including the
+   *   `showDrought` sub-toggle
+   * @returns { payload, anyStale } — payload always carries the full day3..day14 +
+   *   windowBand block regardless of the toggle (Phase 14 D-05)
+   */
+  async _runArcGisHazardWindowProduct(row, loc, productToggles) {
+    const todayUtcMs = this._todayUtcMs();
+
+    // Phase 14 D-05: accumulators are seeded before the toggle check, so a toggle-off
+    // poll still returns the full day3..day14 + windowBand block, just empty.
+    const dayBuckets = {};
+    const windowEntries = [];
+    let anyStale = false;
+
+    // D-02 (15's registry-row-is-pure-static-config convention): this filter closure is
+    // built here, at call time, because `showDrought` is request state, not static
+    // configuration a row can carry. `extractPolygons` calls `includesFeat(label, value)`
+    // where `label` is the always-empty uppercase `LABEL` read (HAZ-03/Pitfall 8 — this
+    // service has no LABEL field, only lowercase `label`) and `value` is what
+    // `row.toValue` returned, so every check below is against `val`, never `label`.
+    const includesFeat = (label, val) => {
+      if (!val) return false;
+      // D-09: unconditional, no config path re-enables Flooding.
+      if (row.excludedLabels.includes(val)) return false;
+      // D-10: strict `!== true` so an absent or non-boolean `showDrought` (a string,
+      // `1`) behaves exactly like `false`, per CFG-01's default.
+      if (row.droughtLabels.includes(val) && productToggles.showDrought !== true) return false;
+      return true;
+    };
+
+    if (productToggles[row.configFlag]) {
+      for (const layer of row.layers) {
+        try {
+          const url = row.buildUrl(layer.id);
+          const fetchResult = await this.fetchGeoJsonCached(url);
+          if (fetchResult.stale || fetchResult.failed) anyStale = true;
+
+          let matches;
+          if (fetchResult.data === null && fetchResult.cachedResult !== null) {
+            // Already the clock-independent match array _cacheHazardMatches wrote — do
+            // NOT re-extract, do NOT re-evaluate. The polygons are gone on a cache hit,
+            // and that is fine: this match array is exactly what re-bucketing needs.
+            matches = fetchResult.cachedResult;
+          } else if (fetchResult.data !== null) {
+            const polys = this.extractPolygons(fetchResult.data, row.toValue, includesFeat, url);
+            const hits = this.evaluatePolygonsCollectAll(polys, loc);
+            matches = this._hazardMatchesFromHits(hits);
+            this._cacheHazardMatches(url, fetchResult, matches);
+          } else {
+            matches = [];
+          }
+
+          // Freshness (D-13/D-14/D-15), after the branch above closes, using this
+          // layer's own matches.
+          if (Array.isArray(matches) && matches.length > 0) {
+            const filedate = matches[0].idpFiledate;
+            if (typeof filedate === "number" &&
+                (this._nowMs() - filedate) > row.maxDataAgeHours * 60 * 60 * 1000) {
+              // (a) D-15's deliberate asymmetry: this sets `anyStale` so the ⚠ badge
+              //     fires, but does NOT call `this._noteStaleEntry(...)` — `_staleAsOf`
+              //     renders as "N minutes ago" and describes FETCH/network recency
+              //     (Phase 14 D-04's global-only rule), not WPC's own publish age.
+              //     Without this omission a 60-hour-old hazards file would make the
+              //     badge speak for SPC data fetched five minutes ago, training the user
+              //     to distrust a badge that is usually right.
+              // (b) D-13: `idp_filedate` is PER LAYER, not per service — live
+              //     2026-08-26 recorded three distinct filedates across the six layers
+              //     in one poll, one ~23h staler than its siblings. Reading `matches[0]`
+              //     is safe because the value is uniform WITHIN a layer, but a
+              //     row-level shared timestamp does not exist.
+              // (c) A zero-feature layer has no `idp_filedate` to read and therefore
+              //     skips this check entirely — deliberate (the WSSI-03 precedent this
+              //     codebase already ships): a genuinely empty layer is a real answer,
+              //     not a staleness signal.
+              // (d) This runs on a cache HIT too, because `idpFiledate` travels inside
+              //     the cached match array — a feed that stalls while still serving
+              //     304s must still age out.
+              anyStale = true;
+            }
+          }
+
+          // Re-bucket, every poll, cache hit or miss — deliberately outside and after
+          // the cache branch above. It runs identically on a hit and a miss, against
+          // THIS poll's `todayUtcMs`; moving it inside the miss branch would reintroduce
+          // the day-offset drift the cache contract exists to prevent.
+          for (const match of matches) {
+            this._bucketHazardMatch(match, layer, todayUtcMs, dayBuckets, windowEntries);
+          }
+        } catch (err) {
+          // CR-01: a contained throw is a degrade, not a clean read, and it can happen
+          // before the `fetchResult.stale || fetchResult.failed` line ever runs.
+          anyStale = true;
+          Log.error(
+            "MMM-SPCOutlook " + row.id + " layer " + layer.id +
+            ": fetch/parse/evaluate failed, leaving this layer empty", err
+          );
+        }
+      }
+    }
+
+    // D-02: registry-declared order for same-day co-occurring hazards, because ArcGIS
+    // response order can flip between polls on an unchanged forecast, which reads as a
+    // change on a glanceable mirror and defeats PERF-02's byte-identity intent. Labels
+    // absent from `row.order` sort after every listed label, alphabetically among
+    // themselves.
+    const labelRank = (label) => {
+      const idx = row.order.indexOf(label);
+      return idx === -1 ? row.order.length : idx;
+    };
+    const compareLabels = (labelA, labelB) => {
+      const rankDiff = labelRank(labelA) - labelRank(labelB);
+      if (rankDiff !== 0) return rankDiff;
+      return labelA.localeCompare(labelB);
+    };
+
+    // D-11: dropping an unknown label would make a mid-season WPC addition invisible
+    // until someone read the logs (the Pitfall 8 false-negative shape). The MapServer
+    // legend carries ~15 labels; visibility beats silence. Logged once per process
+    // (`_loggedUnmappedHazardLabels`) so a 27-feature layer does not flood the log every
+    // poll. Applied to both the day hazards and the window entries below.
+    const resolveStyle = (label) => {
+      const mapped = Object.prototype.hasOwnProperty.call(row.displayColor, label);
+      const color = mapped ? row.displayColor[label] : row.defaultColor;
+      if (!mapped && !this._loggedUnmappedHazardLabels.has(label)) {
+        this._loggedUnmappedHazardLabels.add(label);
+        Log.info(
+          "MMM-SPCOutlook hazardsOutlook: unmapped hazard label rendered verbatim in the default style: " + label
+        );
+      }
+      return { color, mapped };
+    };
+
+    const block = {};
+    for (let d = row.dayRangeTotal[0]; d <= row.dayRangeTotal[1]; d++) {
+      // D-01: every day carries its resolved UTC `date` so the frontend labels weekdays
+      // from the real date instead of `dowToText(dow + N)` — WPC's "Day N" boundary
+      // differs from SPC's and offset arithmetic drifts by one (Pitfall 9).
+      const date = this._utcDateString(todayUtcMs + d * MS_PER_DAY);
+      // Dedupe by label — two layers can contribute the same label to the same day.
+      const seenLabels = new Set();
+      const hazards = [];
+      for (const item of (dayBuckets[d] || [])) {
+        if (seenLabels.has(item.label)) continue;
+        seenLabels.add(item.label);
+        const { color, mapped } = resolveStyle(item.label);
+        hazards.push({ label: item.label, color, mapped });
+      }
+      hazards.sort((a, b) => compareLabels(a.label, b.label));
+      block["day" + d] = { date, hazards };
+    }
+
+    // D-07: one band, sorted by span start, each entry self-labeling. D-06: the entry
+    // carries its OWN observed span, never the layer's nominal window — live 2026-08-26
+    // a D8-14 feature spanned 2 days inside a nominal 7-day bucket, and labeling it
+    // "D8-14" would advertise 7 days of heat where the data says 2.
+    const seenWindowKeys = new Set();
+    const windowBand = [];
+    for (const entry of windowEntries) {
+      const key = entry.label + "|" + entry.offsetStart + "|" + entry.offsetEnd;
+      if (seenWindowKeys.has(key)) continue;
+      seenWindowKeys.add(key);
+      const { color, mapped } = resolveStyle(entry.label);
+      windowBand.push({
+        label: entry.label,
+        color,
+        mapped,
+        startDate: entry.startDate,
+        endDate: entry.endDate,
+        offsetStart: entry.offsetStart,
+        offsetEnd: entry.offsetEnd
+      });
+    }
+    windowBand.sort((a, b) => {
+      const diff = a.offsetStart - b.offsetStart;
+      if (diff !== 0) return diff;
+      return compareLabels(a.label, b.label);
+    });
+    block.windowBand = windowBand;
+
+    // D-16: a data-age trip is an age signal, not a false negative. `rejectBody`'s
+    // serve-last-known-good precedent exists precisely so a WPC hiccup during an active
+    // hazard does not blank the display — rows are never suppressed when `anyStale` is
+    // true.
+    return { payload: block, anyStale };
+  },
+
+  /**
    * Discovery strategies for `kml-advisory` registry rows, keyed by `row.discovery`.
    * Each strategy fetches whatever index document names the row's candidate member
    * KMZs and returns `{ urls, failed }` — `urls` normalized and allowlisted, `failed`
