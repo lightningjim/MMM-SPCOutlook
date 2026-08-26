@@ -576,6 +576,28 @@ function noRiskPayloadWithAdvisory(advisories) {
   };
 }
 
+// The same isolation noRiskPayloadWithAdvisory gives the advisory term of the no-risk
+// gate, applied to the Hazards Outlook terms: every other value is the no-risk/none
+// default, `advisories` is empty, `_stale` is absent, and `hazardsOutlook` is whatever
+// the caller supplies — used by frontend-hazards-window-band-only-is-not-an-all-clear and
+// its sibling to isolate hazardsOutlookHasAnyDay/hazardsOutlookHasWindowEntries from every
+// other gate term.
+function noRiskPayloadWithHazards(hazardsBlock) {
+  return { ...noRiskPayloadWithAdvisory({ spcMD: [], mpd: [] }), hazardsOutlook: hazardsBlock };
+}
+
+// The full day3..day14 + windowBand shape with everything empty — assertHazardsBlockIntact's
+// own 13-key contract, satisfied trivially. Used as the base for a fixture that populates
+// only the window band (HAZ-02's day-grid-vs-window-band isolation) or only specific days.
+function emptyHazardsBlock() {
+  const block = {};
+  for (let d = 3; d <= 14; d++) {
+    block[`day${d}`] = { date: "2026-08-26", hazards: [] };
+  }
+  block.windowBand = [];
+  return block;
+}
+
 // ---------------------------------------------------------------------
 // Fetch stubbing
 // ---------------------------------------------------------------------
@@ -4471,6 +4493,121 @@ const scenarios = [
         }
       } finally {
         turfStub.pointInPolygon = originalPointInPolygon;
+      }
+    }
+  },
+  {
+    // HAZ-02 / T-16-28: Temperature and Wildfire/Drought hazards route to the window band
+    // unconditionally (HAZ-02), independent of the day3..day14 grid — a location inside a
+    // live "Hazardous Heat" window can have every day array empty. Before this scenario the
+    // no-risk gate's day-grid term alone would let exactly this payload short-circuit to a
+    // confident "No Severe Weather Risk" — the Phase 15 getDom regression class, which
+    // shipped live once (the MPD-invisible defect).
+    name: "frontend-hazards-window-band-only-is-not-an-all-clear",
+    run: async (helper) => {
+      const frontend = loadFrontendModule();
+      const config = {
+        lat: PROBE_LAT, lon: PROBE_LON, extended: false, updateInterval: 60,
+        proximityWeighting: false, showExcessiveRain: false, showWinterImpact: false,
+        showHazardsOutlook: true, showDrought: false
+      };
+
+      const windowOnlyBlock = emptyHazardsBlock();
+      windowOnlyBlock.windowBand = [{
+        label: "Hazardous Heat", color: "a80000", mapped: true,
+        startDate: "2026-08-29", endDate: "2026-09-02", offsetStart: 3, offsetEnd: 7
+      }];
+
+      // Precondition guard: prove the fixture actually produced an empty day grid before
+      // asserting anything about the window-band term — otherwise this scenario would pass
+      // through the day-grid gate term and prove nothing about the window-band term.
+      for (let d = 3; d <= 14; d++) {
+        if (windowOnlyBlock[`day${d}`].hazards.length !== 0) {
+          throw new Error(`precondition failed: day${d} is not empty, so this scenario would pass through the day-grid gate term and prove nothing about the window-band term`);
+        }
+      }
+      if (windowOnlyBlock.windowBand.length !== 1) {
+        throw new Error(`precondition failed: expected exactly one windowBand entry, got ${windowOnlyBlock.windowBand.length}`);
+      }
+
+      const payload = noRiskPayloadWithHazards(windowOnlyBlock);
+      const rendered = renderDom(frontend, { config, spcrisk: payload });
+      if (rendered === "No Severe Weather Risk") {
+        throw new Error(
+          "HAZ-02: a window-band-only payload short-circuited to a confident all-clear — a location inside a " +
+          "Hazardous Heat polygon with no day-resolved hazards. This is the Phase 15 getDom regression class, " +
+          "which shipped live once."
+        );
+      }
+      if (!rendered.includes("Hazardous Heat")) {
+        throw new Error(`expected the window-band hazard to render, got: ${rendered}`);
+      }
+
+      // Control 1: the same shape with an empty windowBand must render exactly the plain
+      // no-risk line, or the positive assertion above is satisfied by the gate simply
+      // never firing.
+      const controlPayload = noRiskPayloadWithHazards(emptyHazardsBlock());
+      const controlRendered = renderDom(frontend, { config, spcrisk: controlPayload });
+      if (controlRendered !== "No Severe Weather Risk") {
+        throw new Error(`control: an empty-windowBand payload no longer short-circuits, it rendered: ${controlRendered}`);
+      }
+
+      // Control 2 (WR-09): the same populated payload with showHazardsOutlook: false must
+      // still short-circuit — content the config disabled must not disqualify the gate for
+      // a band that will not render.
+      const disabledConfig = { ...config, showHazardsOutlook: false };
+      const disabledRendered = renderDom(frontend, { config: disabledConfig, spcrisk: payload });
+      if (disabledRendered !== "No Severe Weather Risk") {
+        throw new Error(`control: a populated windowBand payload with showHazardsOutlook:false no longer short-circuits, it rendered: ${disabledRendered}`);
+      }
+    }
+  },
+  {
+    // HAZ-02's second half: a window-band hazard must appear exactly once in the rendered
+    // markup, never repeated across the days of its window — the window band and the day
+    // grid are two different renderers, and a window-band entry must never also emit a
+    // day-row.
+    name: "frontend-hazards-window-hazard-appears-once-not-per-day",
+    run: async (helper) => {
+      const frontend = loadFrontendModule();
+      const config = {
+        lat: PROBE_LAT, lon: PROBE_LON, extended: false, updateInterval: 60,
+        proximityWeighting: false, showExcessiveRain: false, showWinterImpact: false,
+        showHazardsOutlook: true, showDrought: false
+      };
+
+      const windowOnlyBlock = emptyHazardsBlock();
+      windowOnlyBlock.windowBand = [{
+        label: "Hazardous Heat", color: "a80000", mapped: true,
+        startDate: "2026-08-29", endDate: "2026-09-02", offsetStart: 3, offsetEnd: 7
+      }];
+      const payload = noRiskPayloadWithHazards(windowOnlyBlock);
+      const rendered = renderDom(frontend, { config, spcrisk: payload });
+      const occurrences = (rendered.match(/Hazardous Heat/g) || []).length;
+      if (occurrences !== 1) {
+        throw new Error(`expected "Hazardous Heat" to appear exactly once (the window band, not once per day in its span), got ${occurrences}: ${rendered}`);
+      }
+      for (let d = 3; d <= 7; d++) {
+        if (rendered.includes(`Day ${d})`)) {
+          throw new Error(`expected no day-grid row for Day ${d}, but one appears: ${rendered}`);
+        }
+      }
+
+      // Control: the same label appearing on three separate DAYS in the day grid must
+      // render three times — proving the count assertion above is measuring something
+      // real, not a renderer that emits nothing for this label.
+      const perDayBlock = emptyHazardsBlock();
+      for (const d of [3, 4, 5]) {
+        perDayBlock[`day${d}`] = {
+          date: "2026-08-26",
+          hazards: [{ label: "Hazardous Heat", color: "a80000", mapped: true }]
+        };
+      }
+      const perDayPayload = noRiskPayloadWithHazards(perDayBlock);
+      const perDayRendered = renderDom(frontend, { config, spcrisk: perDayPayload });
+      const perDayOccurrences = (perDayRendered.match(/Hazardous Heat/g) || []).length;
+      if (perDayOccurrences !== 3) {
+        throw new Error(`control: expected "Hazardous Heat" on three separate days to render three times, got ${perDayOccurrences}: ${perDayRendered}`);
       }
     }
   },
