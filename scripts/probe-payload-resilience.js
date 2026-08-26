@@ -301,6 +301,20 @@ const WSSI_URLS = {
   3: PRODUCT_REGISTRY.winterImpact.buildUrl(3)
 };
 
+// Never hardcode a hazards URL — derived by iterating PRODUCT_REGISTRY.hazardsOutlook.layers
+// and calling its own buildUrl, exactly like ERO_URLS/WSSI_URLS, so a layer-id change in
+// productRegistry.js cannot leave a stale literal here (Pitfall 11, cache-key drift).
+const HAZARDS_URLS = {};
+for (const layer of PRODUCT_REGISTRY.hazardsOutlook.layers) {
+  HAZARDS_URLS[layer.id] = PRODUCT_REGISTRY.hazardsOutlook.buildUrl(layer.id);
+}
+
+// The pinned "now" for every Hazards Outlook scenario in this file — Wed Aug 26 2026
+// 13:00Z, matching 16-RESEARCH.md's live pull. Every hazards scenario overrides
+// helper._nowMs with this constant as its first act after resetHelper, so day offsets are
+// deterministic and the suite cannot go red at a date boundary (T-16-26).
+const HAZARDS_NOW_MS = Date.UTC(2026, 7, 26, 13, 0);
+
 // The live MPD hazard-type table, verbatim from RESEARCH.md's MPD_1118_final.kmz sample.
 // Used by harness-real-kml-deps-round-trip to pin togeojson's description-object shape
 // (RESEARCH.md Pitfall 3) as executable ground truth before any product code depends on it.
@@ -709,6 +723,53 @@ function wssiRoutes(day1Handler) {
   ];
 }
 
+// Routes for the Hazards Outlook HTTP-seam scenarios, mirroring eroHttpRoutes/wssiRoutes:
+// ALL SIX hazards URLs answer 200 with an empty collection by default, plus every ERO/WSSI
+// URL and the SPC/fire-weather ".lyr.geojson" catch-all — nothing outside the scenario's
+// subject may hard-fail, or anyStale is set by a layer the scenario is not testing and its
+// `_stale` assertion becomes vacuous (WR-02's trap, T-16-25). `overrides` is keyed by layer
+// id (1, 3, 4, 6, 7, 8, per hazardsOutlookLayers); a layer id present there gets its own
+// handler instead of the quiet default.
+function hazardsRoutes(overrides = {}) {
+  const okEmpty = () => httpResponse({ body: EMPTY_FEATURE_COLLECTION, etag: "hazards-empty-v1" });
+  const routes = [];
+  for (const layer of PRODUCT_REGISTRY.hazardsOutlook.layers) {
+    routes.push([HAZARDS_URLS[layer.id], overrides[layer.id] || okEmpty]);
+  }
+  routes.push(
+    [ERO_URLS[1], okEmpty], [ERO_URLS[2], okEmpty], [ERO_URLS[3], okEmpty],
+    [ERO_URLS[4], okEmpty], [ERO_URLS[5], okEmpty],
+    [WSSI_URLS[1], okEmpty], [WSSI_URLS[2], okEmpty], [WSSI_URLS[3], okEmpty],
+    [".lyr.geojson", okEmpty]
+  );
+  return routes;
+}
+
+// Builds one Hazards Outlook GeoJSON feature. 16-RESEARCH.md live-verified every
+// start_date/end_date on this service is exact UTC midnight epoch ms, so fixtures must
+// match that shape — startDate/endDate are epoch ms, not date strings. HAZ-03 / Pitfall 8
+// (T-16-24): carries ONLY a lowercase `label` property, deliberately NO uppercase `LABEL`
+// — a fixture that also carried `LABEL` could satisfy extractPolygons's hardcoded
+// uppercase read and mask a HAZ-03 regression. `filedate` defaults to `startDate` when
+// omitted, which is safe against every pinned-clock scenario in this file (a future
+// startDate is never stale relative to HAZARDS_NOW_MS).
+function hazardsFeature({ label, startDate, endDate, filedate }) {
+  return {
+    type: "Feature",
+    properties: {
+      label,
+      start_date: startDate,
+      end_date: endDate,
+      idp_filedate: filedate !== undefined ? filedate : startDate
+    },
+    geometry: { type: "Polygon", coordinates: [SAMPLE_RING] }
+  };
+}
+
+function hazardsCollection(features) {
+  return { type: "FeatureCollection", features };
+}
+
 // ---------------------------------------------------------------------
 // Payload contract assertion
 // ---------------------------------------------------------------------
@@ -807,6 +868,38 @@ function assertPayloadIntact(out) {
         `(got ${JSON.stringify(out.advisories[row.id])})`
       );
     }
+  }
+}
+
+// Phase 14 D-05: one payload shape always — a toggle being off never changes it.
+// assertPayloadIntact deliberately covers only the top-level day1..day8, so this is the
+// Hazards Outlook block's own shape gate, exercised by every hazards-* scenario.
+function assertHazardsBlockIntact(out) {
+  const block = out && out.hazardsOutlook;
+  if (typeof block !== "object" || block === null) {
+    throw new Error("assertHazardsBlockIntact: hazardsOutlook missing or not an object");
+  }
+  const keys = Object.keys(block);
+  if (keys.length !== 13) {
+    throw new Error(
+      `assertHazardsBlockIntact: hazardsOutlook has ${keys.length} keys, expected 13 (day3..day14 + windowBand)`
+    );
+  }
+  for (let d = 3; d <= 14; d++) {
+    const key = `day${d}`;
+    const entry = block[key];
+    if (typeof entry !== "object" || entry === null) {
+      throw new Error(`assertHazardsBlockIntact: ${key} missing or not an object`);
+    }
+    if (typeof entry.date !== "string") {
+      throw new Error(`assertHazardsBlockIntact: ${key}.date is not a string (got ${JSON.stringify(entry.date)})`);
+    }
+    if (!Array.isArray(entry.hazards)) {
+      throw new Error(`assertHazardsBlockIntact: ${key}.hazards is not an array`);
+    }
+  }
+  if (!Array.isArray(block.windowBand)) {
+    throw new Error("assertHazardsBlockIntact: windowBand is not an array");
   }
 }
 
@@ -3647,6 +3740,33 @@ const scenarios = [
         if (!out.includes(escaped)) {
           throw new Error(`remote text containing ${raw} did not render as ${escaped}: ${out}`);
         }
+      }
+    }
+  },
+  {
+    // T-16-25: hazardsRoutes()'s default table must itself be quiet — installed via
+    // installHttp with zero overrides, it must not set anyStale on its own. This is pinned
+    // separately from every other hazards-* scenario (which override one or more layers)
+    // because a quiet-by-default regression in an UNoverridden layer could hide behind an
+    // override elsewhere; this scenario overrides nothing.
+    name: "hazards-routes-are-quiet-by-default",
+    run: async (helper) => {
+      resetHelper(helper);
+      resetLogs();
+      helper._nowMs = () => HAZARDS_NOW_MS;
+      helper._products = { showHazardsOutlook: true };
+      installHttp(helper, hazardsRoutes());
+      const out = await helper.getSpcOutlook(
+        PROBE_LAT, PROBE_LON, false, { showHazardsOutlook: true }
+      );
+      assertPayloadIntact(out);
+      assertHazardsBlockIntact(out);
+      const keyCount = Object.keys(out.hazardsOutlook).length;
+      if (keyCount !== 13) {
+        throw new Error(`hazardsRoutes()'s default table produced ${keyCount} hazardsOutlook keys, expected 13`);
+      }
+      if (out._stale) {
+        throw new Error("hazardsRoutes()'s default (all-quiet) table set anyStale — WR-02's trap");
       }
     }
   }
