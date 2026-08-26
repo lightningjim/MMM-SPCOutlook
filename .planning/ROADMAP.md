@@ -159,7 +159,41 @@ Plans:
   4. Flooding and Drought sub-labels never appear in the Hazards Outlook display, checked against a live payload known to contain them (HAZ-04).
   5. On a weekend when this product hasn't refreshed since Friday, the module does not raise a false stale warning for it (DATA-02).
 
-**Plans**: TBD
+**Note on criterion 4:** verified at the shipped default config (`showDrought: false`, CONTEXT.md
+D-10). Drought display is an explicit user opt-in, not a violation of this criterion. Flooding
+exclusion, by contrast, is absolute — D-09 provides no override.
+
+**Plans:** 8 plans
+
+Plans:
+**Wave 1**
+
+- [ ] 16-01-PLAN.md — `hazardsOutlook` registry row: six layers, Flooding/Drought vocabularies, live-sourced palette, `maxDataAgeHours` (wave 1)
+- [ ] 16-02-PLAN.md — Clock seam, UTC date-bucketing helpers, collect-all evaluator (wave 1)
+
+**Wave 2** *(blocked on Wave 1)*
+
+- [ ] 16-03-PLAN.md — `arcgis-hazard-window` runner: clock-independent cache contract, per-layer freshness, payload block (wave 2)
+
+**Wave 3** *(blocked on Wave 2)*
+
+- [ ] 16-04-PLAN.md — Config defaults and the TWO independent no-risk gate terms (wave 3)
+
+**Wave 4** *(blocked on Wave 3)*
+
+- [ ] 16-05-PLAN.md — Day-grid renderer and window-band renderer, `escapeHtml` load-bearing (wave 4)
+
+**Wave 5** *(blocked on Wave 4)*
+
+- [ ] 16-06-PLAN.md — Probe routes/fixtures plus the HAZ-01/03/04 core scenario family (wave 5)
+
+**Wave 6** *(blocked on Wave 5)*
+
+- [ ] 16-07-PLAN.md — Day-offset-drift-on-cache-hit and window-band-gate scenarios, DATA-02 freshness family (wave 6)
+
+**Wave 7** *(blocked on Wave 6)*
+
+- [ ] 16-08-PLAN.md — Phase mutation inventory, `day9..day14` audit, human UAT checkpoint (wave 7)
 
 ### Phase 17: NWS/WPC HeatRisk & Parallelized Fetching
 
@@ -231,7 +265,7 @@ Phases execute in numeric order: 14 → 15 → 16 → 17 → 18 → 19
 | 13. Proximity Frontend Render | v1.2 | 3/3 | Complete | 2026-05-03 |
 | 14. Foundation & WPC Excessive Rainfall Outlook | v2.0 | 7/7 | Complete | 2026-08-23 |
 | 15. WPC Winter Storm Severity & Mesoscale Precipitation Discussion | v2.0 | 6/9 | In Progress|  |
-| 16. WPC Day 3–7 / CPC Day 8–14 Hazards Outlook | v2.0 | 0/? | Not started | - |
+| 16. WPC Day 3–7 / CPC Day 8–14 Hazards Outlook | v2.0 | 0/8 | Planned | - |
 | 17. NWS/WPC HeatRisk & Parallelized Fetching | v2.0 | 0/? | Not started | - |
 | 18. Merge, Precedence & Unified Payload Schema | v2.0 | 0/? | Not started | - |
 | 19. Unified Day Report — getDom() Rewrite | v2.0 | 0/? | Not started | - |
