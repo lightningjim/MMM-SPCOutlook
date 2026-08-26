@@ -140,3 +140,9 @@ None - no external service configuration required.
 ---
 *Phase: 16-wpc-day-3-7-cpc-day-8-14-hazards-outlook*
 *Completed: 2026-08-26*
+
+## Self-Check: PASSED
+- FOUND: `.planning/phases/16-wpc-day-3-7-cpc-day-8-14-hazards-outlook/16-04-SUMMARY.md`
+- FOUND: `c951c45` (Task 1 commit)
+- FOUND: `d9bdbc1` (Task 2 commit)
+- FOUND: `5de3843` (SUMMARY commit)
