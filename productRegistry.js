@@ -122,6 +122,85 @@ const wssiTierToColor = {
 // extension into the candidate set.
 const MPD_FILENAME_PATTERN = /^MPD_(\d+)_final\.kmz$/;
 
+// Same allowlisted host buildArcGisQuery already permits — no allowlist
+// change needed.
+const HAZARDS_BASE_URL = "https://mapservices.weather.noaa.gov/vector/rest/services/hazards/cpc_weather_hazards/MapServer";
+
+// The six hazards-outlook layers, in a fixed declared order. `group` drives
+// window-band-vs-day-bucket routing (HAZ-01/HAZ-02). `dayRange` is consumed
+// ONLY by D-04's full-window guard on `precipitation` layers — `temperature`
+// and `wildfireDrought` route to the window band unconditionally regardless
+// of observed span (HAZ-02, and RESEARCH's live finding that Temperature
+// spans are 1/4/5 days within one layer in one poll).
+const hazardsOutlookLayers = [
+  { id: 1, group: "temperature",     dayRange: [3, 7] },
+  { id: 4, group: "precipitation",   dayRange: [3, 7] },
+  { id: 7, group: "wildfireDrought", dayRange: [3, 7] },
+  { id: 3, group: "temperature",     dayRange: [8, 14] },
+  { id: 6, group: "precipitation",   dayRange: [8, 14] },
+  { id: 8, group: "wildfireDrought", dayRange: [8, 14] }
+];
+
+// D-09: these three labels originate from the National Flood Outlook, a
+// separate NOAA product outside v2.0 scope that rides inside the
+// Precipitation layers' attributes; rendering them would attribute another
+// product's data to the Hazards Outlook. Hard exclusion with no config
+// override. This is an interim measure with a known successor — the
+// National Flood Outlook is scoped as its own phase this milestone
+// (CONTEXT.md Deferred Ideas).
+const hazardsExcludedLabels = ["Flooding Likely", "Flooding Occurring or Imminent", "Flooding Possible"];
+
+// D-10: gated by showDrought (default false), NOT excluded. "Critical
+// Wildfire Risk" is not drought and is never gated — the Wildfire/Drought
+// layers multiplex both families on the same `label` attribute.
+const hazardsDroughtLabels = ["Severe Drought", "Rapid Onset Drought Risk"];
+
+// D-02: registry-declared order for same-day co-occurring hazards, because
+// ArcGIS response order can flip between polls on an unchanged forecast,
+// which reads as a change on a glanceable mirror. Labels absent from this
+// list sort AFTER every listed label, alphabetically among themselves.
+const hazardsOrder = [
+  "Severe Weather", "Heavy Rain", "Heavy Precipitation", "Heavy Snow",
+  "Freezing Rain", "Heavy Ice"
+];
+
+// D-11 default style for a label that is neither excluded, gated, nor
+// present in the display map. Same neutral grey the frontend's
+// fireRiskToColor[0] already uses, so an unmapped label renders visibly in
+// the module's existing no-risk grey rather than being dropped.
+const HAZARDS_DEFAULT_COLOR = "aaaaaa";
+
+// Label -> hex, no leading "#" (matches eroTierToColor/wssiTierToColor
+// convention). Values read from drawingInfo.renderer.uniqueValueGroups[]
+// .classes[].symbol.color on all six layers, live 2026-08-26 (RESEARCH.md
+// Colors table). This map is NOT a filter — an absent label still renders
+// verbatim in HAZARDS_DEFAULT_COLOR per D-11. "Severe Weather" is present
+// deliberately and renders rather than being suppressed (D-12 — the
+// hazard-dimension taxonomy that could justify suppression is Phase 18's
+// charter). "Heavy Ice" shares "ff00c5" with "Freezing Rain" in WPC's own
+// legend and that is not a transcription error. Drought labels are
+// intentionally absent because they are gated elsewhere.
+const hazardsDisplayColor = {
+  "Frost/Freeze": "c500ff", "Hazardous Heat": "a80000", "Hazardous Cold": "005ce6",
+  "High Winds": "cdaa66", "Significant Waves": "ffd37f", "Freezing Rain": "ff00c5",
+  "Heavy Precipitation": "00e6a9", "Heavy Rain": "267300", "Heavy Snow": "0084a8",
+  "Severe Weather": "e69800", "Heavy Ice": "ff00c5", "Critical Wildfire Risk": "000000",
+  "Excessive Heat": "a80000", "Much Above Normal Temperatures": "ff0000",
+  "Much Below Normal Temperatures": "005ce6"
+};
+
+// Sibling to daySpanOf, NOT a modification of it — daySpanOf asserts a
+// contiguous 1..N map and this product's grid is a [3,14] range, a
+// different shape. Same "make the invalid state unrepresentable, throw at
+// load time" instinct as daySpanOf.
+function dayRangeOf([first, last]) {
+  if (!(Number.isInteger(first) && Number.isInteger(last) && last > first)) {
+    throw new Error("productRegistry: dayRangeOf requires [first, last] integers with last > first, got " +
+                    JSON.stringify([first, last]));
+  }
+  return [first, last];
+}
+
 const PRODUCT_REGISTRY = {
   excessiveRain: {
     id: "excessiveRain",
@@ -235,9 +314,66 @@ const PRODUCT_REGISTRY = {
       const hazardType = (ctx && ctx.hazardType) || null;
       return { label: "WPC MPD " + number, hazardType };
     }
+  },
+  hazardsOutlook: {
+    id: "hazardsOutlook",
+    // Third kind, beside "arcgis-day-layers" and "kml-advisory" — a
+    // node_helper.js sibling runner dispatches on it (15 D-01 left this slot
+    // open deliberately).
+    kind: "arcgis-hazard-window",
+    configFlag: "showHazardsOutlook",
+    baseUrl: HAZARDS_BASE_URL,
+    layers: hazardsOutlookLayers,
+    // Derived through the validator, never restated — see dayRangeOf.
+    dayRangeTotal: dayRangeOf([3, 14]),
+    excludedLabels: hazardsExcludedLabels,
+    droughtLabels: hazardsDroughtLabels,
+    order: hazardsOrder,
+    displayColor: hazardsDisplayColor,
+    defaultColor: HAZARDS_DEFAULT_COLOR,
+    // Argument is a LAYER ID, not a day — the inverse of
+    // excessiveRain.buildUrl(day). This product's day lives inside each
+    // feature's start_date/end_date, not in the URL. Every hazards URL must
+    // come from here (Pitfall 11, cache-key drift) — no inline
+    // buildArcGisQuery call at a second site.
+    buildUrl: (layerId) => buildArcGisQuery(HAZARDS_BASE_URL, layerId),
+    // HAZ-03 / Pitfall 8: extractPolygons hardcodes f.properties.LABEL
+    // (uppercase, SPC-only, node_helper.js:1005), so the `label` positional
+    // parameter is ALWAYS "" for this service. Read f.properties.label
+    // (lowercase) directly off `f` — the same idiom eroDnToValue and
+    // wssiRawToValue already use to route around this trap. A non-string
+    // label yields "" so a malformed feature is dropped by includesFeat
+    // rather than rendering `undefined`.
+    toValue: (label, f) => (f && f.properties && typeof f.properties.label === "string" ? f.properties.label : ""),
+    // D-13/D-14: 84 hours = Fri 17Z + 84h -> Mon 05Z, clearing a normal
+    // weekend with ~12h of slack before Monday's 17:00Z issuance and
+    // catching a mid-week stall within about a day. Live serviceDescription
+    // re-confirmed 2026-08-26: "Update Frequency: Daily Monday-Friday at
+    // 17:00Z". Known limitation: a federal-holiday Monday pushes the real
+    // gap to 96h, so the badge fires on roughly 10 days a year, where it is
+    // technically correct that nothing new has published. Applied against
+    // each layer's OWN idp_filedate — live evidence 2026-08-26 recorded
+    // three distinct filedates across the six layers in one poll, one ~23h
+    // staler than its siblings, so a single shared row-level timestamp does
+    // not exist.
+    maxDataAgeHours: 84,
+    // D-08 precedent (winterImpact above) and 14-REVIEW IN-01. Every hex in
+    // hazardsDisplayColor was read from
+    // drawingInfo.renderer.uniqueValueGroups[].classes[].symbol.color on all
+    // six layers, live 2026-08-26. {layerId} in the URL is a placeholder for
+    // 1|3|4|6|7|8. This supersedes FEATURES.md's "PNG swatches only, LOW
+    // confidence" claim — no visual verification against wpc.ncep.noaa.gov
+    // is needed.
+    paletteSource: "https://mapservices.weather.noaa.gov/vector/rest/services/hazards/cpc_weather_hazards/MapServer/{layerId}?f=json"
+    // Deliberately NO includesFeat here: D-10's Drought gate is
+    // request-scoped (productToggles.showDrought) and registry rows are pure
+    // static configuration with no `this` and no closure over request state
+    // (15 D-02), so the runner builds that closure at call time over
+    // excludedLabels + droughtLabels. Also no valueToTier/tierToText/
+    // tierToColor: this product has no severity ladder anywhere in its
+    // schema (Pitfall 1), so a max-comparator is meaningless (D-02).
   }
-  // Future rows (Hazards Outlook, HeatRisk) land in Phases 16-17 (D-08) —
-  // not added here.
+  // Future row (HeatRisk) lands in Phase 17 (D-08) — not added here.
 };
 
-module.exports = { buildArcGisQuery, daySpanOf, MPD_FILENAME_PATTERN, PRODUCT_REGISTRY };
+module.exports = { buildArcGisQuery, daySpanOf, dayRangeOf, MPD_FILENAME_PATTERN, PRODUCT_REGISTRY };
