@@ -269,3 +269,46 @@ Phases execute in numeric order: 14 → 15 → 16 → 17 → 18 → 19
 | 17. NWS/WPC HeatRisk & Parallelized Fetching | v2.0 | 0/? | Not started | - |
 | 18. Merge, Precedence & Unified Payload Schema | v2.0 | 0/? | Not started | - |
 | 19. Unified Day Report — getDom() Rewrite | v2.0 | 0/? | Not started | - |
+
+## Backlog
+
+### Phase 999.1: Phase 16 code review follow-ups (BACKLOG)
+
+**Goal:** [Captured for future planning] Close the ten findings from `16-REVIEW.md` that were
+left open when Phase 16 shipped. CR-01 (critical) and WR-04 were fixed in `0f58b5e`; these are
+the remainder. Full detail, with reproduction and suggested fixes, lives in
+`.planning/phases/16-wpc-day-3-7-cpc-day-8-14-hazards-outlook/16-REVIEW.md`.
+**Requirements:** TBD
+**Plans:** 0 plans
+
+Highest value first:
+
+- **WR-05** — `_isWithinStaleWindow` and the three cache-hit timestamp refreshes call
+  `Date.now()` directly instead of the `_nowMs()` seam. Already live: the probe harness pins
+  `HAZARDS_NOW_MS` to `Date.UTC(2026,7,26,13,0)`, now more than a day behind the real clock, so
+  a warm-cache-plus-failure hazards scenario would take a different branch today than when it
+  was authored. It passes only because no hazards scenario reaches `_isWithinStaleWindow`.
+- **WR-02** — D-09's "hard exclusion with no config override" is exact-string `.includes()`, so
+  `"Flooding Likely "` with a trailing space renders. `winterImpact.toValue` one row above
+  already folds before lookup and calls this exact trap WSSI-02.
+- **WR-01** — `showDrought` is baked into the URL-keyed cache on the miss path only, with no
+  toggle dimension and no frontend-side drought term. Reachable via the shared-`node_helper`
+  multi-instance case this file documents at length.
+- **WR-03** — `_bucketHazardMatch` hardcodes the day span `3`/`14` while the payload loop reads
+  `row.dayRangeTotal`; the bucketer isn't even passed `row`. This is the two-places-declare-one-span
+  defect `daySpanOf`'s own 20-line comment condemns.
+- **WR-06** — remote-controlled unbounded growth in the unmapped-label ledger
+  (`_loggedUnmappedHazardLabels`) and the window-band entry count. Runs on a Raspberry Pi.
+- **WR-07** — `fetchGeoJsonCached` reads an unbounded response body; Phase 16 added six new URLs
+  to that path.
+- **IN-01** — the window-band dedupe key concatenates a remote-controlled label with `|`.
+
+Operator helper `scripts/hazards-at.js` (added during the Phase 16 UAT, not a production path):
+
+- **WR-08** — reports "per-day grid" for Precipitation features that D-04 routes to the band.
+- **WR-09** — prints `fresh (no warning)` when `idp_filedate` is missing, because `NaN > 84` is
+  `false`.
+- **IN-02** — diverges from the codebase's transport and naming conventions.
+
+Plans:
+- [ ] TBD (promote with /bm:review-backlog when ready)
