@@ -4563,6 +4563,86 @@ const scenarios = [
     }
   },
   {
+    // 16-REVIEW WR-04 regression target — the mirror image of CR-01, on the frontend.
+    // The no-risk gate counted every windowBand entry while renderHazardsWindowBand
+    // dropped entries whose window had already elapsed (`offsetEnd < 0`). A payload whose
+    // band held ONLY elapsed entries therefore disqualified the short-circuit, rendered
+    // nothing at all (the "Extended Hazards:" heading is written inside the loop, AFTER
+    // the `continue`), fell through to the contentMarker comparison, and printed the
+    // "(unconfirmed)" variant on data that was neither stale nor degraded — a FALSE
+    // staleness signal. The fix is one shared `renderableWindowEntries` predicate read by
+    // both the gate and the renderer, so the two cannot drift again.
+    name: "frontend-hazards-elapsed-band-is-not-a-false-staleness-signal",
+    run: async (helper) => {
+      const frontend = loadFrontendModule();
+      const config = {
+        lat: PROBE_LAT, lon: PROBE_LON, extended: false, updateInterval: 60,
+        proximityWeighting: false, showExcessiveRain: false, showWinterImpact: false,
+        showHazardsOutlook: true, showDrought: false
+      };
+
+      // A wholly-elapsed window. Reachable: _bucketHazardMatch rejects an inverted span but
+      // imposes no lower bound on the band path, so a backfill, a correction, or a
+      // multi-day upstream stall can put a past window here.
+      const elapsedBlock = emptyHazardsBlock();
+      elapsedBlock.windowBand = [{
+        label: "Hazardous Heat", color: "a80000", mapped: true,
+        startDate: "2026-08-20", endDate: "2026-08-24", offsetStart: -6, offsetEnd: -2
+      }];
+      for (let d = 3; d <= 14; d++) {
+        if (elapsedBlock[`day${d}`].hazards.length !== 0) {
+          throw new Error(`precondition failed: day${d} is not empty, so the day-grid term would carry this scenario`);
+        }
+      }
+
+      const rendered = renderDom(frontend, { config, spcrisk: noRiskPayloadWithHazards(elapsedBlock) });
+      if (rendered.includes("unconfirmed")) {
+        throw new Error(
+          "WR-04: a band of only-elapsed entries produced the \"(unconfirmed)\" staleness variant on data that " +
+          `is neither stale nor degraded — a false staleness signal. Rendered: ${rendered}`
+        );
+      }
+      if (rendered !== "No Severe Weather Risk") {
+        throw new Error(
+          "WR-04: a band whose every entry has already elapsed has nothing to say, so the plain confident " +
+          `all-clear is the correct render. Got: ${rendered}`
+        );
+      }
+      if (rendered.includes("Extended Hazards")) {
+        throw new Error(`WR-04: an orphaned "Extended Hazards:" heading was written for a band with no renderable entries: ${rendered}`);
+      }
+
+      // Control: the SAME label and shape with a live (non-negative) offsetEnd must still
+      // render the band and must NOT short-circuit — otherwise the assertion above is
+      // satisfied by the band having stopped working entirely.
+      const liveBlock = emptyHazardsBlock();
+      liveBlock.windowBand = [{
+        label: "Hazardous Heat", color: "a80000", mapped: true,
+        startDate: "2026-08-29", endDate: "2026-09-02", offsetStart: 3, offsetEnd: 7
+      }];
+      const liveRendered = renderDom(frontend, { config, spcrisk: noRiskPayloadWithHazards(liveBlock) });
+      if (liveRendered === "No Severe Weather Risk" || !liveRendered.includes("Hazardous Heat")) {
+        throw new Error(`control: a live window-band entry no longer renders, it produced: ${liveRendered}`);
+      }
+
+      // Control 2: a MIXED band — one elapsed, one live — must render only the live entry
+      // and must not short-circuit. This pins the filter to per-entry granularity rather
+      // than an all-or-nothing band check.
+      const mixedBlock = emptyHazardsBlock();
+      mixedBlock.windowBand = [
+        { label: "Heavy Snow", color: "0084a8", mapped: true, startDate: "2026-08-20", endDate: "2026-08-24", offsetStart: -6, offsetEnd: -2 },
+        { label: "Hazardous Heat", color: "a80000", mapped: true, startDate: "2026-08-29", endDate: "2026-09-02", offsetStart: 3, offsetEnd: 7 }
+      ];
+      const mixedRendered = renderDom(frontend, { config, spcrisk: noRiskPayloadWithHazards(mixedBlock) });
+      if (mixedRendered.includes("Heavy Snow")) {
+        throw new Error(`control: an elapsed entry rendered alongside a live one: ${mixedRendered}`);
+      }
+      if (!mixedRendered.includes("Hazardous Heat")) {
+        throw new Error(`control: the live entry in a mixed band did not render: ${mixedRendered}`);
+      }
+    }
+  },
+  {
     // HAZ-02's second half: a window-band hazard must appear exactly once in the rendered
     // markup, never repeated across the days of its window — the window band and the day
     // grid are two different renderers, and a window-band entry must never also emit a
@@ -4758,6 +4838,94 @@ const scenarios = [
         const freshOut = await runWithLayer3Filedate(freshFiledate);
         if (freshOut._stale) {
           throw new Error("control: with every layer's idp_filedate fresh, _stale was still set — the earlier trip is not attributable to layer 3 specifically");
+        }
+      } finally {
+        turfStub.pointInPolygon = originalPointInPolygon;
+      }
+    }
+  },
+  {
+    // 16-REVIEW CR-01 regression target. The D-13 age check used to be guarded by
+    // `matches.length > 0`, and `matches` is POST-containment. A layer carrying features
+    // with a five-day-old `idp_filedate` therefore raised no staleness signal whenever
+    // none of those features contained the user — the MAJORITY case, since most locations
+    // sit outside most hazard polygons most of the time. The user who saw content got a
+    // correct badge; the user who saw nothing got a confident, unbadged all-clear off
+    // stale data. That is the false-negative class this module exists to prevent.
+    //
+    // `hazards-zero-feature-layers-render-nothing-and-are-not-stale` does NOT cover this:
+    // it routes genuinely empty collections, which is the sanctioned case comment (c)
+    // describes. This scenario is its complement — features PRESENT, containment FALSE.
+    name: "hazards-stale-layer-ages-out-even-when-nothing-contains-the-user",
+    run: async (helper) => {
+      const maxAgeHours = PRODUCT_REGISTRY.hazardsOutlook.maxDataAgeHours;
+      const nowMs = HAZARDS_NOW_MS;
+      const staleFiledate = nowMs - (maxAgeHours + 5) * 60 * 60 * 1000; // 5h past budget
+      const freshFiledate = nowMs - 1 * 60 * 60 * 1000;
+
+      const originalPointInPolygon = turfStub.pointInPolygon;
+      const runWithFiledate = async (filedate) => {
+        resetHelper(helper);
+        resetLogs();
+        // The whole point: features exist and are well-formed, but NOTHING contains the
+        // user. resetHelper already defaults this to false; set it explicitly so the
+        // scenario states its own precondition rather than inheriting it.
+        turfStub.pointInPolygon = () => false;
+        helper._nowMs = () => nowMs;
+        helper._products = { showHazardsOutlook: true };
+        const body = () => httpResponse({
+          body: hazardsCollection([
+            hazardsFeature({
+              label: "Hazardous Heat",
+              startDate: Date.UTC(2026, 7, 29), endDate: Date.UTC(2026, 8, 2), filedate
+            })
+          ]),
+          etag: "hazards-cr01-v1"
+        });
+        installHttp(helper, hazardsRoutes({ 1: body, 3: body, 4: body, 6: body, 7: body, 8: body }));
+        const out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showHazardsOutlook: true });
+        assertPayloadIntact(out);
+        assertHazardsBlockIntact(out);
+        return out;
+      };
+
+      try {
+        const staleOut = await runWithFiledate(staleFiledate);
+
+        // Precondition guard: prove nothing reached the payload, so "stale" cannot be
+        // explained by a match having been found after all. If a future change makes the
+        // stub contain the user, this scenario would silently degrade into a duplicate of
+        // hazards-data-age-sets-the-badge-but-not-the-age-figure and prove nothing new.
+        if (staleOut.hazardsOutlook.windowBand.length !== 0) {
+          throw new Error(
+            "precondition failed: windowBand is not empty, so nothing about the " +
+            "no-containment path is being proven: " + JSON.stringify(staleOut.hazardsOutlook.windowBand)
+          );
+        }
+        for (let d = 3; d <= 14; d++) {
+          if (staleOut.hazardsOutlook[`day${d}`].hazards.length !== 0) {
+            throw new Error(`precondition failed: day${d} is not empty, so this is not the no-containment path`);
+          }
+        }
+
+        if (staleOut._stale !== true) {
+          throw new Error(
+            `CR-01: every layer's idp_filedate is ${maxAgeHours + 5}h old (past the ${maxAgeHours}h budget) ` +
+            "but no feature contains the user, and _stale was not set. A stalled feed must age out on its own " +
+            "timestamp — the age check must not depend on the user's location, or the majority of users get a " +
+            "silent, unbadged all-clear off stale data."
+          );
+        }
+
+        // Control: the identical fixture — same features, same non-containment — with a
+        // fresh filedate must NOT set _stale, proving the trip came from the age check and
+        // not from the empty result itself or from some unrelated degrade in the run.
+        const freshOut = await runWithFiledate(freshFiledate);
+        if (freshOut._stale) {
+          throw new Error(
+            "control: with every layer's idp_filedate fresh and still nothing containing the user, _stale was " +
+            "set anyway — the earlier trip is not attributable to the data age"
+          );
         }
       } finally {
         turfStub.pointInPolygon = originalPointInPolygon;

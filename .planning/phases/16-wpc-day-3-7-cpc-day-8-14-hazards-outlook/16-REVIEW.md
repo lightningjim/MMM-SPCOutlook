@@ -15,6 +15,11 @@ findings:
   info: 2
   total: 12
 status: issues_found
+remediated:
+  - CR-01
+  - WR-04
+remediation_commit: pending
+remediation_note: "CR-01 and WR-04 fixed 2026-08-27; suite 65 -> 67, both new scenarios mutation-proven (M1-M4). See 16-MUTATION-INVENTORY.md addendum. All other findings remain open."
 ---
 
 # Phase 16: Code Review Report
@@ -68,6 +73,11 @@ and every `_isWithinStaleWindow` path for this product).
 ## Critical Issues
 
 ### CR-01: A stalled Hazards Outlook feed produces a silent all-clear whenever no polygon contains the user
+
+> **FIXED 2026-08-27.** `_hazardLayerFiledate` reads the timestamp off the raw body before
+> containment filtering; `_cacheHazardMatches` now stores `{ matches, layerFiledate }`.
+> Pinned by `hazards-stale-layer-ages-out-even-when-nothing-contains-the-user` (mutations
+> M1, M4).
 
 **File:** `node_helper.js:492-518`
 **Issue:** The D-13/D-14 data-age check is guarded by `matches.length > 0`, and `matches` is
@@ -271,6 +281,10 @@ _bucketHazardMatch(match, layer, todayUtcMs, dayBuckets, windowEntries, dayRange
 ```
 
 ### WR-04: The window-band no-risk gate does not apply the renderer's elapsed-entry filter
+
+> **FIXED 2026-08-27.** Shared `renderableWindowEntries` / `renderableDayHazards` predicates
+> are now read by both the gate and both renderers. Pinned by
+> `frontend-hazards-elapsed-band-is-not-a-false-staleness-signal` (mutations M2, M3).
 
 **File:** `MMM-SPCOutlook.js:262-266` and `:557`
 **Issue:** The gate term counts every band entry:

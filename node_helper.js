@@ -375,6 +375,36 @@ module.exports = NodeHelper.create({
   },
 
   /**
+   * Read a Hazards Outlook layer's own publish timestamp off its RAW GeoJSON body, before
+   * any containment or `includesFeat` filtering has been applied.
+   *
+   * This exists because the D-13 age check must not depend on the user's location. Reading
+   * `idp_filedate` off the post-containment match array (the original shape) meant a layer
+   * carrying 27 five-day-old features raised no staleness signal whenever none of them
+   * contained the user — so the user who saw content got a correct badge and the user who
+   * saw nothing got a confident, unbadged all-clear off stale data. That is the
+   * false-negative class this module exists to prevent, and it is the common case rather
+   * than an edge one: most locations sit outside most hazard polygons most of the time.
+   *
+   * A genuinely zero-feature layer still returns null and still ages out of the check.
+   * That case is deliberate and unchanged — an empty layer is a real answer from WPC, not
+   * a staleness signal (the WSSI-03 precedent this codebase already ships).
+   *
+   * `idp_filedate` is a REMOTE publish timestamp, not a value derived from our clock, so it
+   * is clock-INDEPENDENT and safe to carry through the cache under this product's contract.
+   * @param geojson - the parsed layer body from fetchGeoJsonCached
+   * @returns the first finite numeric `idp_filedate` found, or null
+   */
+  _hazardLayerFiledate(geojson) {
+    const features = geojson && Array.isArray(geojson.features) ? geojson.features : [];
+    for (const f of features) {
+      const v = f && f.properties ? f.properties.idp_filedate : undefined;
+      if (typeof v === "number" && Number.isFinite(v)) return v;
+    }
+    return null;
+  },
+
+  /**
    * The ONLY place the Hazards Outlook product writes to `_geoJsonCache`.
    *
    * `_runArcGisDayProduct` (above) caches a final, already-resolved day-keyed value
@@ -394,8 +424,12 @@ module.exports = NodeHelper.create({
    * @param url - the layer's own URL, from row.buildUrl(layer.id)
    * @param fetchResult - this layer's fetchGeoJsonCached() result (a cache miss)
    * @param matches - the clock-independent match array from _hazardMatchesFromHits
+   * @param layerFiledate - the layer's own `idp_filedate` from _hazardLayerFiledate, read
+   *   off the raw body rather than the matches so the age check survives a poll where
+   *   nothing contained the user. Clock-independent (a remote publish timestamp), so it
+   *   does not weaken the contract this function enforces.
    */
-  _cacheHazardMatches(url, fetchResult, matches) {
+  _cacheHazardMatches(url, fetchResult, matches, layerFiledate) {
     const whitelisted = [];
     for (const match of matches) {
       // Defensive assertion: the whitelist below already makes a clock-dependent field
@@ -415,11 +449,20 @@ module.exports = NodeHelper.create({
       });
     }
 
+    // Normalized here rather than trusted from the caller, so a malformed upstream value
+    // cannot become a NaN comparison that silently reads as "fresh" downstream.
+    const filedate = (typeof layerFiledate === "number" && Number.isFinite(layerFiledate))
+      ? layerFiledate
+      : null;
+
     this._geoJsonCache.set(url, {
       mode: fetchResult.mode,
       etag: fetchResult.newEtag ?? null,
       hash: fetchResult.newHash ?? null,
-      result: whitelisted,
+      // `{ matches, layerFiledate }`, not a bare array — the filedate must survive a cache
+      // hit on a poll where nothing contains the user, which is exactly the case the old
+      // bare-array shape could not express. Both fields are clock-independent.
+      result: { matches: whitelisted, layerFiledate: filedate },
       timestamp: this._nowMs()
     });
   },
@@ -475,24 +518,44 @@ module.exports = NodeHelper.create({
           if (fetchResult.stale || fetchResult.failed) anyStale = true;
 
           let matches;
+          let layerFiledate = null;
           if (fetchResult.data === null && fetchResult.cachedResult !== null) {
-            // Already the clock-independent match array _cacheHazardMatches wrote — do
-            // NOT re-extract, do NOT re-evaluate. The polygons are gone on a cache hit,
-            // and that is fine: this match array is exactly what re-bucketing needs.
-            matches = fetchResult.cachedResult;
+            // Already the clock-independent unit _cacheHazardMatches wrote — do NOT
+            // re-extract, do NOT re-evaluate. The polygons are gone on a cache hit, and
+            // that is fine: this match array is exactly what re-bucketing needs. The
+            // bare-array branch tolerates an entry written by an older shape (or by a
+            // probe fixture that hand-builds one) rather than throwing on it.
+            const cached = fetchResult.cachedResult;
+            if (Array.isArray(cached)) {
+              matches = cached;
+            } else {
+              matches = Array.isArray(cached.matches) ? cached.matches : [];
+              layerFiledate = typeof cached.layerFiledate === "number" ? cached.layerFiledate : null;
+            }
           } else if (fetchResult.data !== null) {
             const polys = this.extractPolygons(fetchResult.data, row.toValue, includesFeat, url);
             const hits = this.evaluatePolygonsCollectAll(polys, loc);
             matches = this._hazardMatchesFromHits(hits);
-            this._cacheHazardMatches(url, fetchResult, matches);
+            // Read off the RAW body, before containment filtering — see
+            // _hazardLayerFiledate. This is what makes the age check below independent of
+            // whether anything contained the user.
+            layerFiledate = this._hazardLayerFiledate(fetchResult.data);
+            this._cacheHazardMatches(url, fetchResult, matches, layerFiledate);
           } else {
             matches = [];
           }
 
           // Freshness (D-13/D-14/D-15), after the branch above closes, using this
-          // layer's own matches.
-          if (Array.isArray(matches) && matches.length > 0) {
-            const filedate = matches[0].idpFiledate;
+          // layer's own publish timestamp.
+          {
+            // 16-REVIEW CR-01: this used to be guarded by `matches.length > 0`, and
+            // `matches` is POST-containment. A layer of 27 five-day-old features raised no
+            // staleness signal whenever none of them contained the user — the majority
+            // case — so the user who saw nothing got an unbadged all-clear off stale data.
+            // The guard is now the filedate's own existence, which is a property of the
+            // layer rather than of the user's location. `_hazardLayerFiledate` returns null
+            // for a genuinely empty layer, so comment (c) below still holds.
+            const filedate = layerFiledate;
             if (typeof filedate === "number" &&
                 (this._nowMs() - filedate) > row.maxDataAgeHours * 60 * 60 * 1000) {
               // (a) D-15's deliberate asymmetry: this sets `anyStale` so the ⚠ badge
@@ -504,13 +567,14 @@ module.exports = NodeHelper.create({
               //     to distrust a badge that is usually right.
               // (b) D-13: `idp_filedate` is PER LAYER, not per service — live
               //     2026-08-26 recorded three distinct filedates across the six layers
-              //     in one poll, one ~23h staler than its siblings. Reading `matches[0]`
-              //     is safe because the value is uniform WITHIN a layer, but a
+              //     in one poll, one ~23h staler than its siblings. Reading the FIRST
+              //     feature's value is safe because it is uniform WITHIN a layer, but a
               //     row-level shared timestamp does not exist.
-              // (c) A zero-feature layer has no `idp_filedate` to read and therefore
-              //     skips this check entirely — deliberate (the WSSI-03 precedent this
-              //     codebase already ships): a genuinely empty layer is a real answer,
-              //     not a staleness signal.
+              // (c) A layer that is GENUINELY zero-feature has no `idp_filedate` to read,
+              //     so `_hazardLayerFiledate` returns null and this check is skipped —
+              //     deliberate (the WSSI-03 precedent this codebase already ships): an
+              //     empty layer is a real answer, not a staleness signal. Note this is
+              //     zero FEATURES, not zero MATCHES; conflating the two was CR-01.
               // (d) This runs on a cache HIT too, because `idpFiledate` travels inside
               //     the cached match array — a feed that stalls while still serving
               //     304s must still age out.

@@ -246,23 +246,45 @@
     // literal day count survives outside the registry. Tolerates a missing/non-object block
     // (returns false) and a day entry whose `hazards` is absent or not an array (skipped),
     // the same version-skew tolerance enabledAdvisories() already applies to advisories.
+    // 16-REVIEW WR-04: the gate and the renderer must share ONE definition of "renderable",
+    // the same remedy `enabledAdvisories()` already applies to the advisory band. They used
+    // to be two predicates that drifted: the gate counted every band entry while the
+    // renderer dropped entries whose window had already elapsed. A payload whose windowBand
+    // held only elapsed entries therefore disqualified the no-risk short-circuit, rendered
+    // nothing at all (the "Extended Hazards:" heading is written inside the loop, AFTER the
+    // `continue`), fell through to the contentMarker comparison, and printed "No Severe
+    // Weather Risk (unconfirmed)" on data that was neither stale nor degraded — a FALSE
+    // staleness signal, and the exact trust erosion D-15's asymmetry was written to avoid.
+    // It is the mirror image of the backend's CR-01.
+    //
+    // A negative `offsetEnd` is reachable: `_bucketHazardMatch` rejects an inverted span but
+    // imposes no lower bound on the band path, so a backfill, a correction, or a multi-day
+    // upstream stall can put a wholly-past window here.
+    const renderableWindowEntries = (block) => {
+      if (!block || typeof block !== "object" || !Array.isArray(block.windowBand)) return [];
+      return block.windowBand.filter((entry) => (
+        entry && typeof entry === "object" &&
+        !(typeof entry.offsetEnd === "number" && entry.offsetEnd < 0)
+      ));
+    };
+    // Companion for the day grid — same asymmetry in the smaller direction: the gate counted
+    // `hazards.length` while renderHazardsDays additionally required each hazard to be a
+    // non-null object and skipped the row when none survived.
+    const renderableDayHazards = (day) => {
+      if (!day || typeof day !== "object" || !Array.isArray(day.hazards)) return [];
+      return day.hazards.filter((h) => h && typeof h === "object");
+    };
     const hazardsOutlookHasAnyDay = (block) => {
       if (!block || typeof block !== "object") return false;
       const dayKeys = Object.keys(block).filter((k) => /^day\d+$/.test(k));
       for (const key of dayKeys) {
-        const day = block[key];
-        if (day && typeof day === "object" && Array.isArray(day.hazards) && day.hazards.length > 0) {
-          return true;
-        }
+        if (renderableDayHazards(block[key]).length > 0) return true;
       }
       return false;
     };
-    // True when the block's windowBand array carries at least one entry. Same missing/
+    // True when the block carries at least one RENDERABLE window entry. Same missing/
     // non-object tolerance as hazardsOutlookHasAnyDay.
-    const hazardsOutlookHasWindowEntries = (block) => {
-      if (!block || typeof block !== "object") return false;
-      return Array.isArray(block.windowBand) && block.windowBand.length > 0;
-    };
+    const hazardsOutlookHasWindowEntries = (block) => renderableWindowEntries(block).length > 0;
     // WR-09: every other product row is gated on its own toggle (`this.config.showExcessiveRain
     // && ...`, `this.config.showWinterImpact && ...`); the advisory band was not, so it
     // rendered whatever arrived. That was safe only because _runKmlAdvisoryRow returns [] when
@@ -515,23 +537,22 @@
           .sort((a, b) => Number(a.slice(3)) - Number(b.slice(3)));
         for (const key of dayKeys) {
           const entry = block[key];
-          if (!entry || typeof entry !== "object" || !Array.isArray(entry.hazards) || entry.hazards.length === 0) {
-            // ERO-03 / 15 D-09: absence is silence, applied per day — no row, no "None".
-            continue;
-          }
+          // WR-04: the same shared-predicate treatment as the band — the gate's notion of
+          // "this day has something to show" and the renderer's must be one definition.
+          // ERO-03 / 15 D-09: absence is silence, applied per day — no row, no "None".
+          const renderableHazards = renderableDayHazards(entry);
+          if (renderableHazards.length === 0) continue;
           const d = Number(key.slice(3));
           const weekday = hazardsWeekdayFromDate(entry.date);
           const weekdaySegment = weekday ? weekday + ", " : "";
           // D-02: ordering within a row is the payload's array order, untouched — the
           // backend already applied the registry-declared order; re-sorting here would
           // put the ordering rule at two sites.
-          const hazardSpans = entry.hazards
-            .filter((h) => h && typeof h === "object")
+          const hazardSpans = renderableHazards
             .map((h) => (
               "<span style=\"color:#" + validHazardColor(h.color) + "\">" +
               escapeHtml(truncateHazardLabel(h.label)) + "</span>"
             ));
-          if (hazardSpans.length === 0) continue;
           wrapper.innerHTML += "Hazards (" + weekdaySegment + "Day " + d + "): " +
             hazardSpans.join(", ") + "<br/>";
         }
@@ -544,18 +565,20 @@
         // ERO-03 / 15 D-09: absence is silence applies to the band as a whole — a
         // missing/non-object block or an empty/non-array windowBand renders nothing,
         // not even the heading.
-        if (!block || typeof block !== "object" || !Array.isArray(block.windowBand) || block.windowBand.length === 0) {
+        if (renderableWindowEntries(block).length === 0) {
           return;
         }
         let headingWritten = false;
         // D-07: ordering is the payload array's order, untouched — the backend already
         // applied the registry order (span start, ties broken by registry order);
         // re-sorting here would put the ordering rule at two sites.
-        for (const entry of block.windowBand) {
-          if (!entry || typeof entry !== "object") continue;
-          // Deliberate rule, not an edge case: a window that has entirely elapsed is
-          // not a forecast, and rendering it would be worse than silence.
-          if (typeof entry.offsetEnd === "number" && entry.offsetEnd < 0) continue;
+        //
+        // WR-04: iterate the SHARED predicate, not `block.windowBand` with a local copy of
+        // the filter. The "a wholly-elapsed window is not a forecast, and rendering it
+        // would be worse than silence" rule now lives in exactly one place
+        // (renderableWindowEntries) and the no-risk gate reads the same definition, so the
+        // two cannot disagree about whether this band has anything to say.
+        for (const entry of renderableWindowEntries(block)) {
           if (!headingWritten) {
             wrapper.innerHTML += "Extended Hazards:<br/>";
             headingWritten = true;

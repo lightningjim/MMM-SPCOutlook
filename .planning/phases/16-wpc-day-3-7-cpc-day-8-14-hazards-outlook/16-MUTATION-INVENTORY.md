@@ -198,3 +198,71 @@ regexes (`/^day\d+Risk$/` for `dayRiskCount`, `/^day\d+$/` for `hazardsOutlookHa
 structurally disjoint on any real key: a string cannot simultaneously end in `Risk` and not end in
 anything after the digits. `blockHasRisk` therefore cannot be accidentally applied to the Hazards
 Outlook block — confirmed by inspection, not assumed.
+
+---
+
+## Addendum: post-review remediation (2026-08-27)
+
+Two findings from `16-REVIEW.md` were fixed after the phase's implementation plans closed —
+CR-01 (critical) and WR-04 (warning). They are recorded here rather than in a new plan's
+inventory because they extend two scenarios that already live in this phase's suite.
+
+The suite went **65 → 67** scenarios. Both new scenarios are mutation-proven below; neither
+was accepted on a green run alone.
+
+### CR-01 — the D-13 age check no longer depends on the user's location
+
+`node_helper.js`. The check was guarded by `matches.length > 0`, and `matches` is
+POST-containment. A layer carrying features with a five-day-old `idp_filedate` raised no
+staleness signal whenever none of them contained the user — the majority case. New
+`_hazardLayerFiledate(geojson)` reads the timestamp off the RAW body before any filtering;
+`_cacheHazardMatches` now stores `{ matches, layerFiledate }` so the value survives a cache
+hit. Both fields remain clock-independent (`idp_filedate` is a remote publish timestamp), so
+the cache contract is unchanged — the whitelist and its defensive assertion still stand.
+
+Comment (c)'s real intent is preserved and now stated precisely: a genuinely **zero-feature**
+layer still returns null and still skips the check. Conflating zero-features with
+zero-matches was the defect.
+
+New scenario: `hazards-stale-layer-ages-out-even-when-nothing-contains-the-user`.
+It is the complement of `hazards-zero-feature-layers-render-nothing-and-are-not-stale`,
+which routes genuinely empty collections and therefore asserts the sanctioned case only.
+
+### WR-04 — the no-risk gate and the band renderer now share one predicate
+
+`MMM-SPCOutlook.js`. The gate counted every `windowBand` entry while the renderer dropped
+entries with `offsetEnd < 0`. A band of only-elapsed entries disqualified the short-circuit,
+rendered nothing (the heading is written inside the loop, after the `continue`), and printed
+`"No Severe Weather Risk (unconfirmed)"` on data that was neither stale nor degraded — a
+false staleness signal, the mirror image of CR-01. New `renderableWindowEntries` /
+`renderableDayHazards` are read by both the gate and both renderers, so the two cannot drift
+again. Same remedy `enabledAdvisories()` already applies to the advisory band.
+
+New scenario: `frontend-hazards-elapsed-band-is-not-a-false-staleness-signal`, with three
+controls (live entry still renders; mixed elapsed+live band renders only the live entry; no
+orphaned heading).
+
+### Mutations
+
+| # | File | Mutation | Result | Scenario(s) driven RED |
+|---|---|---|---|---|
+| M1 | `node_helper.js` | Restore the old guard: `const filedate = (Array.isArray(matches) && matches.length > 0) ? matches[0].idpFiledate : null` | **RED** | `hazards-stale-layer-ages-out-even-when-nothing-contains-the-user` — and only it (66 passed, 1 failed) |
+| M2 | `MMM-SPCOutlook.js` | Restore the old gate: `hazardsOutlookHasWindowEntries` counts `block.windowBand.length > 0` without the elapsed filter | **RED** | `frontend-hazards-elapsed-band-is-not-a-false-staleness-signal` — and only it (66 passed, 1 failed). The failure message reproduced the defect verbatim: `Rendered: No Severe Weather Risk (unconfirmed)` |
+| M3 | `MMM-SPCOutlook.js` | Drop the `offsetEnd < 0` term from `renderableWindowEntries`, so the shared predicate stops filtering | **RED** | Same scenario (66 passed, 1 failed). Rendered the nonsense `Thu–Mon (D-6–-2): Hazardous Heat`, which is why the filter exists |
+| M4 | `node_helper.js` | `_hazardLayerFiledate` returns `null` unconditionally | **RED** | Five scenarios (62 passed, 5 failed): the new one plus `hazards-weekend-poll-of-fridays-file-is-not-stale`, `hazards-idp-filedate-is-evaluated-per-layer-not-shared`, `hazards-data-age-sets-the-badge-but-not-the-age-figure`, `hazards-stale-data-still-renders-its-rows`. Broad collateral is the point — it proves the new helper is load-bearing for the entire D-13 path, not just for its own scenario |
+
+All four mutations were applied to md5-verified scratchpad copies and restored by file copy,
+never by `git checkout --` (the 16-04 near-miss that destroyed uncommitted work).
+Post-restore md5 verified against `pre-mutation.md5` for both files.
+
+**Unproven scenarios: none.** Both new scenarios have at least one dedicated mutation
+(M1/M4 for CR-01, M2/M3 for WR-04).
+
+### Not fixed
+
+`WR-01, WR-02, WR-03, WR-05, WR-06, WR-07, WR-08, WR-09, IN-01, IN-02` remain open in
+`16-REVIEW.md`. WR-05 in particular is already live in the harness: `HAZARDS_NOW_MS` is
+pinned to `Date.UTC(2026, 7, 26, 13, 0)`, now more than 24h behind the real clock, while
+`_isWithinStaleWindow` and the three cache-hit timestamp refreshes call `Date.now()` directly
+rather than the `_nowMs()` seam. No hazards scenario exercises `_isWithinStaleWindow` today,
+which is the only reason it passes.
