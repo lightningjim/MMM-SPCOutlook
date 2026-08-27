@@ -27,10 +27,10 @@
 
 ### Hazards Outlook (WPC Day 3–7 / CPC Day 8–14)
 
-- [ ] **HAZ-01**: User sees per-day hazard entries for Days 3–14 from the Precipitation layer, which carries per-feature date stamps, when `showHazardsOutlook` is enabled
-- [ ] **HAZ-02**: User sees Temperature and Wildfire hazards in a non-day-scoped band, labeled with their window (e.g. `D3–7`), because these layers carry no per-day resolution
-- [ ] **HAZ-03**: User sees hazards matched against the service's lowercase `label` field, so a present hazard is never silently reported as absent
-- [ ] **HAZ-04**: User does not see Flooding or Drought sub-labels, which are filtered at parse time
+- [x] **HAZ-01**: User sees per-day hazard entries for Days 3–14 from the Precipitation layer, which carries per-feature date stamps, when `showHazardsOutlook` is enabled
+- [x] **HAZ-02**: User sees Temperature and Wildfire hazards in a non-day-scoped band, labeled with their window (e.g. `D3–7`), because these layers carry no per-day resolution
+- [x] **HAZ-03**: User sees hazards matched against the service's lowercase `label` field, so a present hazard is never silently reported as absent
+- [x] **HAZ-04**: User does not see Flooding or Drought sub-labels, which are filtered at parse time
 
 ### Heat Risk (NWS/WPC)
 
@@ -67,7 +67,7 @@
 ### Data Integrity
 
 - [x] **DATA-01**: User's coordinates are always evaluated against WGS84 geometry, with `f=geojson` requested for every ArcGIS endpoint and no raw `f=json` fallback path
-- [ ] **DATA-02**: User sees a stale indicator that accounts for the Hazards Outlook's Mon–Fri-only cadence, without false-alarming every weekend
+- [x] **DATA-02**: User sees a stale indicator that accounts for the Hazards Outlook's Mon–Fri-only cadence, without false-alarming every weekend
 - [ ] **DATA-03**: Each product uses its own label-to-value vocabulary, with no mapping reused across products
 
 ## Future Requirements
@@ -120,11 +120,11 @@ Deferred to v2.x. Tracked but not in this roadmap.
 | MPD-02 | Phase 15 | Pending |
 | MPD-03 | Phase 15 | Pending |
 | MPD-04 | Phase 15 | Pending |
-| HAZ-01 | Phase 16 | Pending |
-| HAZ-02 | Phase 16 | Pending |
-| HAZ-03 | Phase 16 | Pending |
-| HAZ-04 | Phase 16 | Pending |
-| DATA-02 | Phase 16 | Pending |
+| HAZ-01 | Phase 16 | Complete |
+| HAZ-02 | Phase 16 | Complete |
+| HAZ-03 | Phase 16 | Complete |
+| HAZ-04 | Phase 16 | Complete |
+| DATA-02 | Phase 16 | Complete |
 | HEAT-01 | Phase 17 | Pending |
 | HEAT-02 | Phase 17 | Pending |
 | HEAT-03 | Phase 17 | Pending |

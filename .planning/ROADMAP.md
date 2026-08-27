@@ -52,7 +52,7 @@ Full details: `.planning/milestones/v1.2-ROADMAP.md`
 
 - [x] **Phase 14: Foundation & WPC Excessive Rainfall Outlook** - Decouple payload shape from `extended`, establish per-product toggles and endpoint conventions, ship ERO (7/7 plans; 3 review rounds, all blocking gaps closed; probe suite 15/15 mutation-proven — see 14-REVIEW.md / 14-REVIEW-FIX.md) — completed 2026-08-23
 - [x] **Phase 15: WPC Winter Storm Severity & Mesoscale Precipitation Discussion** - Ship WSSI Overall Impact and MPD advisories
-- [ ] **Phase 16: WPC Day 3–7 / CPC Day 8–14 Hazards Outlook** - Ship per-day and window-spanning hazard entries with weekday-aware staleness
+- [x] **Phase 16: WPC Day 3–7 / CPC Day 8–14 Hazards Outlook** - Ship per-day and window-spanning hazard entries with weekday-aware staleness (completed 2026-08-27)
 - [ ] **Phase 17: NWS/WPC HeatRisk & Parallelized Fetching** - Ship the raster-identify HeatRisk product and parallelize all new fetches
 - [ ] **Phase 18: Merge, Precedence & Unified Payload Schema** - Build the cross-source dedup/precedence logic and single backend payload; measure cold-cache latency
 - [ ] **Phase 19: Unified Day Report — getDom() Rewrite** - Replace per-product sections with the merged per-day report, with full behavior-parity verification
@@ -163,7 +163,7 @@ Plans:
 D-10). Drought display is an explicit user opt-in, not a violation of this criterion. Flooding
 exclusion, by contrast, is absolute — D-09 provides no override.
 
-**Plans:** 7/8 plans executed
+**Plans:** 8/8 plans complete
 
 Plans:
 **Wave 1**
@@ -193,7 +193,7 @@ Plans:
 
 **Wave 7** *(blocked on Wave 6)*
 
-- [ ] 16-08-PLAN.md — Phase mutation inventory, `day9..day14` audit, human UAT checkpoint (wave 7)
+- [x] 16-08-PLAN.md — Phase mutation inventory, `day9..day14` audit, human UAT checkpoint (wave 7)
 
 ### Phase 17: NWS/WPC HeatRisk & Parallelized Fetching
 
@@ -265,7 +265,7 @@ Phases execute in numeric order: 14 → 15 → 16 → 17 → 18 → 19
 | 13. Proximity Frontend Render | v1.2 | 3/3 | Complete | 2026-05-03 |
 | 14. Foundation & WPC Excessive Rainfall Outlook | v2.0 | 7/7 | Complete | 2026-08-23 |
 | 15. WPC Winter Storm Severity & Mesoscale Precipitation Discussion | v2.0 | 6/9 | In Progress|  |
-| 16. WPC Day 3–7 / CPC Day 8–14 Hazards Outlook | v2.0 | 7/8 | In Progress|  |
+| 16. WPC Day 3–7 / CPC Day 8–14 Hazards Outlook | v2.0 | 8/8 | Complete    | 2026-08-27 |
 | 17. NWS/WPC HeatRisk & Parallelized Fetching | v2.0 | 0/? | Not started | - |
 | 18. Merge, Precedence & Unified Payload Schema | v2.0 | 0/? | Not started | - |
 | 19. Unified Day Report — getDom() Rewrite | v2.0 | 0/? | Not started | - |
