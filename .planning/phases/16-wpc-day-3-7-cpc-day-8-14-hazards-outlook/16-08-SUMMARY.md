@@ -1,7 +1,7 @@
 ---
 phase: 16-wpc-day-3-7-cpc-day-8-14-hazards-outlook
 plan: 08
-status: paused-at-checkpoint
+status: complete
 
 subsystem: testing
 tags: [probe-suite, hazards-outlook, mutation-inventory, uat, human-checkpoint]
@@ -138,7 +138,7 @@ Because this plan's `files_modified` includes `.planning/STATE.md` and execute-p
 
 **Type:** human-verify
 **Plan:** 16-08
-**Progress:** 1/2 tasks complete
+**Progress:** 2/2 tasks complete
 
 ### Completed Tasks
 
@@ -176,13 +176,49 @@ Because this plan's `files_modified` includes `.planning/STATE.md` and execute-p
 5. Restart MagicMirror, let one poll complete, and record PASS/FAIL/NOT OBSERVABLE for each of C1-C5 exactly as the plan's `<how-to-verify>` describes, including the `showDrought: true` half of C4 and the default-off confirmation.
 6. Restore `lat`/`lon` and `config.js` to their original values; confirm via `git diff` that no unintended config change remains.
 
-### Awaiting
+### Task 2 — Human UAT, approved 2026-08-27
 
-The human to run the above on the actual target hardware and report back C1-C5 results (PASS / FAIL / NOT OBSERVABLE, each with what was actually seen), the `showDrought: true` half of C4, and the default-off confirmation — per the plan's `<resume-signal>`: type "approved" with the C1-C5 results, or describe what failed. No UAT item has been marked PASS on the human's behalf in this SUMMARY.
+Run by the human on the deployed Raspberry Pi MagicMirror. Approval given 2026-08-27.
+Two WPC issuances were in play during the session: the 2026-08-26 run (filed 19:15–20:45Z)
+and the 2026-08-27 run (filed 20:45:19Z), which landed mid-UAT and changed the polygon set.
+Both are noted where they matter.
+
+| # | Requirement | Verdict | What was actually seen |
+|---|---|---|---|
+| C1 | HAZ-01 — per-day Precipitation bucketing for Days 3–14 | **NOT OBSERVABLE** | Precipitation layers 4 and 6 returned zero features nationwide on both 2026-08-26 and 2026-08-27. No `Hazards (…Day N):` row could exist. Deferred in STATE.md. |
+| C2 | HAZ-02 — window band, never repeated per-day | **PASS** | At the Pi's own location, `Sun–Wed (D3–6): Hazardous Heat` rendered **once** as a single band line. The Phase 15 defect shape would have emitted four separate Day 3/4/5/6 rows. |
+| C3 | HAZ-03 — lowercase `label` displayed, not dropped | **PASS** | Three labels rendered with real text (`Severe Drought`, `Hazardous Heat`, `Extreme Heat`). An uppercase `LABEL` read yields `""` for this service, which `includesFeat` drops — the band would have been empty. |
+| C4 | HAZ-04 — Flooding and Drought never at default config | **PASS (Drought half)** / **NOT OBSERVABLE (Flooding half)** | Drought: with `showDrought: true`, `Sat–Wed (D2–6): Severe Drought` rendered; with it back to `false`, the line disappeared and the other two were unchanged. Corroborated in the backend log — `resolveStyle` runs after `includesFeat`, and after the restart at 12:37:39 only `Extreme Heat` logged as unmapped, never `Severe Drought`, so the label was filtered at the gate rather than merely hidden at render. Flooding: those labels ride inside the empty Precipitation layers; deferred. |
+| C5 | DATA-02 — no false stale warning across a weekend | **NOT OBSERVABLE** | 2026-08-27 is a Thursday. The negative was confirmed: no ⚠ badge at ~21 h data age against the 84 h threshold. Deferred. |
+
+**Default-off confirmation: PASS.** `showHazardsOutlook` ships `false`; the human confirmed the
+`Extended Hazards:` block was entirely absent — heading included, no orphaned heading — before the
+flag was added, and appeared only once `showHazardsOutlook: true` was set.
+
+**Live D-11 exercise (unplanned, informative).** Layer 3's own MapServer legend publishes
+`"Excessive Heat"`, which is what the registry transcribed, but the live feature's `label`
+attribute reads `"Extreme Heat"`. WPC's renderer and WPC's data disagree. D-11 handled it exactly
+as designed: the label rendered verbatim in the `#aaaaaa` default style rather than being dropped,
+with one log line per process:
+
+```
+[MMM-SPCOutlook] hazardsOutlook: unmapped hazard label rendered verbatim in the default style: Extreme Heat
+```
+
+This is correct behaviour, not a defect. A one-line registry addition (`"Extreme Heat": "a80000"`)
+would map it; recorded as a follow-up, not a blocker.
+
+**Not exercised.** The Hazards-Outlook no-risk-gate path — a location carrying a window-band entry
+with every other product NONE, which must render the band rather than `No Severe Weather Risk` —
+was not run. Every UAT location carried other on-screen risk. An SPC-quiet coordinate was
+identified and verified clean (38.75, -93.0: 169 mi from the nearest SPC categorical edge, zero ERO
+and zero WSSI hits) but the observation was not made. Deferred in STATE.md; the two gate terms at
+`MMM-SPCOutlook.js:335-336` remain mutation-proven by the probe suite. This mirrors the Phase 15
+MPD-01 deferral exactly.
 
 ---
 *Phase: 16-wpc-day-3-7-cpc-day-8-14-hazards-outlook*
-*Task 1 completed: 2026-08-26 — Task 2 paused at checkpoint, awaiting human UAT*
+*Task 1 completed: 2026-08-26 — Task 2 human UAT approved 2026-08-27*
 
 ## Self-Check: PASSED
 
