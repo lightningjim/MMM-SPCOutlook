@@ -32,12 +32,33 @@ const nominal = (s, e, [a, b]) => s === a && e === b;   // mirrors _isFullNomina
 (async()=>{
   const hits=[];
   for(const L of row.layers){
-    const gj=await (await fetch(row.buildUrl(L.id))).json();
+    // 16-REVIEW WR-09: there was no res.ok check, no try/catch around .json() and no
+    // timeout, so an HTML error page, an ArcGIS 200-carrying-an-error-object, or a hung
+    // socket surfaced as an unhandled rejection and a stack trace instead of a diagnosis —
+    // and the script hung indefinitely where every request in node_helper.js is bounded by
+    // FETCH_TIMEOUT_MS. A layer that cannot be read is named and skipped, so the remaining
+    // five still produce an answer.
+    let gj;
+    try{
+      const res=await fetch(row.buildUrl(L.id),{signal:AbortSignal.timeout(15000)});
+      if(!res.ok){console.error(`  layer ${L.id}: HTTP ${res.status} — skipped, results below are INCOMPLETE`);continue;}
+      gj=await res.json();
+    }catch(e){
+      console.error(`  layer ${L.id}: unreadable (${e && e.message ? e.message : e}) — skipped, results below are INCOMPLETE`);
+      continue;
+    }
     for(const f of (gj.features||[])){
       if(!gc(f.geometry,lon,lat))continue;
       const p=f.properties||{};
+      // WR-09: `age` is a NUMBER or null, never the string "NaN". It used to be
+      // `((Date.now()-p.idp_filedate)/3600000).toFixed(1)`, so a missing idp_filedate
+      // produced "NaN" -> Math.max(...) -> NaN, and `NaN > maxDataAgeHours` is FALSE — the
+      // script printed "fresh (no warning)" for a feature whose publish age is unknown. A
+      // verification helper whose failure mode is a false all-clear reproduces, in the
+      // operator's own tooling, the exact defect class this module exists to prevent.
+      const filed=p.idp_filedate;
       hits.push({L,label:p.label,s:off(p.start_date),e:off(p.end_date),sd:iso(p.start_date),ed:iso(p.end_date),
-        age:((Date.now()-p.idp_filedate)/3600000).toFixed(1)});
+        age:(typeof filed==='number'&&Number.isFinite(filed))?((Date.now()-filed)/3600000):null});
     }
   }
   console.log(`Live Hazards Outlook at lat ${lat}, lon ${lon}  (today = ${iso(today)} UTC)`);
@@ -56,8 +77,19 @@ const nominal = (s, e, [a, b]) => s === a && e === b;   // mirrors _isFullNomina
           ? `per-day grid (clamped out of D${FIRST_DAY}-${LAST_DAY} — renders nothing)`
           : 'per-day grid');
     const mapped = Object.prototype.hasOwnProperty.call(row.displayColor,h.label);
-    console.log(`  L${h.L.id} ${h.L.group.padEnd(15)} "${h.label}" ${h.sd}..${h.ed}  D${h.s}${h.s===h.e?'':'–'+h.e}  -> ${route}  color=${mapped?'#'+row.displayColor[h.label]:'#'+row.defaultColor+' (UNMAPPED)'}  filed ${h.age}h ago${gate}`);
+    console.log(`  L${h.L.id} ${h.L.group.padEnd(15)} "${h.label}" ${h.sd}..${h.ed}  D${h.s}${h.s===h.e?'':'–'+h.e}  -> ${route}  color=${mapped?'#'+row.displayColor[h.label]:'#'+row.defaultColor+' (UNMAPPED)'}  ${h.age===null?'filed age UNKNOWN (no idp_filedate)':'filed '+h.age.toFixed(1)+'h ago'}${gate}`);
   }
-  const maxAge=Math.max(...hits.map(h=>Number(h.age)));
-  console.log(`  freshness: oldest contributing idp_filedate ${maxAge}h vs ${row.maxDataAgeHours}h threshold -> ${maxAge>row.maxDataAgeHours?'STALE (warning expected)':'fresh (no warning)'}`);
+  // WR-09: an unknown age is reported as unknown and read as STALE, never folded into a
+  // silent "fresh". The module's own D-13 check skips a feature with no usable
+  // idp_filedate, so a hit carrying none genuinely contributes no freshness evidence —
+  // which is a thing the operator must be told, not a thing to average away.
+  const ages=hits.map(h=>h.age).filter(Number.isFinite);
+  if(ages.length!==hits.length){
+    console.log(`  freshness: ${hits.length-ages.length} of ${hits.length} hit(s) carry no usable idp_filedate — their age is UNKNOWN`);
+  }
+  const maxAge=ages.length?Math.max(...ages):null;
+  console.log(`  freshness: ${maxAge===null
+    ? 'no hit carries a usable idp_filedate -> UNKNOWN (treat as stale)'
+    : `oldest contributing idp_filedate ${maxAge.toFixed(1)}h vs ${row.maxDataAgeHours}h threshold -> ${
+        maxAge>row.maxDataAgeHours?'STALE (warning expected)':'fresh (no warning)'}`}`);
 })();
