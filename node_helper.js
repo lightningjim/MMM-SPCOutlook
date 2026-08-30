@@ -136,6 +136,29 @@ const STALE_WINDOW_INTERVALS = 2;
 // file, so this is the one place that fact is spelled out.
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
+// 16-REVIEW WR-06: two remote-controlled COUNTS in the Hazards Outlook path, bounded for
+// the same reason ADVISORY_MAX_CANDIDATES is — this runs on a Raspberry Pi and every value
+// below originates upstream. T-16-20 bounded label LENGTH at the render boundary; these
+// bound how many of them can accumulate.
+//
+// The unmapped-label ledger (`_loggedUnmappedHazardLabels`) is a process-LIFETIME Set
+// keyed by raw upstream label strings: D-11 says an unmapped label renders verbatim and
+// logs once per process, so a feed serving many distinct junk labels grew it forever, and
+// it stored the label UNTRUNCATED (truncation happens only at the frontend render
+// boundary), so a 1 MB hostile label was retained in full, permanently, per distinct
+// value. The key is truncated because the ledger's whole job is deduping a LOG LINE, and
+// 60 characters is exactly what the frontend will ever display of it.
+const HAZARDS_MAX_LOGGED_UNMAPPED_LABELS = 64;
+const HAZARDS_LOG_LABEL_MAX_CHARS = 60;
+
+// The window band had no entry cap at all: its dedupe key is `label|offsetStart|offsetEnd`,
+// which bounds nothing when the labels vary, and every surviving entry becomes a DOM line
+// appended with `wrapper.innerHTML +=` — which re-parses the whole subtree on each append.
+// 40 is an order of magnitude above the largest live band observed (six layers, ~27
+// features each, almost all of them day-grid or duplicate spans). Like the advisory cap,
+// exceeding it is LOGGED rather than silently absorbed.
+const HAZARDS_MAX_WINDOW_ENTRIES = 40;
+
 module.exports = NodeHelper.create({
   // Exposed on the helper object (rather than kept purely module-private) so offline
   // probes can exercise the allowlist directly against the module-scope implementation
@@ -659,10 +682,17 @@ module.exports = NodeHelper.create({
     const resolveStyle = (label) => {
       const mapped = Object.prototype.hasOwnProperty.call(row.displayColor, label);
       const color = mapped ? row.displayColor[label] : row.defaultColor;
-      if (!mapped && !this._loggedUnmappedHazardLabels.has(label)) {
-        this._loggedUnmappedHazardLabels.add(label);
+      // WR-06: dedupe on a TRUNCATED key and stop growing the ledger at a fixed size. The
+      // ledger exists only to keep one log line from repeating, so neither bound can cost
+      // information the operator would otherwise have had: past the cap the label still
+      // renders verbatim (D-11 is untouched — this is the LOG's memory, not a filter), it
+      // simply stops being remembered as already-logged.
+      const logKey = String(label).slice(0, HAZARDS_LOG_LABEL_MAX_CHARS);
+      if (!mapped && !this._loggedUnmappedHazardLabels.has(logKey) &&
+          this._loggedUnmappedHazardLabels.size < HAZARDS_MAX_LOGGED_UNMAPPED_LABELS) {
+        this._loggedUnmappedHazardLabels.add(logKey);
         Log.info(
-          "MMM-SPCOutlook hazardsOutlook: unmapped hazard label rendered verbatim in the default style: " + label
+          "MMM-SPCOutlook hazardsOutlook: unmapped hazard label rendered verbatim in the default style: " + logKey
         );
       }
       return { color, mapped };
@@ -713,6 +743,18 @@ module.exports = NodeHelper.create({
       if (diff !== 0) return diff;
       return compareLabels(a.label, b.label);
     });
+    // WR-06: bound the band AFTER sorting, so what survives is the head of a meaningfully
+    // ordered list (earliest span start first) rather than whatever order ArcGIS emitted —
+    // the same contract `_runKmlAdvisoryRow`'s ADVISORY_MAX_CANDIDATES cap states for its
+    // own truncation. Logged, never silent: a band this long is an upstream anomaly the
+    // operator should see, not a display quirk.
+    if (windowBand.length > HAZARDS_MAX_WINDOW_ENTRIES) {
+      Log.error(
+        "MMM-SPCOutlook " + row.id + ": " + windowBand.length + " window-band entries; " +
+        "keeping the " + HAZARDS_MAX_WINDOW_ENTRIES + " earliest-starting"
+      );
+      windowBand.length = HAZARDS_MAX_WINDOW_ENTRIES;
+    }
     block.windowBand = windowBand;
 
     // D-16: a data-age trip is an age signal, not a false negative. `rejectBody`'s

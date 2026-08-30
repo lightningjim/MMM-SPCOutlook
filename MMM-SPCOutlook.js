@@ -630,9 +630,17 @@
           if (startWeekday && endWeekday) {
             weekdaySegment = (singleDay ? startWeekday : startWeekday + "–" + endWeekday) + " ";
           }
+          // WR-06: coerce rather than trust the payload's types. These were the only
+          // payload-sourced values in either hazards renderer that reached innerHTML
+          // skipping BOTH escapeHtml and a type guard — while the elapsed-window guard
+          // three lines above does type-check `offsetEnd`. They are structurally numbers
+          // today (`Math.round` of a `Number.isFinite`-validated input), so this is not an
+          // exploitable XSS; it is this file's own WR-12 rule that nothing remote-sourced
+          // reaches the DOM without one of the two.
+          const off = (n) => (typeof n === "number" && isFinite(n) ? String(Math.trunc(n)) : "?");
           const offsetSegment = singleDay
-            ? "(D" + entry.offsetStart + ")"
-            : "(D" + entry.offsetStart + "–" + entry.offsetEnd + ")";
+            ? "(D" + off(entry.offsetStart) + ")"
+            : "(D" + off(entry.offsetStart) + "–" + off(entry.offsetEnd) + ")";
           const label = "<span style=\"color:#" + validHazardColor(entry.color) + "\">" +
             escapeHtml(truncateHazardLabel(entry.label)) + "</span>";
           wrapper.innerHTML += weekdaySegment + offsetSegment + ": " + label + "<br/>";
