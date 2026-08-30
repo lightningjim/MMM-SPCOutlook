@@ -159,6 +159,21 @@ const HAZARDS_LOG_LABEL_MAX_CHARS = 60;
 // exceeding it is LOGGED rather than silently absorbed.
 const HAZARDS_MAX_WINDOW_ENTRIES = 40;
 
+// 16-REVIEW WR-07: a byte bound on the GeoJSON transport, the sibling of
+// ADVISORY_MAX_BODY_BYTES on the KML transport. `fetchGeoJsonCached` had none: it buffered
+// the entire body into a string and then JSON.parse'd it, doubling peak memory, so a
+// hostile or corrupted multi-hundred-MB response was an OOM on a Pi rather than a rejected
+// body. The deleted `fetchGeoJson`'s tombstone comment in this file names "no body bound"
+// as one of the reasons that function was dangerous — this is that same control, applied
+// to the path that survived. Inherited rather than introduced by Phase 16, but Phase 16
+// added six endpoints to it.
+//
+// 16 MB, larger than ADVISORY_MAX_BODY_BYTES because this path carries full-layer ArcGIS
+// `outFields=*&f=geojson` responses rather than single-digit-KB KMZ members; the largest
+// body any shipped row has produced is under 5 MB, so this is comfortable headroom while
+// still bounding the failure to something a Pi survives.
+const GEOJSON_MAX_BODY_BYTES = 16 * 1024 * 1024;
+
 module.exports = NodeHelper.create({
   // Exposed on the helper object (rather than kept purely module-private) so offline
   // probes can exercise the allowlist directly against the module-scope implementation
@@ -2031,7 +2046,11 @@ module.exports = NodeHelper.create({
 
     let res;
     try {
-      res = await this._fetch(url, withTimeout({ headers }));
+      // WR-07: `size` is node-fetch's own STREAMING cap and the only one of the three
+      // bounds below that limits memory — it rejects mid-stream, so an oversized body is
+      // never fully materialised. A runtime whose fetch ignores it still hits the
+      // content-length precheck and the post-read check.
+      res = await this._fetch(url, withTimeout({ headers, size: GEOJSON_MAX_BODY_BYTES }));
     } catch (err) {
       // Network error
       if (entry && this._isWithinStaleWindow(entry.timestamp, this._updateInterval)) {
@@ -2083,6 +2102,39 @@ module.exports = NodeHelper.create({
       return { data: null, cachedResult: null, stale: false, failed: true };
     }
 
+    // CR-02: an HTTP 200 whose body is unusable (ArcGIS REST returns most failures as a
+    // 200 carrying an `error` object and no `features`; SPC can return an HTML error page)
+    // must never reach extractPolygons and must never be written to _geoJsonCache. Caching
+    // the resulting `0` under the bad body's ETag pins that layer to "no risk" behind every
+    // later 304 — a silent, self-perpetuating false negative. Instead fall back to a
+    // still-fresh cached result when one exists, exactly like the network-error path, and
+    // always name the URL that degraded.
+    //
+    // WR-07: declared HERE, above the body read rather than below it, because the
+    // over-limit body checks route through it — an oversized response is a degraded read
+    // that must inherit the same stale-fallback and `failed` semantics as an unparseable
+    // one, not a throw that escapes into getSpcOutlook's shared catch.
+    const rejectBody = (reason) => {
+      Log.error('MMM-SPCOutlook: rejected an unusable response body for ' + url + ' (' + reason + '); not caching');
+      if (entry && entry.result !== null && entry.result !== undefined &&
+          this._isWithinStaleWindow(entry.timestamp, this._updateInterval)) {
+        this._noteStaleEntry(entry);
+        return { data: null, cachedResult: entry.result, stale: true, failed: true };
+      }
+      return { data: null, cachedResult: null, stale: false, failed: true };
+    };
+
+    // WR-07: refuse an HONESTLY declared oversized body before a single byte is read.
+    // Note `Number(null)` is 0, not NaN, so a response with no content-length header
+    // passes this check and is caught by `size` and the post-read bound instead.
+    const declaredBytes = res.headers && typeof res.headers.get === "function"
+      ? Number(res.headers.get('content-length'))
+      : NaN;
+    if (Number.isFinite(declaredBytes) && declaredBytes > GEOJSON_MAX_BODY_BYTES) {
+      return rejectBody('declared body of ' + declaredBytes + ' bytes exceeds the ' +
+                        GEOJSON_MAX_BODY_BYTES + '-byte bound');
+    }
+
     // HTTP 200 — read raw text. CR-02: the body read has to be contained by the same
     // branch that owns network-failure policy. A connection reset, a truncated chunked
     // response, or the 15 s AbortSignal firing *after* headers arrived all reject here,
@@ -2102,24 +2154,16 @@ module.exports = NodeHelper.create({
                 ' (body read failed: ' + (err && err.message ? err.message : err) + ')');
       return { data: null, cachedResult: null, stale: false, failed: true };
     }
+    // WR-07: the third layer, for a runtime whose fetch ignores `size` — so the bound can
+    // never be silently absent. `rawText.length` counts UTF-16 code units rather than
+    // bytes, which for UTF-8 input is never MORE than the byte count, so exceeding it here
+    // proves the byte bound was exceeded too; `size` above remains the authoritative byte
+    // limit and the only one that bounds peak memory.
+    if (rawText.length > GEOJSON_MAX_BODY_BYTES) {
+      return rejectBody('body of ' + rawText.length + ' characters exceeds the ' +
+                        GEOJSON_MAX_BODY_BYTES + '-byte bound');
+    }
     const newEtag = res.headers.get('etag');
-
-    // CR-02: an HTTP 200 whose body is unusable (ArcGIS REST returns most failures as a
-    // 200 carrying an `error` object and no `features`; SPC can return an HTML error page)
-    // must never reach extractPolygons and must never be written to _geoJsonCache. Caching
-    // the resulting `0` under the bad body's ETag pins that layer to "no risk" behind every
-    // later 304 — a silent, self-perpetuating false negative. Instead fall back to a
-    // still-fresh cached result when one exists, exactly like the network-error path, and
-    // always name the URL that degraded.
-    const rejectBody = (reason) => {
-      Log.error('MMM-SPCOutlook: rejected an unusable response body for ' + url + ' (' + reason + '); not caching');
-      if (entry && entry.result !== null && entry.result !== undefined &&
-          this._isWithinStaleWindow(entry.timestamp, this._updateInterval)) {
-        this._noteStaleEntry(entry);
-        return { data: null, cachedResult: entry.result, stale: true, failed: true };
-      }
-      return { data: null, cachedResult: null, stale: false, failed: true };
-    };
 
     // JSON.parse on a remote body throws on any non-JSON response; letting that escape
     // would reach getSpcOutlook's shared catch and null the entire payload for one bad
