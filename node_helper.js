@@ -494,19 +494,40 @@ module.exports = NodeHelper.create({
     const windowEntries = [];
     let anyStale = false;
 
-    // D-02 (15's registry-row-is-pure-static-config convention): this filter closure is
-    // built here, at call time, because `showDrought` is request state, not static
-    // configuration a row can carry. `extractPolygons` calls `includesFeat(label, value)`
-    // where `label` is the always-empty uppercase `LABEL` read (HAZ-03/Pitfall 8 — this
-    // service has no LABEL field, only lowercase `label`) and `value` is what
-    // `row.toValue` returned, so every check below is against `val`, never `label`.
-    const includesFeat = (label, val) => {
-      if (!val) return false;
+    // `extractPolygons` calls `includesFeat(label, value)` where `label` is the
+    // always-empty uppercase `LABEL` read (HAZ-03/Pitfall 8 — this service has no LABEL
+    // field, only lowercase `label`) and `value` is what `row.toValue` returned, so the
+    // check below is against `val`, never `label`. A `""` value means a missing or
+    // non-string upstream label, which is a malformed feature and is dropped here.
+    //
+    // 16-REVIEW WR-01: this closure USED to carry D-09's exclusion and D-10's drought
+    // gate too, and `extractPolygons` applies it on the cache-MISS path only. The
+    // surviving matches were then written to `_geoJsonCache` keyed by URL ALONE, so the
+    // drought decision made at cache-fill time was replayed verbatim on every later hit
+    // (304, ETag match, hash match, stale fallback) and `includesFeat` was never
+    // consulted again. MagicMirror runs ONE node_helper per module TYPE — a fact this
+    // file documents at length — so two configured instances with different
+    // `showDrought` values share one cache: whichever polled first decided for both, and
+    // the other rendered drought labels its own config disabled (or missed drought it
+    // enabled) until the upstream bytes changed, which at this product's Mon-Fri cadence
+    // and 84-hour age tolerance can be days. Only the STRUCTURAL check stays here,
+    // because it is a property of the FEATURE and is therefore safe to bake into a
+    // cached unit; the two label gates move to `displayable` below.
+    const includesFeat = (label, val) => Boolean(val);
+
+    // D-09 + D-10, applied per POLL at bucket time rather than per cache fill (WR-01) —
+    // deliberately in the same place, and for the same reason, as re-bucketing: it runs
+    // identically on a cache hit and a cache miss, against THIS request's own toggle
+    // snapshot, so no cached reading can carry another instance's toggle decision.
+    // D-02 (15's registry-row-is-pure-static-config convention) is why this closure is
+    // built here at call time rather than carried on the row: `showDrought` is request
+    // state, not static configuration a row can hold.
+    const displayable = (label) => {
       // D-09: unconditional, no config path re-enables Flooding.
-      if (row.excludedLabels.includes(val)) return false;
+      if (row.excludedLabels.includes(label)) return false;
       // D-10: strict `!== true` so an absent or non-boolean `showDrought` (a string,
       // `1`) behaves exactly like `false`, per CFG-01's default.
-      if (row.droughtLabels.includes(val) && productToggles.showDrought !== true) return false;
+      if (row.droughtLabels.includes(label) && productToggles.showDrought !== true) return false;
       return true;
     };
 
@@ -587,6 +608,9 @@ module.exports = NodeHelper.create({
           // THIS poll's `todayUtcMs`; moving it inside the miss branch would reintroduce
           // the day-offset drift the cache contract exists to prevent.
           for (const match of matches) {
+            // WR-01: the label gate runs HERE, beside re-bucketing, for the same reason —
+            // both are decisions the cache must not be allowed to freeze.
+            if (!displayable(match.label)) continue;
             this._bucketHazardMatch(match, layer, todayUtcMs, dayBuckets, windowEntries);
           }
         } catch (err) {

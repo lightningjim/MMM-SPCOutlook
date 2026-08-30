@@ -260,11 +260,36 @@
     // A negative `offsetEnd` is reachable: `_bucketHazardMatch` rejects an inverted span but
     // imposes no lower bound on the band path, so a backfill, a correction, or a multi-day
     // upstream stall can put a wholly-past window here.
+    //
+    // 16-REVIEW WR-01: `hazardsLabelDisplayable` is this end's half of D-09/D-10. Every
+    // other product row is gated on its own config at BOTH ends; the hazards renderers
+    // used to render whatever labels arrived, so correctness depended entirely on the
+    // backend and frontend never disagreeing — the exact dependency WR-09's comment below
+    // says must not exist. The lists are restated here rather than derived because
+    // productRegistry.js is a Node module and this file runs in the browser, so it cannot
+    // be required. The restatement is deliberately FAIL-SAFE in one direction: this is a
+    // second filter over an already-filtered payload, so a registry label missing from
+    // these lists is a no-op (the backend still drops it), and only a label listed here
+    // and NOT in the registry could hide something — which is why nothing may be added to
+    // these lists that is not already in productRegistry.js's
+    // `hazardsExcludedLabels`/`hazardsDroughtLabels`.
+    const HAZARDS_EXCLUDED_LABELS = [
+      "Flooding Likely", "Flooding Occurring or Imminent", "Flooding Possible"
+    ];
+    const HAZARDS_DROUGHT_LABELS = ["Severe Drought", "Rapid Onset Drought Risk"];
+    const hazardsLabelDisplayable = (label) => {
+      if (HAZARDS_EXCLUDED_LABELS.includes(label)) return false;
+      // Strict `!== true`, matching the backend's D-10 gate exactly: an absent or
+      // non-boolean showDrought behaves like false, per CFG-01's default.
+      if (HAZARDS_DROUGHT_LABELS.includes(label) && this.config.showDrought !== true) return false;
+      return true;
+    };
     const renderableWindowEntries = (block) => {
       if (!block || typeof block !== "object" || !Array.isArray(block.windowBand)) return [];
       return block.windowBand.filter((entry) => (
         entry && typeof entry === "object" &&
-        !(typeof entry.offsetEnd === "number" && entry.offsetEnd < 0)
+        !(typeof entry.offsetEnd === "number" && entry.offsetEnd < 0) &&
+        hazardsLabelDisplayable(entry.label)
       ));
     };
     // Companion for the day grid — same asymmetry in the smaller direction: the gate counted
@@ -272,7 +297,9 @@
     // non-null object and skipped the row when none survived.
     const renderableDayHazards = (day) => {
       if (!day || typeof day !== "object" || !Array.isArray(day.hazards)) return [];
-      return day.hazards.filter((h) => h && typeof h === "object");
+      // WR-01: the same second-line-of-defense label gate the band applies, so the day
+      // grid and the band cannot disagree about what this config permits either.
+      return day.hazards.filter((h) => h && typeof h === "object" && hazardsLabelDisplayable(h.label));
     };
     const hazardsOutlookHasAnyDay = (block) => {
       if (!block || typeof block !== "object") return false;
