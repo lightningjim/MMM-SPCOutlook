@@ -16,6 +16,19 @@ const off=t=>Math.round((t-today)/86400000), iso=t=>new Date(t).toISOString().sl
 // `"flooding likely"` — the same bypass the module itself had, reproduced in the tool an
 // operator uses to confirm the module is right.
 const DROUGHT=row.droughtLabelKeys, EXCL=row.excludedLabelKeys;
+// 16-REVIEW WR-08: reproduce the module's ACTUAL routing decision instead of guessing it
+// from the layer group. Production routes a Precipitation feature to the WINDOW BAND when
+// _isFullNominalWindow(offsetStart, offsetEnd, layer.dayRange) holds — D-04's guard, the
+// locked exact-alignment reading — so for the one Precipitation case D-04 singles out, the
+// old `group==='precipitation' ? 'per-day grid' : 'window band'` told the operator
+// "per-day grid" while the module rendered a band entry. It also ignored the day-grid
+// clamp, reporting a Precipitation feature at D0-D2 or past the last day as reaching the
+// grid when it reaches nothing at all.
+//
+// Both bounds come from the registry (`row.dayRangeTotal` is derived from the layers'
+// own dayRange values), so a span change cannot leave a stale literal here.
+const [FIRST_DAY, LAST_DAY] = row.dayRangeTotal;
+const nominal = (s, e, [a, b]) => s === a && e === b;   // mirrors _isFullNominalWindow
 (async()=>{
   const hits=[];
   for(const L of row.layers){
@@ -34,7 +47,14 @@ const DROUGHT=row.droughtLabelKeys, EXCL=row.excludedLabelKeys;
     const key = hazardLabelKey(h.label);
     const gate = EXCL.has(key)?'  [EXCLUDED — never renders]'
                : DROUGHT.has(key)?'  [drought-gated — hidden unless showDrought:true]':'';
-    const route = h.L.group==='precipitation' ? 'per-day grid' : 'window band';
+    // WR-08: non-precipitation routes to the band unconditionally (HAZ-02); precipitation
+    // routes to the band only on exact alignment to its layer's nominal window (D-04), and
+    // otherwise to the day grid, where _bucketHazardMatch clamps it to the row's span.
+    const route = (h.L.group!=='precipitation' || nominal(h.s,h.e,h.L.dayRange))
+      ? 'window band'
+      : (h.e<FIRST_DAY || h.s>LAST_DAY
+          ? `per-day grid (clamped out of D${FIRST_DAY}-${LAST_DAY} — renders nothing)`
+          : 'per-day grid');
     const mapped = Object.prototype.hasOwnProperty.call(row.displayColor,h.label);
     console.log(`  L${h.L.id} ${h.L.group.padEnd(15)} "${h.label}" ${h.sd}..${h.ed}  D${h.s}${h.s===h.e?'':'–'+h.e}  -> ${route}  color=${mapped?'#'+row.displayColor[h.label]:'#'+row.defaultColor+' (UNMAPPED)'}  filed ${h.age}h ago${gate}`);
   }
