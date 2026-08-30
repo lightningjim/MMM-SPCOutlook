@@ -234,6 +234,35 @@ function dayRangeOf([first, last]) {
   return [first, last];
 }
 
+// 16-REVIEW WR-03: the total span DERIVED from the layers that make it up, rather
+// than restated beside them.
+//
+// `dayRangeTotal: dayRangeOf([3, 14])` stated a span that `hazardsOutlookLayers`
+// already implies (min of the layers' `dayRange[0]`, max of their `dayRange[1]`),
+// and the per-layer `[3,7]`/`[8,14]` literals never passed through `dayRangeOf` at
+// all — so the validator that exists to make an invalid span unrepresentable guarded
+// only the one value that was itself redundant. This is exactly the restatement
+// `daySpanOf`'s comment above condemns and calls "not a cosmetic duplication": a
+// `dayRangeTotal` that runs past the layers produces a correct-looking payload whose
+// extra day keys render empty forever, with no error at either end.
+//
+// Validating every layer's own range on the way through is the other half: a typo in
+// a layer literal is now a load-time throw rather than a silently mis-routed feature
+// (`_isFullNominalWindow` compares against `layer.dayRange` directly).
+function dayRangeSpanning(layers) {
+  if (!Array.isArray(layers) || layers.length === 0) {
+    throw new Error("productRegistry: dayRangeSpanning requires a non-empty layer array, got " +
+                    JSON.stringify(layers));
+  }
+  // `|| []` so a layer missing its dayRange reaches dayRangeOf's own named error rather
+  // than a bare "undefined is not iterable" out of the destructuring.
+  const ranges = layers.map((layer) => dayRangeOf((layer && layer.dayRange) || []));
+  return dayRangeOf([
+    Math.min(...ranges.map((r) => r[0])),
+    Math.max(...ranges.map((r) => r[1]))
+  ]);
+}
+
 const PRODUCT_REGISTRY = {
   excessiveRain: {
     id: "excessiveRain",
@@ -357,8 +386,10 @@ const PRODUCT_REGISTRY = {
     configFlag: "showHazardsOutlook",
     baseUrl: HAZARDS_BASE_URL,
     layers: hazardsOutlookLayers,
-    // Derived through the validator, never restated — see dayRangeOf.
-    dayRangeTotal: dayRangeOf([3, 14]),
+    // WR-03: DERIVED from `layers` above, never restated — see dayRangeSpanning.
+    // This is also the clamp `_bucketHazardMatch` applies, threaded in by the runner,
+    // so changing this row's span cannot leave a hardcoded 3/14 behind in node_helper.
+    dayRangeTotal: dayRangeSpanning(hazardsOutlookLayers),
     excludedLabels: hazardsExcludedLabels,
     droughtLabels: hazardsDroughtLabels,
     // WR-02: what the two gates actually compare against. The `*Labels` arrays

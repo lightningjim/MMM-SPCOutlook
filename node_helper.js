@@ -619,7 +619,10 @@ module.exports = NodeHelper.create({
             // WR-01: the label gate runs HERE, beside re-bucketing, for the same reason —
             // both are decisions the cache must not be allowed to freeze.
             if (!displayable(match.label)) continue;
-            this._bucketHazardMatch(match, layer, todayUtcMs, dayBuckets, windowEntries);
+            // WR-03: hand the bucketer the row's own span, so its day-grid clamp and the
+            // payload-assembly loop below read ONE declaration of this product's range.
+            this._bucketHazardMatch(match, layer, todayUtcMs, dayBuckets, windowEntries,
+                                    row.dayRangeTotal);
           }
         } catch (err) {
           // CR-01: a contained throw is a degrade, not a clean read, and it can happen
@@ -1878,8 +1881,15 @@ module.exports = NodeHelper.create({
    * @param todayUtcMs - this poll's `_todayUtcMs()` value
    * @param dayBuckets - { [offset]: [{label}] } accumulator, mutated in place
    * @param windowEntries - [] accumulator for window-band entries, mutated in place
+   * @param dayRangeTotal - the row's own `[firstDay, lastDay]` grid span, threaded in by
+   *   the runner (WR-03). This used to be the literals `3` and `14` written into the day
+   *   loop's clamp while the payload-assembly loop was already registry-driven, so the
+   *   two ends could not be tied together — and this function was not even given `row`.
+   *   Changing the row's span to `[3, 21]` produced a correct 19-key payload whose days
+   *   15-21 rendered empty forever, with no error at either end: the exact defect
+   *   `daySpanOf`'s comment in productRegistry.js condemns.
    */
-  _bucketHazardMatch(match, layer, todayUtcMs, dayBuckets, windowEntries) {
+  _bucketHazardMatch(match, layer, todayUtcMs, dayBuckets, windowEntries, dayRangeTotal) {
     // A malformed match is contained here so its siblings' day and window entries
     // survive (CR-02 lesson, extended to the bucketing step). Nothing is logged — a
     // per-feature date miss is not actionable and would be noisy at ~27 features/layer.
@@ -1926,7 +1936,19 @@ module.exports = NodeHelper.create({
     // there a hazard on this day" and on day two the answer is yes. Clamp the loop
     // bounds at the header (Math.max/Math.min) rather than filtering inside the body,
     // so a hostile [-1e9, 1e9] span cannot produce an unbounded iteration (T-16-05).
-    for (let d = Math.max(offsetStart, 3); d <= Math.min(offsetEnd, 14); d++) {
+    //
+    // WR-03: the clamp is the ROW's declared span, passed in, not the literals 3 and 14.
+    // A caller that omits it gets nothing bucketed rather than a silently wrong grid —
+    // an unclamped fallback here would be the unbounded iteration T-16-05 closed, and a
+    // guessed default would be the hardcoded span this parameter exists to delete.
+    if (!Array.isArray(dayRangeTotal) ||
+        !Number.isInteger(dayRangeTotal[0]) || !Number.isInteger(dayRangeTotal[1])) {
+      Log.error("MMM-SPCOutlook _bucketHazardMatch: called without a valid dayRangeTotal (" +
+                JSON.stringify(dayRangeTotal) + "); dropping the day-grid contribution");
+      return;
+    }
+    const [firstDay, lastDay] = dayRangeTotal;
+    for (let d = Math.max(offsetStart, firstDay); d <= Math.min(offsetEnd, lastDay); d++) {
       if (!dayBuckets[d]) dayBuckets[d] = [];
       dayBuckets[d].push({ label: match.label });
     }
