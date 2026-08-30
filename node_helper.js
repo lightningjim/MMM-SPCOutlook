@@ -23,7 +23,7 @@ const xpath    = require("xpath");
 const select = xpath.useNamespaces({
   k: "http://www.opengis.net/kml/2.2"
 });
-const { PRODUCT_REGISTRY, MPD_FILENAME_PATTERN } = require("./productRegistry");
+const { PRODUCT_REGISTRY, MPD_FILENAME_PATTERN, hazardLabelKey } = require("./productRegistry");
 // WR-16 / D-10: `showDrought` is NOT a product flag in the `configFlag` sense — it does
 // not gate a fetch, it gates which labels within an already-fetched product (Hazards
 // Outlook) are displayable — so it cannot be derived from `PRODUCT_REGISTRY` and needs
@@ -523,11 +523,19 @@ module.exports = NodeHelper.create({
     // built here at call time rather than carried on the row: `showDrought` is request
     // state, not static configuration a row can hold.
     const displayable = (label) => {
+      // WR-02: compare on the registry's FOLDED key, never on the raw string. These were
+      // exact-string `Array.includes` checks, so `"Flooding Likely "`, `"flooding likely"`
+      // or a value carrying a non-breaking space walked past D-09 and rendered the
+      // National Flood Outlook's data under the Hazards Outlook's name — the one thing
+      // D-09 exists to prevent — and `"Severe Drought "` bypassed D-10's default-off gate.
+      // Only the KEY is folded; `label` itself is untouched, so D-11's verbatim-render
+      // contract still holds for whatever survives.
+      const key = hazardLabelKey(label);
       // D-09: unconditional, no config path re-enables Flooding.
-      if (row.excludedLabels.includes(label)) return false;
+      if (row.excludedLabelKeys.has(key)) return false;
       // D-10: strict `!== true` so an absent or non-boolean `showDrought` (a string,
       // `1`) behaves exactly like `false`, per CFG-01's default.
-      if (row.droughtLabels.includes(label) && productToggles.showDrought !== true) return false;
+      if (row.droughtLabelKeys.has(key) && productToggles.showDrought !== true) return false;
       return true;
     };
 

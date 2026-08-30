@@ -2,7 +2,7 @@
 // Usage: node hazards-at.js <lat> <lon>
 // Prints every live Hazards Outlook feature containing the point, with the day
 // offsets the module will compute against today's UTC date.
-const { PRODUCT_REGISTRY } = require(require('path').resolve(__dirname, '..', 'productRegistry.js'));
+const { PRODUCT_REGISTRY, hazardLabelKey } = require(require('path').resolve(__dirname, '..', 'productRegistry.js'));
 const row = PRODUCT_REGISTRY.hazardsOutlook;
 const [lat, lon] = process.argv.slice(2).map(Number);
 if (!Number.isFinite(lat) || !Number.isFinite(lon)) { console.error('usage: node hazards-at.js <lat> <lon>'); process.exit(1); }
@@ -11,7 +11,11 @@ const pc=(p,x,y)=>{if(!rc(p[0],x,y))return false;for(let k=1;k<p.length;k++)if(r
 const gc=(g,x,y)=>!g?false:g.type==='Polygon'?pc(g.coordinates,x,y):g.type==='MultiPolygon'?g.coordinates.some(p=>pc(p,x,y)):false;
 const n=new Date(), today=Date.UTC(n.getUTCFullYear(),n.getUTCMonth(),n.getUTCDate());
 const off=t=>Math.round((t-today)/86400000), iso=t=>new Date(t).toISOString().slice(0,10);
-const DROUGHT=new Set(row.droughtLabels), EXCL=new Set(row.excludedLabels);
+// WR-02: gate on the registry's own FOLDED keys, exactly as node_helper does. Comparing
+// the raw upstream label meant this script reported "renders" for `"Flooding Likely "` or
+// `"flooding likely"` — the same bypass the module itself had, reproduced in the tool an
+// operator uses to confirm the module is right.
+const DROUGHT=row.droughtLabelKeys, EXCL=row.excludedLabelKeys;
 (async()=>{
   const hits=[];
   for(const L of row.layers){
@@ -27,8 +31,9 @@ const DROUGHT=new Set(row.droughtLabels), EXCL=new Set(row.excludedLabels);
   if(!hits.length){console.log('  (nothing — module renders no "Extended Hazards:" heading at all)');return;}
   hits.sort((a,b)=>a.s-b.s||a.e-b.e);
   for(const h of hits){
-    const gate = EXCL.has(h.label)?'  [EXCLUDED — never renders]'
-               : DROUGHT.has(h.label)?'  [drought-gated — hidden unless showDrought:true]':'';
+    const key = hazardLabelKey(h.label);
+    const gate = EXCL.has(key)?'  [EXCLUDED — never renders]'
+               : DROUGHT.has(key)?'  [drought-gated — hidden unless showDrought:true]':'';
     const route = h.L.group==='precipitation' ? 'per-day grid' : 'window band';
     const mapped = Object.prototype.hasOwnProperty.call(row.displayColor,h.label);
     console.log(`  L${h.L.id} ${h.L.group.padEnd(15)} "${h.label}" ${h.sd}..${h.ed}  D${h.s}${h.s===h.e?'':'–'+h.e}  -> ${route}  color=${mapped?'#'+row.displayColor[h.label]:'#'+row.defaultColor+' (UNMAPPED)'}  filed ${h.age}h ago${gate}`);

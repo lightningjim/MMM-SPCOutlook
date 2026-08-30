@@ -141,6 +141,33 @@ const hazardsOutlookLayers = [
   { id: 8, group: "wildfireDrought", dayRange: [8, 14] }
 ];
 
+// 16-REVIEW WR-02: the single place a raw upstream `label` is canonicalized,
+// so every downstream consumer — the D-09 exclusion, the D-10 drought gate,
+// the D-02 order lookup and the display-colour map — sees one value.
+//
+// Both gates were exact-string comparisons against the raw attribute, so
+// `"Flooding Likely "` (one trailing space), a value carrying a non-breaking
+// space, or `"Flooding  Likely"` (a doubled inner space) walked past D-09 and
+// rendered — attributing the National Flood Outlook's data to the Hazards
+// Outlook, which is the single thing D-09 exists to prevent. The same shape
+// let `"Severe Drought "` bypass the showDrought default-off gate, which is a
+// user-visible config violation rather than cosmetic drift. This is WSSI-02's
+// trap (winterImpact.toValue below already folds before its lookup) landing on
+// a second row.
+//
+// Whitespace only, never a case fold, because D-11 says an unmapped label
+// renders VERBATIM — folding case here would change what the user reads.
+// JS `\s` and `String.prototype.trim` both cover the Unicode space
+// separators including U+00A0, so a non-breaking space is removed too.
+const normalizeHazardLabel = (raw) =>
+  (typeof raw === "string" ? raw.trim().replace(/\s+/g, " ") : "");
+
+// The comparison key for the two gates: normalized AND case-folded. Splitting
+// "what we display" from "what we compare" is the review's own remedy — it
+// closes `"flooding likely"` as a D-09 bypass without touching D-11's verbatim
+// contract, because only the KEY is folded and the label itself is untouched.
+const hazardLabelKey = (raw) => normalizeHazardLabel(raw).toUpperCase();
+
 // D-09: these three labels originate from the National Flood Outlook, a
 // separate NOAA product outside v2.0 scope that rides inside the
 // Precipitation layers' attributes; rendering them would attribute another
@@ -154,6 +181,12 @@ const hazardsExcludedLabels = ["Flooding Likely", "Flooding Occurring or Imminen
 // Wildfire Risk" is not drought and is never gated — the Wildfire/Drought
 // layers multiplex both families on the same `label` attribute.
 const hazardsDroughtLabels = ["Severe Drought", "Rapid Onset Drought Risk"];
+
+// WR-02: the gate sets, DERIVED from the display lists above rather than
+// restated, so the comparison is symmetric — a stray space typed into either
+// list cannot make one side stop matching the other.
+const hazardsExcludedLabelKeys = new Set(hazardsExcludedLabels.map(hazardLabelKey));
+const hazardsDroughtLabelKeys = new Set(hazardsDroughtLabels.map(hazardLabelKey));
 
 // D-02: registry-declared order for same-day co-occurring hazards, because
 // ArcGIS response order can flip between polls on an unchanged forecast,
@@ -328,6 +361,12 @@ const PRODUCT_REGISTRY = {
     dayRangeTotal: dayRangeOf([3, 14]),
     excludedLabels: hazardsExcludedLabels,
     droughtLabels: hazardsDroughtLabels,
+    // WR-02: what the two gates actually compare against. The `*Labels` arrays
+    // above stay for display/diagnostic use; these are the folded keys, so a
+    // whitespace or case variant of an excluded or drought label cannot slip
+    // through. Consumers pass a label through the exported `hazardLabelKey`.
+    excludedLabelKeys: hazardsExcludedLabelKeys,
+    droughtLabelKeys: hazardsDroughtLabelKeys,
     order: hazardsOrder,
     displayColor: hazardsDisplayColor,
     defaultColor: HAZARDS_DEFAULT_COLOR,
@@ -344,7 +383,11 @@ const PRODUCT_REGISTRY = {
     // wssiRawToValue already use to route around this trap. A non-string
     // label yields "" so a malformed feature is dropped by includesFeat
     // rather than rendering `undefined`.
-    toValue: (label, f) => (f && f.properties && typeof f.properties.label === "string" ? f.properties.label : ""),
+    //
+    // WR-02: normalized HERE, in the row's own toValue, so canonicalization
+    // happens once and every downstream consumer sees the same string —
+    // exactly the placement winterImpact.toValue uses for WSSI-02's fold.
+    toValue: (label, f) => normalizeHazardLabel(f && f.properties && f.properties.label),
     // D-13/D-14: 84 hours = Fri 17Z + 84h -> Mon 05Z, clearing a normal
     // weekend with ~12h of slack before Monday's 17:00Z issuance and
     // catching a mid-week stall within about a day. Live serviceDescription
@@ -376,4 +419,7 @@ const PRODUCT_REGISTRY = {
   // Future row (HeatRisk) lands in Phase 17 (D-08) — not added here.
 };
 
-module.exports = { buildArcGisQuery, daySpanOf, dayRangeOf, MPD_FILENAME_PATTERN, PRODUCT_REGISTRY };
+module.exports = {
+  buildArcGisQuery, daySpanOf, dayRangeOf, hazardLabelKey, normalizeHazardLabel,
+  MPD_FILENAME_PATTERN, PRODUCT_REGISTRY
+};

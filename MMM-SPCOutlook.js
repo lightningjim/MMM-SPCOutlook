@@ -277,11 +277,20 @@
       "Flooding Likely", "Flooding Occurring or Imminent", "Flooding Possible"
     ];
     const HAZARDS_DROUGHT_LABELS = ["Severe Drought", "Rapid Onset Drought Risk"];
+    // WR-02: mirrors productRegistry.js's `hazardLabelKey` — normalize whitespace
+    // (including U+00A0, which both `trim` and `\s` cover) and case-fold, so this gate
+    // cannot be walked past by `"Flooding Likely "` or `"flooding likely"` either. Only
+    // the comparison key is folded; the label rendered below is the payload's own string.
+    const hazardsLabelKey = (label) =>
+      (typeof label === "string" ? label.trim().replace(/\s+/g, " ").toUpperCase() : "");
+    const HAZARDS_EXCLUDED_KEYS = HAZARDS_EXCLUDED_LABELS.map(hazardsLabelKey);
+    const HAZARDS_DROUGHT_KEYS = HAZARDS_DROUGHT_LABELS.map(hazardsLabelKey);
     const hazardsLabelDisplayable = (label) => {
-      if (HAZARDS_EXCLUDED_LABELS.includes(label)) return false;
+      const key = hazardsLabelKey(label);
+      if (HAZARDS_EXCLUDED_KEYS.includes(key)) return false;
       // Strict `!== true`, matching the backend's D-10 gate exactly: an absent or
       // non-boolean showDrought behaves like false, per CFG-01's default.
-      if (HAZARDS_DROUGHT_LABELS.includes(label) && this.config.showDrought !== true) return false;
+      if (HAZARDS_DROUGHT_KEYS.includes(key) && this.config.showDrought !== true) return false;
       return true;
     };
     const renderableWindowEntries = (block) => {
