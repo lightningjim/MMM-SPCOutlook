@@ -298,7 +298,7 @@ module.exports = NodeHelper.create({
               etag: fetchResult.newEtag ?? null,
               hash: fetchResult.newHash ?? null,
               result: { value, validTime },
-              timestamp: Date.now()
+              timestamp: this._nowMs()
             });
           }
 
@@ -1757,9 +1757,21 @@ module.exports = NodeHelper.create({
   // fetchGeoJson instead of fetchGeoJsonCached would have reintroduced the whole
   // silent-degradation class in one line. If a plain fetch is ever wanted, route it
   // through fetchGeoJsonCached rather than duplicating the transport.
+  //
+  // 16-REVIEW WR-05: reads the clock through `_nowMs()`, not `Date.now()`. The seam's own
+  // doc comment states its purpose is to make the day-offset-drift regression — the
+  // phase's highest-risk item — testable, yet the timestamps that decide whether a cached
+  // reading may be SERVED sat outside it, so a probe that pinned `_nowMs` to a fixture
+  // date still measured the stale window against the wall clock. The consequence was a
+  // clock-dependent harness: `HAZARDS_NOW_MS` is a fixed 2026-08-26, so any hazards
+  // scenario warming the cache and then hitting a network error, a non-ok status or
+  // `rejectBody` computed a difference that GREW with real elapsed time and eventually
+  // took the hard-failure branch where it was authored to take the stale-fallback one.
+  // In production both are `Date.now()`, so this changes no user-facing behaviour; it
+  // makes the seam actually cover what it claims to.
   _isWithinStaleWindow(timestamp, intervalMinutes) {
     const intervalMs = (intervalMinutes ?? 60) * 60 * 1000;
-    return (Date.now() - timestamp) < intervalMs * STALE_WINDOW_INTERVALS;
+    return (this._nowMs() - timestamp) < intervalMs * STALE_WINDOW_INTERVALS;
   },
 
   /**
@@ -1799,6 +1811,14 @@ module.exports = NodeHelper.create({
    * needed.
    * @returns epoch milliseconds
    */
+  //   16-REVIEW WR-05: the seam now covers the WHOLE caching layer, not just the day-key
+  //   arithmetic — `_isWithinStaleWindow`, every `_geoJsonCache` timestamp write and the
+  //   three cache-hit timestamp refreshes all read it. They must move together: a mix of
+  //   `_nowMs()` and `Date.now()` inside the cache means a probe that pins this seam to a
+  //   fixture date compares a pinned reading against the wall clock, which silently flips
+  //   which branch (stale fallback vs hard failure) a warm-cache degrade scenario takes —
+  //   and flips it differently on every day the suite is run. Any new clock read added to
+  //   the caching layer belongs here too.
   _nowMs() {
     return Date.now();
   },
@@ -2003,7 +2023,8 @@ module.exports = NodeHelper.create({
       // next hiccup blanked the layer. Stamping the confirmation is what makes that window
       // mean "how long since we last heard from upstream", which is the question both it
       // and _noteStaleEntry's age badge are actually asking.
-      entry.timestamp = Date.now();
+      // WR-05: through the `_nowMs()` seam, so it is comparable with _isWithinStaleWindow.
+      entry.timestamp = this._nowMs();
       return { data: null, cachedResult: entry.result, stale: false };
     }
 
@@ -2076,7 +2097,8 @@ module.exports = NodeHelper.create({
         Log.info('MMM-SPCOutlook: cache hit (ETag) for ' + url);
         // A matching ETag is the same confirmation the 304 branch above records; see there
         // for why an unrefreshed timestamp made the stale window unreachable.
-        entry.timestamp = Date.now();
+        // WR-05: through the `_nowMs()` seam, so it is comparable with _isWithinStaleWindow.
+        entry.timestamp = this._nowMs();
         return { data: null, cachedResult: entry.result, stale: false };
       }
       // Cache miss — parse, validate the shape, and return new data
@@ -2091,7 +2113,8 @@ module.exports = NodeHelper.create({
         Log.info('MMM-SPCOutlook: cache hit (hash) for ' + url);
         // Identical body bytes are the same confirmation the 304 branch above records; see
         // there for why an unrefreshed timestamp made the stale window unreachable.
-        entry.timestamp = Date.now();
+        // WR-05: through the `_nowMs()` seam, so it is comparable with _isWithinStaleWindow.
+        entry.timestamp = this._nowMs();
         return { data: null, cachedResult: entry.result, stale: false };
       }
       // Cache miss — parse, validate the shape, and return new data
@@ -2136,7 +2159,7 @@ module.exports = NodeHelper.create({
         etag: fetchResult.newEtag ?? null,
         hash: fetchResult.newHash ?? null,
         result: risk,
-        timestamp: Date.now()
+        timestamp: this._nowMs()
       });
     }
 
@@ -2175,7 +2198,7 @@ module.exports = NodeHelper.create({
           etag: cigFetch.newEtag ?? null,
           hash: cigFetch.newHash ?? null,
           result: cig,
-          timestamp: Date.now(),
+          timestamp: this._nowMs(),
           ...(this._proximityWeighting ? { polys: cigPolys, lines: cigLines } : {})
         });
       }
@@ -2378,7 +2401,7 @@ module.exports = NodeHelper.create({
             etag: fetchResult.newEtag ?? null,
             hash: fetchResult.newHash ?? null,
             result: day1RiskResult,
-            timestamp: Date.now(),
+            timestamp: this._nowMs(),
             ...(this._proximityWeighting ? { polys: day1RiskPoly, lines: day1RiskLines } : {})
           });
         }
@@ -2442,7 +2465,7 @@ module.exports = NodeHelper.create({
             etag: fetchResult.newEtag ?? null,
             hash: fetchResult.newHash ?? null,
             result: day2RiskResult,
-            timestamp: Date.now(),
+            timestamp: this._nowMs(),
             ...(this._proximityWeighting ? { polys: day2RiskPoly, lines: day2RiskLines } : {})
           });
         }
@@ -2505,7 +2528,7 @@ module.exports = NodeHelper.create({
             etag: fetchResult.newEtag ?? null,
             hash: fetchResult.newHash ?? null,
             result: day3RiskResult,
-            timestamp: Date.now(),
+            timestamp: this._nowMs(),
             ...(this._proximityWeighting ? { polys: day3RiskPoly, lines: day3RiskLines } : {})
           });
         }
@@ -2525,7 +2548,7 @@ module.exports = NodeHelper.create({
           const gj = fetchResult.data;
           const poly = this.extractPolygons(gj, label => label === "" ? 0 : parseFloat(label), (label, val) => val > 0, day3ProbURL);
           day3ProbRisk = this.evaluatePolygons(poly, loc, percComparator);
-          this._geoJsonCache.set(day3ProbURL, { mode: fetchResult.mode, etag: fetchResult.newEtag ?? null, hash: fetchResult.newHash ?? null, result: day3ProbRisk, timestamp: Date.now() });
+          this._geoJsonCache.set(day3ProbURL, { mode: fetchResult.mode, etag: fetchResult.newEtag ?? null, hash: fetchResult.newHash ?? null, result: day3ProbRisk, timestamp: this._nowMs() });
         }
       }
       let day3Cig = 0;
@@ -2560,7 +2583,7 @@ module.exports = NodeHelper.create({
             etag: fetchResult.newEtag ?? null,
             hash: fetchResult.newHash ?? null,
             result: day3Cig,
-            timestamp: Date.now(),
+            timestamp: this._nowMs(),
             ...(this._proximityWeighting ? { polys: cigPolys, lines: cigLines } : {})
           });
         }
@@ -2588,7 +2611,7 @@ module.exports = NodeHelper.create({
           const polys = this.extractPolygons(fetchResult.data, label => fireRiskToValue[label] || 0, (label, val) => val > 0, day1FwWindRHURL);
           const val = this.evaluatePolygons(polys, loc, fireComparator);
           day1FireRisk = Math.max(day1FireRisk, val);
-          this._geoJsonCache.set(day1FwWindRHURL, { mode: fetchResult.mode, etag: fetchResult.newEtag ?? null, hash: fetchResult.newHash ?? null, result: val, timestamp: Date.now() });
+          this._geoJsonCache.set(day1FwWindRHURL, { mode: fetchResult.mode, etag: fetchResult.newEtag ?? null, hash: fetchResult.newHash ?? null, result: val, timestamp: this._nowMs() });
         }
       }
       {
@@ -2600,7 +2623,7 @@ module.exports = NodeHelper.create({
           const polys = this.extractPolygons(fetchResult.data, label => fireRiskToValue[label] || 0, (label, val) => val > 0, day1FwDryTURL);
           const val = this.evaluatePolygons(polys, loc, fireComparator);
           day1FireRisk = Math.max(day1FireRisk, val);
-          this._geoJsonCache.set(day1FwDryTURL, { mode: fetchResult.mode, etag: fetchResult.newEtag ?? null, hash: fetchResult.newHash ?? null, result: val, timestamp: Date.now() });
+          this._geoJsonCache.set(day1FwDryTURL, { mode: fetchResult.mode, etag: fetchResult.newEtag ?? null, hash: fetchResult.newHash ?? null, result: val, timestamp: this._nowMs() });
         }
       }
 
@@ -2615,7 +2638,7 @@ module.exports = NodeHelper.create({
           const polys = this.extractPolygons(fetchResult.data, label => fireRiskToValue[label] || 0, (label, val) => val > 0, day2FwWindRHURL);
           const val = this.evaluatePolygons(polys, loc, fireComparator);
           day2FireRisk = Math.max(day2FireRisk, val);
-          this._geoJsonCache.set(day2FwWindRHURL, { mode: fetchResult.mode, etag: fetchResult.newEtag ?? null, hash: fetchResult.newHash ?? null, result: val, timestamp: Date.now() });
+          this._geoJsonCache.set(day2FwWindRHURL, { mode: fetchResult.mode, etag: fetchResult.newEtag ?? null, hash: fetchResult.newHash ?? null, result: val, timestamp: this._nowMs() });
         }
       }
       {
@@ -2627,7 +2650,7 @@ module.exports = NodeHelper.create({
           const polys = this.extractPolygons(fetchResult.data, label => fireRiskToValue[label] || 0, (label, val) => val > 0, day2FwDryTURL);
           const val = this.evaluatePolygons(polys, loc, fireComparator);
           day2FireRisk = Math.max(day2FireRisk, val);
-          this._geoJsonCache.set(day2FwDryTURL, { mode: fetchResult.mode, etag: fetchResult.newEtag ?? null, hash: fetchResult.newHash ?? null, result: val, timestamp: Date.now() });
+          this._geoJsonCache.set(day2FwDryTURL, { mode: fetchResult.mode, etag: fetchResult.newEtag ?? null, hash: fetchResult.newHash ?? null, result: val, timestamp: this._nowMs() });
         }
       }
 
@@ -2650,7 +2673,7 @@ module.exports = NodeHelper.create({
               const polys = this.extractPolygons(fetchResult.data, (label, f) => dnToFireValue[f.properties.DN] || 0, (label, val) => val > 0, windRHUrl);
               const val = this.evaluatePolygons(polys, loc, fireComparator);
               dayRisk = Math.max(dayRisk, val);
-              this._geoJsonCache.set(windRHUrl, { mode: fetchResult.mode, etag: fetchResult.newEtag ?? null, hash: fetchResult.newHash ?? null, result: val, timestamp: Date.now() });
+              this._geoJsonCache.set(windRHUrl, { mode: fetchResult.mode, etag: fetchResult.newEtag ?? null, hash: fetchResult.newHash ?? null, result: val, timestamp: this._nowMs() });
             }
           }
           {
@@ -2662,7 +2685,7 @@ module.exports = NodeHelper.create({
               const polys = this.extractPolygons(fetchResult.data, (label, f) => dnToFireValue[f.properties.DN] || 0, (label, val) => val > 0, dryTUrl);
               const val = this.evaluatePolygons(polys, loc, fireComparator);
               dayRisk = Math.max(dayRisk, val);
-              this._geoJsonCache.set(dryTUrl, { mode: fetchResult.mode, etag: fetchResult.newEtag ?? null, hash: fetchResult.newHash ?? null, result: val, timestamp: Date.now() });
+              this._geoJsonCache.set(dryTUrl, { mode: fetchResult.mode, etag: fetchResult.newEtag ?? null, hash: fetchResult.newHash ?? null, result: val, timestamp: this._nowMs() });
             }
           }
           dayFireRisks.push(dayRisk);
@@ -2702,7 +2725,7 @@ module.exports = NodeHelper.create({
             const day4SignPoly  = this.extractPolygons(gj, (label) => (label === "SIGN" ? 1 : 0), (label, val) => val > 0, day4URL + " (SIGN)");
             day4ProbRisk = this.evaluatePolygons(day4RiskPoly, loc, percComparator);
             day4Sign = day4ProbRisk > 0 ? this.evaluatePolygons(day4SignPoly, loc, sigComparator) : false;
-            this._geoJsonCache.set(day4URL, { mode: fetch4.mode, etag: fetch4.newEtag ?? null, hash: fetch4.newHash ?? null, result: { probRisk: day4ProbRisk, sign: day4Sign }, timestamp: Date.now() });
+            this._geoJsonCache.set(day4URL, { mode: fetch4.mode, etag: fetch4.newEtag ?? null, hash: fetch4.newHash ?? null, result: { probRisk: day4ProbRisk, sign: day4Sign }, timestamp: this._nowMs() });
           }
         }
 
@@ -2722,7 +2745,7 @@ module.exports = NodeHelper.create({
             const day5SignPoly  = this.extractPolygons(gj, (label) => (label === "SIGN" ? 1 : 0), (label, val) => val > 0, day5URL + " (SIGN)");
             day5ProbRisk = this.evaluatePolygons(day5RiskPoly, loc, percComparator);
             day5Sign = day5ProbRisk > 0 ? this.evaluatePolygons(day5SignPoly, loc, sigComparator) : false;
-            this._geoJsonCache.set(day5URL, { mode: fetch5.mode, etag: fetch5.newEtag ?? null, hash: fetch5.newHash ?? null, result: { probRisk: day5ProbRisk, sign: day5Sign }, timestamp: Date.now() });
+            this._geoJsonCache.set(day5URL, { mode: fetch5.mode, etag: fetch5.newEtag ?? null, hash: fetch5.newHash ?? null, result: { probRisk: day5ProbRisk, sign: day5Sign }, timestamp: this._nowMs() });
           }
         }
 
@@ -2742,7 +2765,7 @@ module.exports = NodeHelper.create({
             const day6SignPoly  = this.extractPolygons(gj, (label) => (label === "SIGN" ? 1 : 0), (label, val) => val > 0, day6URL + " (SIGN)");
             day6ProbRisk = this.evaluatePolygons(day6RiskPoly, loc, percComparator);
             day6Sign = day6ProbRisk > 0 ? this.evaluatePolygons(day6SignPoly, loc, sigComparator) : false;
-            this._geoJsonCache.set(day6URL, { mode: fetch6.mode, etag: fetch6.newEtag ?? null, hash: fetch6.newHash ?? null, result: { probRisk: day6ProbRisk, sign: day6Sign }, timestamp: Date.now() });
+            this._geoJsonCache.set(day6URL, { mode: fetch6.mode, etag: fetch6.newEtag ?? null, hash: fetch6.newHash ?? null, result: { probRisk: day6ProbRisk, sign: day6Sign }, timestamp: this._nowMs() });
           }
         }
 
@@ -2762,7 +2785,7 @@ module.exports = NodeHelper.create({
             const day7SignPoly  = this.extractPolygons(gj, (label) => (label === "SIGN" ? 1 : 0), (label, val) => val > 0, day7URL + " (SIGN)");
             day7ProbRisk = this.evaluatePolygons(day7RiskPoly, loc, percComparator);
             day7Sign = day7ProbRisk > 0 ? this.evaluatePolygons(day7SignPoly, loc, sigComparator) : false;
-            this._geoJsonCache.set(day7URL, { mode: fetch7.mode, etag: fetch7.newEtag ?? null, hash: fetch7.newHash ?? null, result: { probRisk: day7ProbRisk, sign: day7Sign }, timestamp: Date.now() });
+            this._geoJsonCache.set(day7URL, { mode: fetch7.mode, etag: fetch7.newEtag ?? null, hash: fetch7.newHash ?? null, result: { probRisk: day7ProbRisk, sign: day7Sign }, timestamp: this._nowMs() });
           }
         }
 
@@ -2782,7 +2805,7 @@ module.exports = NodeHelper.create({
             const day8SignPoly  = this.extractPolygons(gj, (label) => (label === "SIGN" ? 1 : 0), (label, val) => val > 0, day8URL + " (SIGN)");
             day8ProbRisk = this.evaluatePolygons(day8RiskPoly, loc, percComparator);
             day8Sign = day8ProbRisk > 0 ? this.evaluatePolygons(day8SignPoly, loc, sigComparator) : false;
-            this._geoJsonCache.set(day8URL, { mode: fetch8.mode, etag: fetch8.newEtag ?? null, hash: fetch8.newHash ?? null, result: { probRisk: day8ProbRisk, sign: day8Sign }, timestamp: Date.now() });
+            this._geoJsonCache.set(day8URL, { mode: fetch8.mode, etag: fetch8.newEtag ?? null, hash: fetch8.newHash ?? null, result: { probRisk: day8ProbRisk, sign: day8Sign }, timestamp: this._nowMs() });
           }
         }
       }
