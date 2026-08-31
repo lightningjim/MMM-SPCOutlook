@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: WPC & CPC Integration + Unified Day Report
-status: planning
-stopped_at: Phase 17 context gathered
-last_updated: "2026-08-31T00:19:24.719Z"
-last_activity: 2026-08-27
+status: ready-to-execute
+stopped_at: Phase 17 planned (9 plans, 8 waves)
+last_updated: "2026-08-31T23:57:12.675Z"
+last_activity: 2026-08-31 -- Phase 17 planning complete
 progress:
   total_phases: 7
   completed_phases: 3
-  total_plans: 24
+  total_plans: 33
   completed_plans: 24
   percent: 43
 ---
@@ -26,9 +26,9 @@ See: .planning/PROJECT.md (updated 2026-08-15 after v2.0 scoping)
 ## Current Position
 
 Phase: 17
-Plan: Not started
-Status: Ready to plan
-Last activity: 2026-08-27
+Plan: 9 plans across 8 waves, none started
+Status: Ready to execute
+Last activity: 2026-08-31 -- Phase 17 planning complete
 
 Progress: [███▓░░░░░░] 33%
 
@@ -104,5 +104,5 @@ Items acknowledged and carried forward from previous milestone close:
 ## Session Continuity
 
 Last session: 2026-08-31T00:19:24.711Z
-Stopped at: Phase 17 context gathered
+Stopped at: Phase 17 planned (9 plans, 8 waves)
 Resume file: .planning/phases/17-nws-wpc-heatrisk-parallelized-fetching/17-CONTEXT.md

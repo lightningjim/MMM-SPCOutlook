@@ -890,10 +890,12 @@ hypothetical sketches.
 | A3 | `idp_filedate` (not `catalogItemVisibilities`) is the correct HEAT-04 dedupe tiebreak | Common Pitfalls #4 | Medium — no live duplicate was observable this session to test directly; the recommendation is reasoned from (a) STACK.md's original live-observed duplicate example, which recommended the same tiebreak, and (b) this session's live evidence that `catalogItemVisibilities` marks only one globally-visible tile, not a per-day/per-pair signal. A synthetic fixture (two items sharing `idp_validtime`, differing `idp_filedate`) closes this before implementation |
 | A4 | A well-formed `sr=4326` request (matching coordinate units and declared SR) works as reliably as the Mercator path for this endpoint long-term | Common Pitfalls #2 | Low — does not affect the plan (Web Mercator reprojection remains the locked, implemented path per HEAT-03/ROADMAP); this is a corrected mental model only, not a proposed implementation change |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **No live duplicate `idp_validtime` was observable this session to validate the HEAT-04
-   dedupe rule end-to-end.**
+All three resolved during Phase 17 planning; adoption noted inline below.
+
+1. **RESOLVED** (adopted in 17-06: synthetic duplicate fixture built). No live duplicate
+   `idp_validtime` was observable this session to validate the HEAT-04 dedupe rule end-to-end.
    - What we know: STACK.md's 2026-08-15 session captured one real duplicate example and
      recommended an `idp_filedate` tiebreak; this session's poll (2026-08-31) had none among its
      7 items.
@@ -904,8 +906,9 @@ hypothetical sketches.
      window — consistent with this project's established practice (16-RESEARCH.md did the same
      for HAZ-01's zero-live-feature Precipitation layers).
 
-2. **Whether HeatRisk should get its own `PRODUCT_REGISTRY` row (Claude's Discretion, per
-   CONTEXT.md) — this research recommends yes, but flags the tradeoff explicitly.**
+2. **RESOLVED** (adopted in 17-01: HeatRisk gets its own row, `kind: "arcgis-identify-point"`).
+   Whether HeatRisk should get its own `PRODUCT_REGISTRY` row (Claude's Discretion, per
+   CONTEXT.md) — this research recommended yes, and flagged the tradeoff explicitly.
    - What we know: a row gives D-11's identity assertion and D-07's `maxDataAgeHours` something
      to live on, and matches every other product's pattern; but the row would carry no
      `buildUrl(day)` in the `arcgis-day-layers` sense (HeatRisk's `buildUrl` takes mercator
@@ -916,9 +919,10 @@ hypothetical sketches.
      row" invariant `productRegistry.js:450`'s own comment already promises ("Future row
      (HeatRisk) lands in Phase 17").
 
-3. **The exact frontend row wording/placement for `heatRiskDaysToRender`'s output** — explicitly
-   left to planning per CONTEXT.md's Claude's Discretion (row wording, per-day layout, block
-   placement). Not researched further here since it carries no technical risk.
+3. **RESOLVED** (settled in 17-03). The exact frontend row wording/placement for
+   `heatRiskDaysToRender`'s output — explicitly left to planning per CONTEXT.md's Claude's
+   Discretion (row wording, per-day layout, block placement). Not researched further here since
+   it carries no technical risk.
 
 ## Environment Availability
 
