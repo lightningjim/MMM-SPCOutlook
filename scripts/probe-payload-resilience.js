@@ -1054,12 +1054,51 @@ function assertPayloadIntact(out) {
   // `advisories.{spcMD,mpd}` — and 25 scenarios called this function as "the D-05 payload
   // contract" while asserting nothing about either. Deleting `winterImpact: wssiPayload`
   // from getSpcOutlook's return object passed this oracle; so did deleting `advisories`.
-  // The loop below is registry-driven for the same reason node_helper's is: a Phase 16/17
-  // row is covered the moment it is declared, with no edit here. The registry uses
-  // `id: "excessiveRain"` / `"winterImpact"` and the payload uses those same key names, so
-  // `out[row.id]` is already the correct lookup.
+  //
+  // 17-REVIEW WR-05: the loop below used to open `if (row.kind !== "arcgis-day-layers")
+  // continue;` while its comment claimed "a Phase 16/17 row is covered the moment it is
+  // declared, with no edit here." That was false for two of the four declared kinds.
+  // `arcgis-identify-point` (HeatRisk) and `arcgis-hazard-window` (Hazards Outlook) were
+  // skipped outright, so the ~60 scenarios that call this function without ALSO calling
+  // assertHeatRiskBlockIntact/assertHazardsBlockIntact by hand would have passed with
+  // `heatRisk: heatRiskPayload` deleted from getSpcOutlook's return object — the exact
+  // regression the paragraph above says was caught for winterImpact and advisories.
+  //
+  // It now DISPATCHES on kind rather than filtering to one, and an unrecognised kind is a
+  // throw. That trailing throw is the load-bearing part: it is what makes declaring a
+  // fifth product kind a loud failure here instead of a silent skip, which is the only
+  // way the "covered the moment it is declared" claim can be true rather than aspirational.
+  // The registry uses `id: "excessiveRain"` / `"winterImpact"` and the payload uses those
+  // same key names, so `out[row.id]` is already the correct lookup.
   for (const row of Object.values(PRODUCT_REGISTRY)) {
-    if (row.kind !== "arcgis-day-layers") continue;
+    if (row.kind === "arcgis-identify-point") {
+      assertHeatRiskBlockIntact(out);
+      continue;
+    }
+    if (row.kind === "arcgis-hazard-window") {
+      assertHazardsBlockIntact(out);
+      continue;
+    }
+    if (row.kind === "kml-advisory") {
+      // D-05's advisory half, checked per row below in the same pass.
+      if (typeof out.advisories !== "object" || out.advisories === null) {
+        throw new Error("assertPayloadIntact: advisories missing or not an object");
+      }
+      if (!Array.isArray(out.advisories[row.id])) {
+        throw new Error(
+          `assertPayloadIntact: advisories.${row.id} is not an array ` +
+          `(got ${JSON.stringify(out.advisories[row.id])})`
+        );
+      }
+      continue;
+    }
+    if (row.kind !== "arcgis-day-layers") {
+      throw new Error(
+        `assertPayloadIntact: registry row "${row.id}" has an uncovered kind "${row.kind}" — this oracle ` +
+        "claims every declared row is covered the moment it is declared, so a new kind must be given a " +
+        "check here rather than silently skipped (17-REVIEW WR-05)"
+      );
+    }
     const block = out[row.id];
     if (typeof block !== "object" || block === null) {
       throw new Error(`assertPayloadIntact: ${row.id} missing or not an object`);
@@ -1089,21 +1128,13 @@ function assertPayloadIntact(out) {
       }
     }
   }
-  // D-05 again, for the advisory half: `advisories` and one array per kml-advisory row are
-  // present whether or not the product is toggled on. This is what the frontend's
-  // `[...advisories.spcMD, ...advisories.mpd]` spread relies on (WR-07), and it was
-  // asserted nowhere in the suite.
+  // D-05 again, for the advisory half: `advisories` is present whether or not the product
+  // is toggled on. This is what the frontend's `[...advisories.spcMD, ...advisories.mpd]`
+  // spread relies on (WR-07). The per-row array check now happens inside the kind dispatch
+  // above, so it cannot drift out of step with the registry; this is the container check,
+  // which must hold even if no kml-advisory row were declared at all.
   if (typeof out.advisories !== "object" || out.advisories === null) {
     throw new Error("assertPayloadIntact: advisories missing or not an object");
-  }
-  for (const row of Object.values(PRODUCT_REGISTRY)) {
-    if (row.kind !== "kml-advisory") continue;
-    if (!Array.isArray(out.advisories[row.id])) {
-      throw new Error(
-        `assertPayloadIntact: advisories.${row.id} is not an array ` +
-        `(got ${JSON.stringify(out.advisories[row.id])})`
-      );
-    }
   }
 }
 
