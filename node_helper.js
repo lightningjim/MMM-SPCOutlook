@@ -1927,6 +1927,97 @@ module.exports = NodeHelper.create({
   },
 
   /**
+   * D-06's zip-before-sort: build `{ attrs, rawValue }` tuples from the HeatRisk identify
+   * response's `catalogItems.features` and `properties.Values` arrays BEFORE any sort, so
+   * no positional index survives into the sort and a `catalogItems`/`Values` desync
+   * becomes unrepresentable rather than something later code must guard against. This
+   * function does NOT sort — sorting by `idp_validtime` happens in the runner, after
+   * dedupe.
+   *
+   * Precondition guard: if `values` is not an array, or its length differs from
+   * `features.length`, returns `null` — D-06's abandon signal. Two alternatives were
+   * considered and rejected: zipping to the shorter length front-truncates and silently
+   * mis-attributes every surviving pair (a confidently wrong category on the wrong day,
+   * strictly worse than showing nothing); falling back to the top-level `value` as Day 1
+   * is wrong because that field tracks `catalogItemVisibilities`, which live capture on
+   * 2026-08-31 showed pointing at the Day-2 tile, not Day 1.
+   *
+   * @param body - a body that has already passed `_isHeatRiskIdentifyResponse`, but this
+   *   function must not throw even if a body somehow slipped through with a mismatched
+   *   or missing shape
+   * @returns Array<{ attrs, rawValue }> in RAW response order, or null on a Values/features
+   *   length mismatch
+   */
+  _zipHeatRiskCatalog(body) {
+    const features = body && body.catalogItems && body.catalogItems.features;
+    const values = body && body.properties && body.properties.Values;
+    if (!Array.isArray(features) || !Array.isArray(values) || values.length !== features.length) {
+      return null;
+    }
+    return features.map((f, i) => ({ attrs: f && f.attributes, rawValue: values[i] }));
+  },
+
+  /**
+   * HEAT-04: two catalog items sharing an `idp_validtime` collapse to the one with the
+   * greatest `idp_filedate` (most recently ingested). `catalogItemVisibilities` is
+   * deliberately NOT used for this tiebreak: live capture confirms it marks only the
+   * single tile behind the top-level scalar `value`, so for a duplicate pair that is not
+   * also the globally visible tile both members read `0` — an unreliable per-pair signal.
+   * `idp_filedate` is present and independently varying on every item (a ~15-minute
+   * spread observed across 7 items in one poll), so it is the tiebreak instead. A tuple
+   * whose `idp_validtime` is not a finite number is dropped (`continue`), contained,
+   * never thrown — the same per-item containment discipline `_hazardMatchesFromHits`
+   * already applies to a malformed hit. Does not sort.
+   *
+   * @param tuples - Array<{ attrs, rawValue }> from `_zipHeatRiskCatalog`
+   * @returns Array<{ attrs, rawValue }>, at most one entry per distinct `idp_validtime`
+   */
+  _dedupeHeatRiskByValidTime(tuples) {
+    const byValidTime = new Map();
+    for (const t of tuples) {
+      const vt = t && t.attrs && t.attrs.idp_validtime;
+      if (typeof vt !== "number" || !Number.isFinite(vt)) continue;
+      const existing = byValidTime.get(vt);
+      const filedate = (t.attrs && typeof t.attrs.idp_filedate === "number" && Number.isFinite(t.attrs.idp_filedate))
+        ? t.attrs.idp_filedate
+        : -Infinity;
+      const existingFiledate = existing
+        ? ((existing.attrs && typeof existing.attrs.idp_filedate === "number" && Number.isFinite(existing.attrs.idp_filedate))
+          ? existing.attrs.idp_filedate
+          : -Infinity)
+        : -Infinity;
+      if (!existing || filedate > existingFiledate) {
+        byValidTime.set(vt, t);
+      }
+    }
+    return Array.from(byValidTime.values());
+  },
+
+  /**
+   * HEAT-01/02: the HeatRisk-specific day-offset wrapper. Delegates to `_hazardDayOffset`
+   * rather than restating its day-offset division a second time — a second copy of that
+   * formula is exactly the two-places-declare-one-rule defect 16-REVIEW WR-03 filed. This
+   * wrapper exists purely so HeatRisk call sites read
+   * HeatRisk-specific and so the 12:00Z rationale below has one home.
+   *
+   * No `+1` adjustment is needed: every observed `idp_validtime` sits at exactly
+   * `12:00:00.000Z` (14/14 features across two live sessions), half a day past UTC
+   * midnight, so `Math.round(0.5) === 1` places today's tile at day key 1 — and because
+   * `_todayUtcMs()` only changes at midnight, that mapping is stable across an entire UTC
+   * calendar day, not just at the moment of capture. This depends on the 12:00Z alignment
+   * holding; if a future response ever carries a midnight-aligned `idp_validtime`, this
+   * assumption breaks and this wrapper is where to fix it. Routes through its caller's
+   * `_todayUtcMs()`/`_nowMs()` seams — never reads the raw system clock directly.
+   *
+   * @param idpValidTimeMs - a catalog item's `idp_validtime`, epoch milliseconds
+   * @param todayUtcMs - this poll's `_todayUtcMs()` value
+   * @returns integer day key (1 == today)
+   */
+  _heatRiskDayOffset(idpValidTimeMs, todayUtcMs) {
+    return this._hazardDayOffset(idpValidTimeMs, todayUtcMs);
+  },
+
+  /**
    * The `YYYY-MM-DD` UTC calendar date for an epoch-ms value. This is the Hazards
    * Outlook's per-day `date` field, and the `startDate`/`endDate` its window band
    * carries. The frontend derives the weekday from this string rather than computing
