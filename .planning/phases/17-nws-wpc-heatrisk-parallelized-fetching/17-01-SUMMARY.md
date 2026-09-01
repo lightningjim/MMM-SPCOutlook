@@ -139,3 +139,11 @@ None - no external service configuration required.
 ---
 *Phase: 17-nws-wpc-heatrisk-parallelized-fetching*
 *Completed: 2026-09-01*
+
+## Self-Check: PASSED
+
+- FOUND: `productRegistry.js`
+- FOUND: `.planning/phases/17-nws-wpc-heatrisk-parallelized-fetching/17-01-SUMMARY.md`
+- FOUND: commit `8ddbf8f` (Task 1)
+- FOUND: commit `2689541` (Task 2)
+- FOUND: commit `f8c3e83` (this SUMMARY)
