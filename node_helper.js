@@ -3331,57 +3331,139 @@ module.exports = NodeHelper.create({
       // `features`, so each day is validated and fetch/parse/evaluate is wrapped in its own
       // try/catch inside the runner — a failed day degrades to no risk instead of reaching
       // this function's own catch and losing the whole payload.
-      const eroResult = await this._runArcGisDayProduct(
-        PRODUCT_REGISTRY.excessiveRain, loc, catComparator, productToggles
-      );
-      const eroPayload = eroResult.payload;
-      if (eroResult.anyStale) anyStale = true;
-
+      //
       // WSSI Overall Impact (winterImpact). Off-season, the live layer responds with a
       // literal `{"type":"FeatureCollection","features":[]}` — the shape
       // `_isFeatureCollection` and `extractPolygons` already handle unchanged (zero
       // features -> value 0 -> tier NONE -> no row), so no additional guard belongs here
       // (WSSI-03). D-09 AMENDED's MINOR floor lives entirely in the registry row's
       // `includesFeat`, not in this call site.
-      const wssiResult = await this._runArcGisDayProduct(
-        PRODUCT_REGISTRY.winterImpact, loc, catComparator, productToggles
-      );
-      const wssiPayload = wssiResult.payload;
-      if (wssiResult.anyStale) anyStale = true;
-
-      // A direct named call, not a `kind`-loop — this row is singular (unlike the
-      // `kml-advisory` loop below, which iterates every row of that kind), matching the
-      // codebase's straight-line-dispatch style for a one-off product. Its `anyStale`
-      // folds into the same local every other product uses (Phase 14 D-04, global-only
-      // staleness); per D-15 this product can raise `anyStale` from a data-age trip
-      // without having contributed to `_oldestStaleAt`, so `_staleAsOf` may legitimately
-      // be `null` or older-than-this-product while the badge is on.
-      const hazardsResult = await this._runArcGisHazardWindowProduct(PRODUCT_REGISTRY.hazardsOutlook, loc, productToggles);
-      const hazardsPayload = hazardsResult.payload;
-      if (hazardsResult.anyStale) anyStale = true;
-
-      // A direct named call, not a `kind`-loop — like hazardsOutlook above, this row is
-      // singular. 17-05 folds all of these (ERO, WSSI, hazardsOutlook, HeatRisk, and the
-      // kml-advisory loop below) into one Promise.allSettled batch; this task deliberately
-      // lands the sequential form first so a HeatRisk bug and a concurrency bug can never
-      // be confused for each other.
-      const heatRiskResult = await this._runHeatRiskProduct(PRODUCT_REGISTRY.heatRisk, loc, productToggles);
-      const heatRiskPayload = heatRiskResult.payload;
-      if (heatRiskResult.anyStale) anyStale = true;
-
+      //
+      // hazardsOutlook and heatRisk are each a direct named member below, not a `kind`-loop
+      // — each row is singular (unlike the kml-advisory rows, which join the batch via a
+      // `.filter(...)` a few lines down). hazardsOutlook's `anyStale` folds into the same
+      // shared local every other product uses (Phase 14 D-04, global-only staleness); per
+      // D-15 it can raise `anyStale` from a data-age trip without contributing to
+      // `_oldestStaleAt`, so `_staleAsOf` may legitimately be `null` or older-than-this-
+      // product while the badge is on.
+      //
       // `kml-advisory` rows (SPC MD, WPC MPD) are driven here, inside getSpcOutlook, rather
       // than as a separate top-level fetch in socketNotificationReceived, so that an advisory
       // fetch failure folds into this run's own `anyStale` exactly like a product-layer
       // failure (D-04) — the old top-level `md` path could not do that; its failure was
       // caught and silently downgraded to "no active MDs" with no staleness signal at all.
-      // Both keys are seeded with empty arrays before the loop so `advisories.{spcMD,mpd}` is
-      // always a complete, array-shaped object even when a toggle is off (D-03, Phase 14 D-05).
+      // Both keys are seeded with empty arrays before settlement so `advisories.{spcMD,mpd}`
+      // is always a complete, array-shaped object even when a toggle is off (D-03, Phase 14
+      // D-05).
+      //
+      // PERF-01: all six of the above join ONE settlement batch (see below) rather than
+      // three named sequential awaits plus a kml-advisory for-loop, so cold-start fetch time
+      // stops growing linearly per enabled product. The batch settles every member
+      // independently (D-08) rather than short-circuiting on the first rejection: every
+      // runner above is only DOCUMENTED to never throw past its own internal per-item
+      // try/catch — a fail-fast batch would convert that comment into a load-bearing
+      // invariant and let one throw discard five healthy payloads into this function's own
+      // outer catch, the "total outage rendering as a confident all-clear" shape 14-REVIEW's
+      // round-3 deep review found as that phase's highest-severity finding. A per-call-site
+      // `.catch()` was rejected too: six near-identical catch blocks are exactly WR-06's
+      // divergence shape (a fix applied to one twin and not the other). Member closures are
+      // built but not invoked until the batch call below runs, so nothing awaits
+      // sequentially before the batch issues. A rejected member's `payload`/`entries`
+      // downstream consumers (`eroPayload`, `wssiPayload`, `hazardsPayload`,
+      // `heatRiskPayload`, and `advisories[row.id]`) all guard on a falsy/non-object block
+      // before reading into it (see `dayRiskCount`, `hazardsOutlookHasAnyDay`,
+      // `heatRiskDaysToRender` in MMM-SPCOutlook.js), so a substituted `payload: null` on
+      // rejection degrades that one product to a silent no-risk render rather than a throw.
+      //
+      // Concurrency-safety invariant (verified, not assumed — mechanically enforced by
+      // scripts/check-concurrency-invariant.sh): `_unusableFeatureCount` has THREE write
+      // sites — `extractPolygons`, `evaluatePolygonsCollectAll`, and `checkInPolygon` (the
+      // last reached only through `_runKmlAdvisoryRow`, one of this batch's own members —
+      // audited here because it shares the field, not because it predates the batch) —
+      // each a synchronous increment inside a `.forEach()`/`for` loop's `catch` block with
+      // no `await` between the read and the write. `_oldestStaleAt` has one write site,
+      // `_noteStaleEntry`, a synchronous min-reduce with no `await` inside it. All four
+      // mutation sites are read at this function's own start (`unusableFeaturesAtStart`,
+      // above) and end (below) / reset (above). JavaScript is single-threaded with
+      // run-to-completion semantics: two concurrently-running async functions can only
+      // interleave at an `await` boundary, and none of these six sites (the three
+      // increments, the min-reduce, and their two read sites) contains one — a synchronous
+      // statement inside one runner's loop body cannot be preempted by another runner's
+      // continuation. `_unusableFeatureCount` is a monotone counter sampled start-vs-end,
+      // so the final count equals the sum of every member's own increments regardless of
+      // interleaving order; `_oldestStaleAt` is a commutative min-reduce, so there is no
+      // race to win. `_inFlight` (declared near the top of this file, guarded inside
+      // `socketNotificationReceived`) is confirmed to never enter this function's own call
+      // graph — it is read/written only inside `socketNotificationReceived`, so a batch
+      // built entirely inside `getSpcOutlook` cannot observe or bypass it.
+      // LIMIT OF THIS CLAIM (does not generalise beyond these two fields): a future helper-
+      // global field lacking the same three properties (synchronous write, no `await`
+      // inside the mutation, commutative reduce) needs this audit repeated, not inherited.
+      const kmlRows = Object.values(PRODUCT_REGISTRY).filter((row) => row.kind === "kml-advisory");
+
+      const members = [
+        { id: "excessiveRain", run: () => this._runArcGisDayProduct(PRODUCT_REGISTRY.excessiveRain, loc, catComparator, productToggles) },
+        { id: "winterImpact", run: () => this._runArcGisDayProduct(PRODUCT_REGISTRY.winterImpact, loc, catComparator, productToggles) },
+        { id: "hazardsOutlook", run: () => this._runArcGisHazardWindowProduct(PRODUCT_REGISTRY.hazardsOutlook, loc, productToggles) },
+        { id: "heatRisk", run: () => this._runHeatRiskProduct(PRODUCT_REGISTRY.heatRisk, loc, productToggles) },
+        ...kmlRows.map((row) => ({
+          id: row.id,
+          run: async () => {
+            const r = await this._runKmlAdvisoryRow(row, lat, lon, productToggles);
+            return { entries: r.entries, anyStale: r.anyStale };
+          }
+        }))
+      ];
+
+      // D-10: each member's own start time is captured BEFORE its await, with elapsed
+      // recorded in a `finally`, so an overlap probe can observe issue order independently
+      // of resolve order — the instrument Phase 18's PERF-03 Pi measurement consumes.
+      const memberTimings = {};
+      const settleStart = this._nowMs();
+      const settled = await Promise.allSettled(members.map(async (m) => {
+        const t0 = this._nowMs();
+        try {
+          return await m.run();
+        } finally {
+          memberTimings[m.id] = this._nowMs() - t0;
+        }
+      }));
+
+      const results = {};
+      for (let i = 0; i < members.length; i++) {
+        const outcome = settled[i];
+        if (outcome.status === "fulfilled") {
+          results[members[i].id] = outcome.value;
+        } else {
+          // A runner is documented to never throw past its own internal try/catch;
+          // reaching here means that documented invariant broke. Degrade this member
+          // alone — never let it discard its five siblings (D-08) — rather than letting
+          // the rejection propagate into this function's own outer catch and collapse the
+          // whole payload the way `Promise.all` would.
+          Log.error("MMM-SPCOutlook " + members[i].id + ": runner rejected unexpectedly", outcome.reason);
+          anyStale = true;
+          results[members[i].id] = { payload: null, entries: [], anyStale: true };
+        }
+      }
+      Log.info("MMM-SPCOutlook: new-product batch settled in " + (this._nowMs() - settleStart) +
+               "ms " + JSON.stringify(memberTimings));
+
+      const eroPayload = results.excessiveRain.payload;
+      if (results.excessiveRain.anyStale) anyStale = true;
+
+      const wssiPayload = results.winterImpact.payload;
+      if (results.winterImpact.anyStale) anyStale = true;
+
+      const hazardsPayload = results.hazardsOutlook.payload;
+      if (results.hazardsOutlook.anyStale) anyStale = true;
+
+      const heatRiskPayload = results.heatRisk.payload;
+      if (results.heatRisk.anyStale) anyStale = true;
+
       const advisories = { spcMD: [], mpd: [] };
-      for (const row of Object.values(PRODUCT_REGISTRY)) {
-        if (row.kind !== "kml-advisory") continue;
-        const advisoryResult = await this._runKmlAdvisoryRow(row, lat, lon, productToggles);
-        advisories[row.id] = advisoryResult.entries;
-        if (advisoryResult.anyStale) anyStale = true;
+      for (const row of kmlRows) {
+        advisories[row.id] = results[row.id].entries;
+        if (results[row.id].anyStale) anyStale = true;
       }
 
       // WR-08: a layer that lost one or more polygons to unusable geometry produced a
