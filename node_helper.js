@@ -506,6 +506,89 @@ module.exports = NodeHelper.create({
   },
 
   /**
+   * The ONLY place the HeatRisk product writes to `_geoJsonCache`. Sibling to
+   * `_cacheHazardMatches` (above), NOT to `_runArcGisDayProduct`'s cache write
+   * (`result: { value, validTime }`) — that shape is safe for ERO/WSSI only because their
+   * day key is a property of the URL (`dayLayers[1]` is always "Day 1"). HeatRisk's day
+   * key is derived by comparing a STATIC `idp_validtime` against TODAY'S LIVE CLOCK, from
+   * ONE URL that covers all seven days. Caching an already-bucketed dayN-keyed result the
+   * way `_runArcGisDayProduct` legitimately does would silently misdate every category by
+   * one day per elapsed day, with no error, no warning badge, and no failing assertion.
+   * Phase 16 discovered this exact defect class for the Hazards Outlook; HeatRisk is the
+   * second product with the property. The field-by-field whitelist (never a spread) makes
+   * a clock-dependent field physically unable to enter the cache, rather than relying on a
+   * future maintainer reading this comment.
+   * @param url - the HeatRisk identify URL, from row.buildUrl(mercatorX, mercatorY)
+   * @param fetchResult - this poll's fetchGeoJsonCached() result (a cache miss)
+   * @param tuples - Array<{ attrs, rawValue }> from `_dedupeHeatRiskByValidTime` (17-02) —
+   *   raw, unparsed catalog tuples, not yet in the cached shape
+   * @returns Array<{ idpValidtime, category, idpFiledate }> — the exact array written to
+   *   the cache, so the caller can bucket over it directly rather than re-parsing a second
+   *   time (the "convert exactly once" discipline `_runArcGisDayProduct` established,
+   *   applied here to a whitelist build rather than a valueToTier lookup)
+   */
+  _cacheHeatRiskTuples(url, fetchResult, tuples) {
+    const whitelisted = [];
+    for (const tuple of tuples) {
+      // Defensive assertion: the whitelist below already makes a clock-dependent field
+      // structurally unable to enter the cache. This converts a future refactor that
+      // hands this function an already-bucketed tuple from a silent misdating bug into a
+      // loud, immediate failure — the same instinct `_cacheHazardMatches` applies.
+      for (const key of Object.keys(tuple || {})) {
+        if (/^day\d+$/.test(key) || key === "dayOffset" || key === "offsetStart" || key === "offsetEnd") {
+          throw new Error("MMM-SPCOutlook _cacheHeatRiskTuples: refusing to cache a clock-dependent field: " + key);
+        }
+      }
+
+      const attrs = tuple && tuple.attrs;
+      const idpValidtime = attrs && attrs.idp_validtime;
+      if (typeof idpValidtime !== "number" || !Number.isFinite(idpValidtime)) continue; // malformed, drop
+
+      // D-06/HEAT-01: the literal "NoData" sentinel, and anything that is not an integer
+      // 0-4, becomes category: null — never thrown, never coerced to 0.
+      const rawValue = tuple.rawValue;
+      const parsedValue = Number(rawValue);
+      const category = (rawValue !== "NoData" && Number.isInteger(parsedValue) && parsedValue >= 0 && parsedValue <= 4)
+        ? parsedValue
+        : null;
+
+      const rawFiledate = attrs && attrs.idp_filedate;
+      const idpFiledate = (typeof rawFiledate === "number" && Number.isFinite(rawFiledate)) ? rawFiledate : null;
+
+      whitelisted.push({ idpValidtime, category, idpFiledate });
+    }
+
+    this._geoJsonCache.set(url, {
+      mode: fetchResult.mode,
+      etag: fetchResult.newEtag ?? null,
+      hash: fetchResult.newHash ?? null,
+      result: { tuples: whitelisted },
+      timestamp: this._nowMs()
+    });
+
+    return whitelisted;
+  },
+
+  /**
+   * Read HeatRisk's clock-independent cache entry back, tolerant of a missing or
+   * malformed shape — never throws. Returns `[]` for a missing entry, a non-object entry,
+   * or a non-array `entry.tuples`; otherwise returns `entry.tuples` verbatim, already in
+   * `{ idpValidtime, category, idpFiledate }` shape.
+   *
+   * The caller MUST recompute the day offset from these tuples against THIS poll's own
+   * `_todayUtcMs()`, on the cache-hit path exactly as on the cache-miss path — the cached
+   * tuples deliberately carry no day key at all, which is what makes forgetting that
+   * impossible rather than merely undocumented.
+   * @param entry - `fetchResult.cachedResult` (the `_geoJsonCache` entry's `result` field,
+   *   i.e. the exact `{ tuples }` object `_cacheHeatRiskTuples` wrote)
+   * @returns Array<{ idpValidtime, category, idpFiledate }>
+   */
+  _heatRiskTuplesFromCache(entry) {
+    if (!entry || !Array.isArray(entry.tuples)) return [];
+    return entry.tuples;
+  },
+
+  /**
    * Fetch, filter, cache and re-bucket the `arcgis-hazard-window` registry row (Hazards
    * Outlook) across all six layers, returning the `{ payload, anyStale }` shape every
    * runner in this file shares.
