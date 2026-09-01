@@ -19,7 +19,7 @@
 // D-10 makes this suite the verification standard for the phase, so a run
 // that could not execute a scenario must never be reportable as green.
 
-const { PRODUCT_REGISTRY, daySpanOf } = require("../productRegistry.js");
+const { PRODUCT_REGISTRY, daySpanOf, assertNoSharedRegistryMaps } = require("../productRegistry.js");
 const {
   loadNodeHelper, loadFrontendModule, renderDom, resetHelper, resetLogs, turfStub, logCalls,
   hasRealKmlDeps, missingKmlDeps, makeKmzBuffer
@@ -826,6 +826,88 @@ function installHttp(helper, routes) {
     return httpResponse({ status: 503, text: "service unavailable" });
   };
   helper._fetch.calls = calls;
+  return helper._fetch;
+}
+
+// PERF-01 / D-10: no existing helper in this file can hold a request open — every route
+// above resolves synchronously or via a plain async function that resolves immediately.
+// Holding a request open until the SCENARIO explicitly releases it is the only way to
+// observe concurrent issuance (a later member's request issued before an earlier
+// member's response resolves) without depending on wall-clock timing, which would be
+// flaky on a Raspberry Pi and would not be a proof of structure at all. Placed here,
+// beside installHttp, rather than in module-stubs.js: it is a per-scenario network stub
+// built on the exact same httpResponse/route-matching conventions installHttp already
+// establishes in this file, not a node_helper-loading or global-seam concern the way
+// everything module-stubs.js owns (turf, kml-deps resolution, the frontend vm loader) is.
+//
+// Matches installHttp's routing/recording contract exactly (substring match against
+// `routes`, `{ url, headers }` recorded synchronously at call time, an unrouted URL takes
+// the same 503 default) but returns a PENDING promise for every matched route instead of
+// resolving immediately. Control surface, all live on `helper._fetch`:
+//   `pending`         — array of `{ url, release(), reject(err) }`, in issue order
+//   `releaseAll()`    — resolves every currently pending request
+//   `releaseMatching(substring)` — resolves only pending requests whose URL matches
+// A bounded safety timer (default 3000ms, well under this suite's sub-second runtime)
+// rejects any request never explicitly released, naming every URL still pending at that
+// moment — so a mis-written scenario fails loudly with a diagnosable message instead of
+// hanging the whole suite forever.
+function installDeferredHttp(helper, routes, { timeoutMs = 3000 } = {}) {
+  const calls = [];
+  const pending = [];
+  helper._fetch = (url, options) => {
+    calls.push({ url, headers: (options && options.headers) || {}, at: calls.length });
+    let handler = null;
+    for (const [matcher, candidate] of routes) {
+      if (url.includes(matcher)) { handler = candidate; break; }
+    }
+    if (!handler) {
+      // Unrouted: the same hard-failure default installHttp uses, resolved IMMEDIATELY
+      // (never held) — an unrouted URL must fail loudly, not hang the scenario.
+      return Promise.resolve(httpResponse({ status: 503, text: "service unavailable" }));
+    }
+    let settleResolve, settleReject;
+    const promise = new Promise((resolve, reject) => {
+      settleResolve = resolve;
+      settleReject = reject;
+    });
+    const removeFromPending = () => {
+      const idx = pending.indexOf(entry);
+      if (idx !== -1) pending.splice(idx, 1);
+    };
+    const entry = {
+      url,
+      release: () => {
+        clearTimeout(timer);
+        removeFromPending();
+        settleResolve(handler(url, options));
+      },
+      reject: (err) => {
+        clearTimeout(timer);
+        removeFromPending();
+        settleReject(err);
+      }
+    };
+    const timer = setTimeout(() => {
+      removeFromPending();
+      settleReject(new Error(
+        `installDeferredHttp: safety timeout (${timeoutMs}ms) — request to ${url} was never ` +
+        `released. Still-pending URLs at timeout: ${pending.map((p) => p.url).join(", ") || "(none other)"}`
+      ));
+    }, timeoutMs);
+    if (typeof timer.unref === "function") timer.unref();
+    pending.push(entry);
+    return promise;
+  };
+  helper._fetch.calls = calls;
+  helper._fetch.pending = pending;
+  helper._fetch.releaseAll = () => {
+    for (const entry of [...pending]) entry.release();
+  };
+  helper._fetch.releaseMatching = (substring) => {
+    for (const entry of [...pending]) {
+      if (entry.url.includes(substring)) entry.release();
+    }
+  };
   return helper._fetch;
 }
 
@@ -6160,6 +6242,181 @@ const scenarios = [
           `${advanced.heatRisk.day7.category}`
         );
       }
+    }
+  },
+  {
+    // D-03's gate term, pinned directly: a HeatRisk-only day above the floor must render
+    // its own row AND must not suppress the all-clear at the same time — the "gate speaks,
+    // render is silent" defect class Phase 15 shipped for MPD (MPD-01). Direct sibling of
+    // frontend-advisory-only-is-not-an-all-clear / frontend-hazards-window-band-only-is-
+    // not-an-all-clear, applied to HeatRisk.
+    name: "frontend-heatrisk-only-is-not-an-all-clear",
+    run: async (helper) => {
+      const frontend = loadFrontendModule();
+      const config = {
+        lat: PROBE_LAT, lon: PROBE_LON, extended: false, updateInterval: 60,
+        proximityWeighting: false, showExcessiveRain: false, showWinterImpact: false,
+        showHazardsOutlook: false, showHeatRisk: true, showMinorHeat: false
+      };
+      const allNullHeatRisk = () => {
+        const block = {};
+        for (let d = 1; d <= 7; d++) block["day" + d] = { category: null, text: "", color: "" };
+        return block;
+      };
+
+      // Precondition guard: the SAME otherwise-all-quiet payload with heatRisk carrying
+      // no reading at all must render the plain all-clear. If it does not, some OTHER
+      // term in the payload is already disqualifying the gate and this scenario proves
+      // nothing about HeatRisk.
+      const controlPayload = { ...noRiskPayloadWithAdvisory({ spcMD: [], mpd: [] }), heatRisk: allNullHeatRisk() };
+      const controlRendered = renderDom(frontend, { config, spcrisk: controlPayload });
+      if (controlRendered !== "No Severe Weather Risk") {
+        throw new Error(
+          "precondition failed: the otherwise-all-quiet control payload (heatRisk all null) did not " +
+          `render the plain all-clear — some other term is already disqualifying the gate: ${controlRendered}`
+        );
+      }
+
+      const heatRiskBlock = allNullHeatRisk();
+      heatRiskBlock.day3 = { category: 3, text: "Major", color: "e22f33" };
+      const payload = { ...noRiskPayloadWithAdvisory({ spcMD: [], mpd: [] }), heatRisk: heatRiskBlock };
+      const rendered = renderDom(frontend, { config, spcrisk: payload });
+      if (rendered.includes("No Severe Weather Risk")) {
+        throw new Error(
+          "D-03: a HeatRisk-only day above the floor (category 3, showMinorHeat false) suppressed the " +
+          `all-clear was not the outcome; instead it rendered the all-clear anyway: ${rendered}`
+        );
+      }
+      if (!rendered.includes("Heat Risk (Day 3)")) {
+        throw new Error(`D-03: a HeatRisk-only day above the floor did not render its own row: ${rendered}`);
+      }
+    }
+  },
+  {
+    // D-03's shared-predicate discipline plus D-01's floor — the scenario that would have
+    // caught Phase 15's MPD-invisible defect class. Arm A: a Minor (category 1) day with
+    // showMinorHeat off must render NEITHER its own row NOR nothing — a blank module is
+    // exactly the failure this pins, and it is what a gate reading the raw category while
+    // the render loop reads the floored one would produce. Arm B: the identical payload
+    // with showMinorHeat on flips to the opposite outcome, driven purely by the frontend
+    // flag (D-02: showMinorHeat never crosses the wire, so this payload is byte-identical
+    // in both arms).
+    name: "frontend-heatrisk-minor-floor-is-not-a-blank-module",
+    run: async (helper) => {
+      const frontend = loadFrontendModule();
+      const baseConfig = {
+        lat: PROBE_LAT, lon: PROBE_LON, extended: false, updateInterval: 60,
+        proximityWeighting: false, showExcessiveRain: false, showWinterImpact: false,
+        showHazardsOutlook: false, showHeatRisk: true
+      };
+      const allNullHeatRisk = () => {
+        const block = {};
+        for (let d = 1; d <= 7; d++) block["day" + d] = { category: null, text: "", color: "" };
+        return block;
+      };
+
+      const minorBlock = allNullHeatRisk();
+      minorBlock.day3 = { category: 1, text: "Minor", color: "f4f257" };
+      const payload = { ...noRiskPayloadWithAdvisory({ spcMD: [], mpd: [] }), heatRisk: minorBlock };
+
+      // Arm A: showMinorHeat off. A blank module (neither the row nor the all-clear) is
+      // exactly the failure D-03 exists to make unrepresentable.
+      const armA = renderDom(frontend, { config: { ...baseConfig, showMinorHeat: false }, spcrisk: payload });
+      if (armA.includes("Heat Risk (Day 3)")) {
+        throw new Error(`Arm A (showMinorHeat false): expected the Minor row filtered out by the floor, got: ${armA}`);
+      }
+      if (!armA.includes("No Severe Weather Risk")) {
+        throw new Error(`Arm A (showMinorHeat false): expected the all-clear restored, got a blank module: ${armA}`);
+      }
+
+      // Arm B: the SAME payload object, showMinorHeat on — the opposite outcome, driven
+      // only by the frontend flag.
+      const armB = renderDom(frontend, { config: { ...baseConfig, showMinorHeat: true }, spcrisk: payload });
+      if (!armB.includes("Heat Risk (Day 3)")) {
+        throw new Error(`Arm B (showMinorHeat true): expected the Minor row to render, got: ${armB}`);
+      }
+      if (armB.includes("No Severe Weather Risk")) {
+        throw new Error(`Arm B (showMinorHeat true): expected the all-clear suppressed by the rendered row, got: ${armB}`);
+      }
+
+      // Control: a category-2 (Moderate) day with showMinorHeat off DOES render — proving
+      // Arm A's non-render is the D-01 floor at work, not a renderer that never renders.
+      const moderateBlock = allNullHeatRisk();
+      moderateBlock.day3 = { category: 2, text: "Moderate", color: "ffc700" };
+      const controlPayload = { ...noRiskPayloadWithAdvisory({ spcMD: [], mpd: [] }), heatRisk: moderateBlock };
+      const controlRendered = renderDom(frontend, { config: { ...baseConfig, showMinorHeat: false }, spcrisk: controlPayload });
+      if (!controlRendered.includes("Heat Risk (Day 3)")) {
+        throw new Error(
+          `control: a category-2 day with showMinorHeat false did not render (${controlRendered}) — Arm A's ` +
+          "non-render would then prove nothing about the floor specifically"
+        );
+      }
+    }
+  },
+  {
+    // DATA-03 / D-11: a unit-style test of the validator itself, run once against a
+    // scenario-local fixture registry — never the real PRODUCT_REGISTRY — unlike every
+    // other entry in this file, which drives a poll through getSpcOutlook/getDom.
+    name: "registry-rejects-shared-label-maps-at-load-time",
+    run: async (helper) => {
+      // The shipped state is clean: this already ran once at productRegistry.js's own
+      // module-load call (or loadNodeHelper() could never have succeeded). Re-running it
+      // explicitly here means a future regression fails THIS scenario with a diagnosable
+      // message, rather than only ever crashing module load for the whole suite.
+      assertNoSharedRegistryMaps(PRODUCT_REGISTRY);
+
+      // A scenario-local fixture with two rows sharing the SAME valueToTier object by
+      // reference. Built fresh, sharing no object with the real PRODUCT_REGISTRY, so
+      // nothing below can mutate it.
+      const sharedMap = { 1: "A" };
+      const fixtureShared = {
+        rowOne: { valueToTier: sharedMap },
+        rowTwo: { valueToTier: sharedMap }
+      };
+      let threw = null;
+      try {
+        assertNoSharedRegistryMaps(fixtureShared);
+      } catch (err) {
+        threw = err;
+      }
+      if (!threw) {
+        throw new Error(
+          "expected assertNoSharedRegistryMaps to throw on two rows sharing the same valueToTier " +
+          "object by reference, it did not throw"
+        );
+      }
+      if (!threw.message.includes("rowOne") || !threw.message.includes("rowTwo") || !threw.message.includes("valueToTier")) {
+        throw new Error(`expected the throw message to name both row ids and the field, got: ${threw.message}`);
+      }
+
+      // Control 1: distinct-but-structurally-identical objects must NOT throw — the check
+      // is object identity, not deep equality.
+      const fixtureDistinct = {
+        rowOne: { valueToTier: { 1: "A" } },
+        rowTwo: { valueToTier: { 1: "A" } }
+      };
+      assertNoSharedRegistryMaps(fixtureDistinct); // must not throw
+
+      // Control 2: a row whose map field is undefined/null is skipped without throwing.
+      const fixtureMissing = {
+        rowOne: { valueToTier: sharedMap },
+        rowTwo: { valueToTier: undefined },
+        rowThree: { valueToTier: null }
+      };
+      assertNoSharedRegistryMaps(fixtureMissing); // must not throw
+
+      // Coverage limit (D-11's own documented gap, restated here rather than only in the
+      // validator's own comment): identity cannot see a toValue closure that reads a
+      // foreign constant BY NAME rather than sharing the object by reference.
+      // 17-PATTERNS.md §9's enumerated label-to-value table is the paired recorded
+      // spot-check artifact D-11 requires alongside this assertion — D-11 explicitly
+      // rejected the assertion alone as overstating its own coverage.
+
+      // The real PRODUCT_REGISTRY must remain provably unmutated by everything above —
+      // re-run the exact same call this scenario opened with and confirm it still does
+      // not throw. (The suite's own self-check additionally re-requires productRegistry.js
+      // fresh, out of process, after the full run — see the plan's SUMMARY.)
+      assertNoSharedRegistryMaps(PRODUCT_REGISTRY);
     }
   }
 ];
