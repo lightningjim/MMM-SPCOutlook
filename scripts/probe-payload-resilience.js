@@ -315,6 +315,123 @@ for (const layer of PRODUCT_REGISTRY.hazardsOutlook.layers) {
 // deterministic and the suite cannot go red at a date boundary (T-16-26).
 const HAZARDS_NOW_MS = Date.UTC(2026, 7, 26, 13, 0);
 
+// ---------------------------------------------------------------------
+// HeatRisk fixture/route builders (plan 17-06)
+// ---------------------------------------------------------------------
+
+// The pinned "now" for every HeatRisk scenario in this file — Mon Aug 31 2026 13:00Z,
+// matching 17-RESEARCH.md's live pull (the same session that captured the out-of-order
+// catalog and the exact idp_validtime/idp_filedate values used below). Every HeatRisk
+// scenario sets helper._nowMs to this constant as its first act after resetHelper, so
+// _todayUtcMs() derives from it and day offsets are deterministic — 16-REVIEW WR-05's
+// pinned-clock precedent, applied to a fourth product.
+const HEATRISK_NOW_MS = Date.UTC(2026, 7, 31, 13, 0);
+
+// idp_validtime sits at exactly 12:00:00.000Z on every live-observed feature
+// (17-RESEARCH.md's Day-Offset Arithmetic section) — half a day past UTC midnight, so
+// Math.round(0.5) === 1 places day 1's tile at that exact instant. This is the single place
+// every fixture in this file derives a day's idp_validtime, so no scenario can drift from
+// that alignment by hand-copying an offset.
+function heatRiskValidtimeForDay(d) {
+  return Date.UTC(2026, 7, 31, 12, 0) + (d - 1) * 86400000;
+}
+
+// Never hand-copy the HeatRisk identify URL — deriving it from the registry's OWN buildUrl,
+// against the exact reprojection the runner itself performs (turf.toMercator on a turf.point
+// built from PROBE_LON/PROBE_LAT), keeps this probe's dependency chain honoring the same
+// byte-stability contract ERO_URLS/WSSI_URLS/HAZARDS_URLS already honor (PERF-02, D-09). A
+// hand-copied literal would make this route silently miss the moment buildHeatRiskIdentifyUrl
+// changes, and every heatrisk-* scenario would then be testing installHttp's 503 default
+// instead of the product it claims to. turfStub is the SAME object node_helper.js's own
+// `@turf/turf` require resolves to under loadNodeHelper(), so this computation is guaranteed
+// byte-identical to the runner's own reprojection, not merely similar.
+const HEATRISK_LOC = turfStub.point([PROBE_LON, PROBE_LAT]);
+const HEATRISK_MERCATOR = turfStub.toMercator(HEATRISK_LOC);
+const [HEATRISK_MERCATOR_X, HEATRISK_MERCATOR_Y] = HEATRISK_MERCATOR.geometry.coordinates;
+const HEATRISK_URL = PRODUCT_REGISTRY.heatRisk.buildUrl(HEATRISK_MERCATOR_X, HEATRISK_MERCATOR_Y);
+
+let heatRiskObjectIdSeq = 90000000;
+
+// One catalogItems.features[] entry, live-observed field names. `filedate` defaults to
+// HEATRISK_NOW_MS (fresh) so a freshness/D-07 scenario must opt into staleness explicitly,
+// mirroring hazardsFeature's own defaulting note. `category` inside `attributes` here is the
+// mosaic dataset's own per-item attribute — live-observed constant 1 on every feature, NOT
+// the risk value (the actual per-day risk category lives in properties.Values[i], zipped in
+// separately by heatRiskIdentifyResponse below) — so it is not parameterised here.
+function heatRiskCatalogItem({ name, validtime, filedate, ingestdate }) {
+  const resolvedFiledate = filedate !== undefined ? filedate : HEATRISK_NOW_MS;
+  return {
+    attributes: {
+      objectid: heatRiskObjectIdSeq++,
+      name,
+      category: 1,
+      idp_ingestdate: ingestdate !== undefined ? ingestdate : resolvedFiledate,
+      idp_filedate: resolvedFiledate,
+      idp_validtime: validtime
+    }
+  };
+}
+
+// Builds a full identify-shaped body. `values` may be a DIFFERENT LENGTH from `items`
+// (D-06's mismatched-length scenario needs exactly that) or omitted entirely — `properties`
+// then carries no Values key at all, not an empty array, so _isHeatRiskIdentifyResponse's
+// Array.isArray(body.properties.Values) check rejects it the same way a genuinely absent
+// field would. `value`/`visibilities` default to a shape deliberately WRONG for "today" —
+// the live-observed [1,0,0,0,0,0,0] with index 0 pointing at the Day-2 tile, not Day 1 — so
+// any implementation that ever reads either field fails a scenario rather than passing by
+// luck (17-RESEARCH.md's confirmed-not-"today" finding).
+function heatRiskIdentifyResponse({ items = [], values, value, visibilities } = {}) {
+  const properties = {};
+  if (values !== undefined) properties.Values = values;
+  return {
+    objectId: 0,
+    name: "Pixel",
+    value: value !== undefined ? value : "1",
+    location: { x: 0, y: 0, spatialReference: { wkid: 102100, latestWkid: 3857 } },
+    properties,
+    catalogItems: { objectIdFieldName: "objectid", features: items },
+    catalogItemVisibilities: visibilities !== undefined ? visibilities : [1, 0, 0, 0, 0, 0, 0]
+  };
+}
+
+// A complete, healthy 7-item HeatRisk identify body in canonical day1..day7 order.
+function healthyHeatRiskItems() {
+  const items = [];
+  for (let d = 1; d <= 7; d++) {
+    items.push(heatRiskCatalogItem({ name: `HeatRisk_${d}_Mercator`, validtime: heatRiskValidtimeForDay(d) }));
+  }
+  return items;
+}
+
+// WR-02's trap, reciprocal direction: once a scenario turns on all six products, an
+// UNROUTED HeatRisk identify URL would take installHttp's 503 default and corrupt a
+// scenario about something else entirely — this is what (f) adds to every pre-existing
+// route builder below (eroHttpRoutes, wssiRoutes, hazardsRoutes, advisoryRoutes). A quiet,
+// healthy 200 here is the fix.
+function okEmptyHeatRisk() {
+  const items = healthyHeatRiskItems();
+  return httpResponse({
+    body: heatRiskIdentifyResponse({ items, values: items.map(() => "1") }),
+    etag: "heatrisk-healthy-v1"
+  });
+}
+
+// Routes for HeatRisk HTTP-seam scenarios, mirroring hazardsRoutes: HEATRISK_URL is the
+// subject (a healthy default unless `overrides.heatRisk` supplies its own handler), and
+// every ERO/WSSI/hazards layer plus the ".lyr.geojson" catch-all answers 200-empty by
+// default — WR-02's trap in its usual direction: without routing every OTHER product, an
+// unrouted URL takes installHttp's 503 default, sets anyStale, and any `_stale` assertion in
+// a HeatRisk scenario would pass for a reason that has nothing to do with its subject.
+function heatRiskRoutes(overrides = {}) {
+  const okEmpty = () => httpResponse({ body: EMPTY_FEATURE_COLLECTION, etag: "heatrisk-quiet-v1" });
+  const routes = [[HEATRISK_URL, overrides.heatRisk || okEmptyHeatRisk]];
+  for (const url of Object.values(ERO_URLS)) routes.push([url, okEmpty]);
+  for (const url of Object.values(WSSI_URLS)) routes.push([url, okEmpty]);
+  for (const url of Object.values(HAZARDS_URLS)) routes.push([url, okEmpty]);
+  routes.push([".lyr.geojson", okEmpty]);
+  return routes;
+}
+
 // The live MPD hazard-type table, verbatim from RESEARCH.md's MPD_1118_final.kmz sample.
 // Used by harness-real-kml-deps-round-trip to pin togeojson's description-object shape
 // (RESEARCH.md Pitfall 3) as executable ground truth before any product code depends on it.
@@ -471,6 +588,9 @@ function advisoryRoutes({ index, members = [], listing } = {}) {
   routes.push([".lyr.geojson", okEmpty]);
   for (const url of Object.values(ERO_URLS)) routes.push([url, okEmpty]);
   for (const url of Object.values(WSSI_URLS)) routes.push([url, okEmpty]);
+  // (f): the reciprocal of heatRiskRoutes' own quiet defaults — a sixth product cannot
+  // silently 503 the moment an advisory scenario enables it too.
+  routes.push([HEATRISK_URL, okEmptyHeatRisk]);
   return routes;
 }
 
@@ -721,7 +841,9 @@ function eroHttpRoutes(day1Handler) {
     [ERO_URLS[3], okEmpty],
     [ERO_URLS[4], okEmpty],
     [ERO_URLS[5], okEmpty],
-    [".lyr.geojson", okEmpty]
+    [".lyr.geojson", okEmpty],
+    // (f): a sixth product cannot silently 503 the moment an ERO scenario enables it too.
+    [HEATRISK_URL, okEmptyHeatRisk]
   ];
 }
 
@@ -741,7 +863,9 @@ function wssiRoutes(day1Handler) {
     [ERO_URLS[3], okEmpty],
     [ERO_URLS[4], okEmpty],
     [ERO_URLS[5], okEmpty],
-    [".lyr.geojson", okEmpty]
+    [".lyr.geojson", okEmpty],
+    // (f): a sixth product cannot silently 503 the moment a WSSI scenario enables it too.
+    [HEATRISK_URL, okEmptyHeatRisk]
   ];
 }
 
@@ -762,7 +886,10 @@ function hazardsRoutes(overrides = {}) {
     [ERO_URLS[1], okEmpty], [ERO_URLS[2], okEmpty], [ERO_URLS[3], okEmpty],
     [ERO_URLS[4], okEmpty], [ERO_URLS[5], okEmpty],
     [WSSI_URLS[1], okEmpty], [WSSI_URLS[2], okEmpty], [WSSI_URLS[3], okEmpty],
-    [".lyr.geojson", okEmpty]
+    [".lyr.geojson", okEmpty],
+    // (f): a sixth product cannot silently 503 the moment a Hazards Outlook scenario
+    // enables it too.
+    [HEATRISK_URL, okEmptyHeatRisk]
   );
   return routes;
 }
@@ -922,6 +1049,53 @@ function assertHazardsBlockIntact(out) {
   }
   if (!Array.isArray(block.windowBand)) {
     throw new Error("assertHazardsBlockIntact: windowBand is not an array");
+  }
+}
+
+// (g): the probe's own independent statement of the HeatRisk payload contract (WR-10) —
+// exactly day1..day7, each an object with exactly category/text/color, category either null
+// or an integer 0..4, text/color always strings, and a null category paired with empty
+// text/color. The day count is written as a literal 7 here deliberately: this is the probe
+// stating the contract independently of the registry, so a change to
+// PRODUCT_REGISTRY.heatRisk.days fails loudly here instead of silently agreeing with itself.
+function assertHeatRiskBlockIntact(out) {
+  const block = out && out.heatRisk;
+  if (typeof block !== "object" || block === null) {
+    throw new Error("assertHeatRiskBlockIntact: heatRisk missing or not an object");
+  }
+  const keys = Object.keys(block);
+  if (keys.length !== 7) {
+    throw new Error(`assertHeatRiskBlockIntact: heatRisk has ${keys.length} keys, expected 7 (day1..day7)`);
+  }
+  for (let d = 1; d <= 7; d++) {
+    const key = "day" + d;
+    const entry = block[key];
+    if (typeof entry !== "object" || entry === null) {
+      throw new Error(`assertHeatRiskBlockIntact: ${key} missing or not an object`);
+    }
+    const entryKeys = Object.keys(entry).sort();
+    const expectedKeys = ["category", "color", "text"];
+    if (entryKeys.length !== 3 || entryKeys.join(",") !== expectedKeys.join(",")) {
+      throw new Error(
+        `assertHeatRiskBlockIntact: ${key} has keys ${JSON.stringify(entryKeys)}, expected exactly category/text/color`
+      );
+    }
+    const { category, text, color } = entry;
+    if (category !== null && !(Number.isInteger(category) && category >= 0 && category <= 4)) {
+      throw new Error(`assertHeatRiskBlockIntact: ${key}.category is not null or an integer 0..4 (got ${JSON.stringify(category)})`);
+    }
+    if (typeof text !== "string") {
+      throw new Error(`assertHeatRiskBlockIntact: ${key}.text is not a string (got ${JSON.stringify(text)})`);
+    }
+    if (typeof color !== "string") {
+      throw new Error(`assertHeatRiskBlockIntact: ${key}.color is not a string (got ${JSON.stringify(color)})`);
+    }
+    if (category === null && (text !== "" || color !== "")) {
+      throw new Error(
+        `assertHeatRiskBlockIntact: ${key} has category null but text/color not empty ` +
+        `(text=${JSON.stringify(text)}, color=${JSON.stringify(color)})`
+      );
+    }
   }
 }
 
@@ -5063,6 +5237,365 @@ const scenarios = [
       }
       if (rendered === "No Severe Weather Risk" || rendered.endsWith("No Severe Weather Risk (unconfirmed)")) {
         throw new Error(`D-16: stale hazard content rendered as an all-clear instead of its actual rows: ${rendered}`);
+      }
+    }
+  },
+  {
+    // 17-RESEARCH.md's headline finding: fetchGeoJsonCached's pre-17-02 hardcoded
+    // _isFeatureCollection check would reject every HeatRisk response permanently — a silent
+    // fetch failure (an HTTP 200 body the shared validator rejects, producing
+    // { data: null, failed: true }), never a throw — because the identify response has no
+    // top-level `features` array at all. This pins the generalized isValidBody parameter
+    // (17-02) as load-bearing infrastructure, not incidental plumbing.
+    // Mutation to prove RED: revert BOTH fetchGeoJsonCached call sites from
+    // `isValidBody(parsed.value)` back to `this._isFeatureCollection(parsed.value)`.
+    name: "heatrisk-identify-body-survives-the-shared-fetch-validator",
+    run: async (helper) => {
+      resetHelper(helper);
+      resetLogs();
+      helper._nowMs = () => HEATRISK_NOW_MS;
+      helper._products = { showHeatRisk: true };
+      installHttp(helper, heatRiskRoutes());
+      const out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showHeatRisk: true });
+      assertPayloadIntact(out);
+      assertHeatRiskBlockIntact(out);
+
+      // Precondition guard: prove the fetch actually happened, so nothing below can be
+      // mistaken for the validator accepting the body when nothing reached it at all.
+      if (!helper._fetch.calls.some((c) => c.url.includes(HEATRISK_URL))) {
+        throw new Error(
+          "precondition failed: the HeatRisk identify URL was never fetched — every " +
+          "assertion below would observe nothing"
+        );
+      }
+
+      // Primary assertion: a rejected body would leave all seven days null AND set _stale.
+      // The failure mode is a well-formed HTTP 200 body the shared validator rejects, never a
+      // throw — exactly why "the fetch resolved" alone would not catch a regression here.
+      const hasNumericCategory = Object.keys(out.heatRisk).some(
+        (k) => typeof out.heatRisk[k].category === "number"
+      );
+      if (!hasNumericCategory) {
+        throw new Error(`expected at least one day with a numeric category, got ${JSON.stringify(out.heatRisk)}`);
+      }
+      if (out._stale) {
+        throw new Error(`expected _stale unset on a healthy identify response, got ${out._stale}`);
+      }
+
+      // Control: a body missing catalogItems entirely must be rejected by the shared
+      // validator — proving the validator does reject something, so the primary assertion
+      // above is not simply "this harness never fails HeatRisk".
+      resetHelper(helper);
+      resetLogs();
+      helper._nowMs = () => HEATRISK_NOW_MS;
+      helper._products = { showHeatRisk: true };
+      const noCatalogBody = { objectId: 0, name: "Pixel", value: "1", properties: { Values: ["1"] } };
+      installHttp(helper, heatRiskRoutes({
+        heatRisk: () => httpResponse({ body: noCatalogBody, etag: "heatrisk-no-catalog-v1" })
+      }));
+      const controlOut = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showHeatRisk: true });
+      assertPayloadIntact(controlOut);
+      assertHeatRiskBlockIntact(controlOut);
+      for (let d = 1; d <= 7; d++) {
+        if (controlOut.heatRisk["day" + d].category !== null) {
+          throw new Error(
+            `control: expected all seven days null on a rejected body, got day${d}=` +
+            JSON.stringify(controlOut.heatRisk["day" + d])
+          );
+        }
+      }
+      if (controlOut._stale !== true) {
+        throw new Error(`control: expected _stale set when the shared validator rejects the body, got ${controlOut._stale}`);
+      }
+    }
+  },
+  {
+    // Pins HEAT-01/HEAT-02: category is attributed by idp_validtime, not by the catalog's
+    // own (arbitrary) array order. Fixture order matches 17-RESEARCH.md's live-observed
+    // out-of-order catalog (HeatRisk_2, HeatRisk_4, HeatRisk_5, HeatRisk_7, HeatRisk_1,
+    // HeatRisk_3, HeatRisk_6) — Values travels in the SAME array order as items, so the zip
+    // itself is correct and only the sort/bucket step is under test.
+    // Mutation to prove RED: remove the ascending sort AND bucket by array index instead of
+    // idp_validtime — i.e. `const sorted = tuples.slice();` (no .sort) and
+    // `const d = sorted.indexOf(t) + 1;` in place of the `_heatRiskDayOffset` call.
+    name: "heatrisk-day-order-follows-validtime-not-array-order",
+    run: async (helper) => {
+      resetHelper(helper);
+      resetLogs();
+      helper._nowMs = () => HEATRISK_NOW_MS;
+      helper._products = { showHeatRisk: true };
+
+      // Day -> category, distinct enough that a mis-attribution is observable.
+      const categoryForDay = {};
+      for (let d = 1; d <= 7; d++) categoryForDay[d] = d % 5;
+
+      // Out-of-order catalog: item[i] carries the day named in scrambledDayOrder[i].
+      const scrambledDayOrder = [2, 4, 5, 7, 1, 3, 6];
+      const items = scrambledDayOrder.map((d) =>
+        heatRiskCatalogItem({ name: `HeatRisk_${d}_Mercator`, validtime: heatRiskValidtimeForDay(d) })
+      );
+      // Values travels in the SAME (scrambled) array order as items — the zip is correct;
+      // only the sort/bucket step is under test.
+      const values = scrambledDayOrder.map((d) => String(categoryForDay[d]));
+
+      // Precondition guard: the fixture must not happen to be pre-sorted, or this scenario
+      // proves nothing about the sort at all.
+      const validtimes = items.map((it) => it.attributes.idp_validtime);
+      if (validtimes[0] === Math.min(...validtimes)) {
+        throw new Error(
+          `precondition failed: features[0]'s idp_validtime is already the smallest (${validtimes[0]}) — ` +
+          "the fixture is not exercising the sort"
+        );
+      }
+
+      installHttp(helper, heatRiskRoutes({
+        heatRisk: () => httpResponse({
+          body: heatRiskIdentifyResponse({ items, values }),
+          etag: "heatrisk-order-v1"
+        })
+      }));
+      const out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showHeatRisk: true });
+      assertPayloadIntact(out);
+
+      // Control: a healthy run, proving the day values came from a real evaluation and not
+      // from the seeded all-null block.
+      assertHeatRiskBlockIntact(out);
+      if (out._stale) {
+        throw new Error(`expected _stale unset on a healthy out-of-order response, got ${out._stale}`);
+      }
+
+      // Primary assertion: each day carries the category belonging to the item whose
+      // idp_validtime is the Nth smallest — never the array-order value.
+      for (let d = 1; d <= 7; d++) {
+        const actual = out.heatRisk["day" + d].category;
+        const expected = categoryForDay[d];
+        if (actual !== expected) {
+          throw new Error(
+            `day${d}: expected category ${expected} (attributed by idp_validtime), got ${actual} ` +
+            "— category is following array order instead of the sort"
+          );
+        }
+      }
+      // The inequality is the whole point: day1's category must not equal the FIRST raw
+      // Values[] entry (which belongs to the scrambled catalog's first item, day2).
+      if (out.heatRisk.day1.category === Number(values[0])) {
+        throw new Error(
+          `day1.category (${out.heatRisk.day1.category}) unexpectedly equals raw Values[0] ` +
+          `(${values[0]}) — this fixture cannot distinguish sort-by-validtime from array order`
+        );
+      }
+    }
+  },
+  {
+    // Pins HEAT-03: the URL actually issued declares Web Mercator (wkid 102100) with
+    // Mercator-magnitude coordinates, not raw degrees under a mismatched declaration — the
+    // live-reproduced root cause of a "NoData" response is a coordinate/spatialReference
+    // UNIT MISMATCH (17-RESEARCH.md Common Pitfalls #2), not sr=4326 per se; a well-formed
+    // sr=4326 request works just as well. Do not restate the superseded framing here.
+    // Mutation to prove RED: pass raw lon/lat (loc.geometry.coordinates) into row.buildUrl
+    // instead of turf.toMercator(loc)'s output.
+    name: "heatrisk-geometry-uses-mercator-not-raw-degrees",
+    run: async (helper) => {
+      resetHelper(helper);
+      resetLogs();
+      helper._nowMs = () => HEATRISK_NOW_MS;
+      helper._products = { showHeatRisk: true };
+      installHttp(helper, heatRiskRoutes());
+      const out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showHeatRisk: true });
+      assertPayloadIntact(out);
+      assertHeatRiskBlockIntact(out);
+
+      const identifyCalls = helper._fetch.calls.filter((c) => c.url.includes("NWS_HeatRisk/ImageServer/identify"));
+      // Precondition guard: exactly one identify call, or the geometry assertion below
+      // would be vacuous (reading a call that doesn't represent this poll, or none at all).
+      if (identifyCalls.length !== 1) {
+        throw new Error(`precondition failed: expected exactly one HeatRisk identify call, got ${identifyCalls.length}`);
+      }
+
+      const issuedUrl = identifyCalls[0].url;
+      const geometryMatch = /geometry=([^&]+)/.exec(issuedUrl);
+      if (!geometryMatch) {
+        throw new Error(`no geometry query parameter found in the issued URL: ${issuedUrl}`);
+      }
+      const geometry = JSON.parse(decodeURIComponent(geometryMatch[1]));
+      if (!geometry.spatialReference || geometry.spatialReference.wkid !== 102100) {
+        throw new Error(`expected spatialReference.wkid 102100, got ${JSON.stringify(geometry.spatialReference)}`);
+      }
+      if (!(Math.abs(geometry.x) > 1e6 && Math.abs(geometry.y) > 1e6)) {
+        throw new Error(`expected Mercator-magnitude coordinates (|x|,|y| > 1e6), got x=${geometry.x} y=${geometry.y}`);
+      }
+      // Control: the magnitudes must not merely coincide with the raw PROBE_LON/PROBE_LAT —
+      // proving this did not pass on a coincidence of magnitudes.
+      if (Math.abs(geometry.x) === Math.abs(PROBE_LON) || Math.abs(geometry.y) === Math.abs(PROBE_LAT)) {
+        throw new Error(`geometry coordinates coincide with raw degrees: x=${geometry.x} y=${geometry.y}`);
+      }
+    }
+  },
+  {
+    // Pins HEAT-04: two catalog items sharing one idp_validtime collapse to the one with
+    // the GREATEST idp_filedate. Both duplicates' catalogItemVisibilities are 0 — proving
+    // the implementation is not using visibility as the discriminator, which live evidence
+    // (17-RESEARCH.md) shows would be unreliable for a duplicate pair that is not also the
+    // globally-visible tile.
+    // Mutation to prove RED: flip the dedupe tiebreak in _dedupeHeatRiskByValidTime from
+    // `filedate > existingFiledate` to `filedate < existingFiledate` (keep the OLDER item).
+    name: "heatrisk-duplicate-validtime-keeps-latest-filedate",
+    run: async (helper) => {
+      resetHelper(helper);
+      resetLogs();
+      helper._nowMs = () => HEATRISK_NOW_MS;
+      helper._products = { showHeatRisk: true };
+
+      const HOUR = 60 * 60 * 1000;
+      const loserFiledate = HEATRISK_NOW_MS - 2 * HOUR;
+      const winnerFiledate = HEATRISK_NOW_MS - 1 * HOUR; // greater (more recent) than loser
+
+      const day3Loser = heatRiskCatalogItem({
+        name: "HeatRisk_3_Mercator_stale", validtime: heatRiskValidtimeForDay(3), filedate: loserFiledate
+      });
+      const day3Winner = heatRiskCatalogItem({
+        name: "HeatRisk_3_Mercator", validtime: heatRiskValidtimeForDay(3), filedate: winnerFiledate
+      });
+      const otherDays = [1, 2, 4, 5, 6, 7].map((d) =>
+        heatRiskCatalogItem({ name: `HeatRisk_${d}_Mercator`, validtime: heatRiskValidtimeForDay(d) })
+      );
+      // Items order: day1, day2, day3(loser), day3(winner), day4..day7 — 8 total.
+      const items = [otherDays[0], otherDays[1], day3Loser, day3Winner, otherDays[2], otherDays[3], otherDays[4], otherDays[5]];
+      const categoryForItem = [1, 2, 4, 1, 3, 0, 2, 1]; // index-aligned to `items` above
+      const values = categoryForItem.map(String);
+      // Both duplicate pair entries (index 2, 3) get visibility 0 — the live-observed
+      // unreliable-signal case; index 0 is the only "visible" tile, arbitrarily.
+      const visibilities = [1, 0, 0, 0, 0, 0, 0, 0];
+
+      // Precondition guard: the fixture must actually contain a duplicate idp_validtime, or
+      // this scenario is vacuous (Phase 15's KMZ lesson — a fixture unable to express its
+      // own condition).
+      const validtimes = items.map((it) => it.attributes.idp_validtime);
+      if (new Set(validtimes).size === validtimes.length) {
+        throw new Error(
+          `precondition failed: no duplicate idp_validtime in the fixture ` +
+          `(${new Set(validtimes).size} distinct of ${validtimes.length} total)`
+        );
+      }
+
+      installHttp(helper, heatRiskRoutes({
+        heatRisk: () => httpResponse({
+          body: heatRiskIdentifyResponse({ items, values, visibilities }),
+          etag: "heatrisk-dupe-v1"
+        })
+      }));
+      const out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showHeatRisk: true });
+      assertPayloadIntact(out);
+      assertHeatRiskBlockIntact(out);
+
+      // Primary assertion: day3 carries the WINNER's category (idx3, greatest filedate) and
+      // NOT the loser's (idx2) — both halves asserted.
+      const winnerCategory = categoryForItem[3];
+      const loserCategory = categoryForItem[2];
+      if (out.heatRisk.day3.category !== winnerCategory) {
+        throw new Error(
+          `HEAT-04: expected day3 to carry the winning (greatest idp_filedate) category ` +
+          `${winnerCategory}, got ${out.heatRisk.day3.category}`
+        );
+      }
+      if (out.heatRisk.day3.category === loserCategory) {
+        throw new Error(`HEAT-04: day3 carries the LOSER's category ${loserCategory} — dedupe picked the wrong item`);
+      }
+
+      // Control: a different, non-duplicated day carries its own expected category, proving
+      // the dedupe collapsed only the duplicate pair and did not drop or shift every day.
+      if (out.heatRisk.day5.category !== categoryForItem[5]) {
+        throw new Error(
+          `control: expected day5 (non-duplicated) to carry ${categoryForItem[5]}, got ${out.heatRisk.day5.category}`
+        );
+      }
+      if (out._stale) {
+        throw new Error(`expected _stale unset on a healthy (if duplicated) response, got ${out._stale}`);
+      }
+    }
+  },
+  {
+    // Pins D-06's precondition guard: a Values/features length mismatch abandons HeatRisk
+    // for this poll entirely — never zips to the shorter length (a front-truncation would
+    // silently mis-attribute every surviving pair, a confidently wrong category on the wrong
+    // day, strictly worse than showing nothing) and never falls back to the top-level
+    // `value` as Day 1 (that field tracks catalogItemVisibilities, live-observed pointing at
+    // the Day-2 tile, not "today").
+    // Mutation to prove RED: remove the length check from _zipHeatRiskCatalog so it zips
+    // positionally to features.length regardless of a shorter Values array.
+    name: "heatrisk-mismatched-values-length-abandons-poll",
+    run: async (helper) => {
+      resetHelper(helper);
+      resetLogs();
+      helper._nowMs = () => HEATRISK_NOW_MS;
+      helper._products = { showHeatRisk: true };
+
+      const items = [];
+      for (let d = 1; d <= 7; d++) {
+        items.push(heatRiskCatalogItem({ name: `HeatRisk_${d}_Mercator`, validtime: heatRiskValidtimeForDay(d) }));
+      }
+      const mismatchedValues = ["1", "2", "3", "4", "0", "1"]; // six, one short of seven features
+
+      // Precondition guard: the fixture itself must actually carry the mismatch.
+      if (mismatchedValues.length === items.length) {
+        throw new Error(
+          `precondition failed: Values (${mismatchedValues.length}) and features ` +
+          `(${items.length}) are the same length — this fixture does not express D-06's condition`
+        );
+      }
+
+      installHttp(helper, heatRiskRoutes({
+        heatRisk: () => httpResponse({
+          body: heatRiskIdentifyResponse({ items, values: mismatchedValues }),
+          etag: "heatrisk-mismatch-v1"
+        })
+      }));
+      const out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showHeatRisk: true });
+      assertPayloadIntact(out);
+      assertHeatRiskBlockIntact(out);
+
+      // Primary assertion: all seven days null AND _stale set — the poll was abandoned, not
+      // truncated. A front-truncating zip would produce six populated days; explicitly
+      // assert NO day carries a numeric category.
+      for (let d = 1; d <= 7; d++) {
+        if (out.heatRisk["day" + d].category !== null) {
+          throw new Error(
+            `D-06: expected day${d}.category null on a length-mismatched body (poll should be ` +
+            `abandoned, not truncated), got ${out.heatRisk["day" + d].category}`
+          );
+        }
+      }
+      if (out._stale !== true) {
+        throw new Error(`D-06: expected _stale set when Values/features lengths mismatch, got ${out._stale}`);
+      }
+
+      // Control: an otherwise-identical, MATCHED 7/7 body populates every day and leaves
+      // _stale unset — proving the all-null result above is the guard firing, not the
+      // harness simply never populating HeatRisk under any condition.
+      resetHelper(helper);
+      resetLogs();
+      helper._nowMs = () => HEATRISK_NOW_MS;
+      helper._products = { showHeatRisk: true };
+      const matchedValues = ["1", "2", "3", "4", "0", "1", "2"];
+      installHttp(helper, heatRiskRoutes({
+        heatRisk: () => httpResponse({
+          body: heatRiskIdentifyResponse({ items, values: matchedValues }),
+          etag: "heatrisk-mismatch-control-v1"
+        })
+      }));
+      const controlOut = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showHeatRisk: true });
+      assertPayloadIntact(controlOut);
+      assertHeatRiskBlockIntact(controlOut);
+      const controlHasAllCategories = [1, 2, 3, 4, 5, 6, 7].every(
+        (d) => typeof controlOut.heatRisk["day" + d].category === "number"
+      );
+      if (!controlHasAllCategories) {
+        throw new Error(
+          `control: expected every day populated on a matched 7/7 body, got ${JSON.stringify(controlOut.heatRisk)}`
+        );
+      }
+      if (controlOut._stale) {
+        throw new Error(`control: expected _stale unset on a matched, healthy body, got ${controlOut._stale}`);
       }
     }
   }
