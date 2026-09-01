@@ -14,7 +14,22 @@
     // Discussions are a shipping, always-on feature being migrated into the registry under
     // D-02, not a new product. Defaulting this false would silently delete a live
     // capability for every existing user on upgrade.
-    showSPCMD: true
+    showSPCMD: true,
+    showHeatRisk: false,        // NWS/WPC HeatRisk toggle; every new product flag defaults to false
+    // D-01/D-02: a DISPLAY FLOOR, not a fetch gate — the first frontend-only flag in this
+    // file. Default false renders category 2 (Moderate) and above; true drops the floor to
+    // 1 (Minor). NWS defines Level 1 as affecting "primarily those individuals extremely
+    // sensitive to heat," which at CONUS latitudes is close to a summer-long constant — the
+    // same noise problem 16 D-10's showDrought gate answered, and the same shape as WSSI's
+    // WINTER WEATHER AREA floor. Unlike showDrought, which must reach the backend because it
+    // gates labels inside an already-fetched product, showMinorHeat filters a payload the
+    // backend has already fully emitted: it does NOT go into buildRequestPayload's products
+    // object and does NOT go into node_helper.js's SUB_TOGGLES. The backend still emits
+    // filtered-out days because Phase 18's MERGE-03 must distinguish "HeatRisk said Minor"
+    // from "HeatRisk had no reading" — if a Level-1 day never reached the payload, MERGE-03
+    // would either leak WPC's coarse binary Hazardous Heat flag through or suppress it on no
+    // evidence.
+    showMinorHeat: false
   },
 
   // WR-05: config comes from the user's MagicMirror config.js and is never validated by
@@ -54,7 +69,8 @@
         showMPD: this.config.showMPD,
         showSPCMD: this.config.showSPCMD,
         showHazardsOutlook: this.config.showHazardsOutlook,
-        showDrought: this.config.showDrought
+        showDrought: this.config.showDrought,
+        showHeatRisk: this.config.showHeatRisk
       }
     };
   },
