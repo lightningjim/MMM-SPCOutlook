@@ -3446,6 +3446,96 @@ const scenarios = [
     }
   },
   {
+    // WR-04 (17-REVIEW): the mechanical half of the pinned-clock discipline. Two scenarios
+    // pinned `helper._nowMs` and then wrote `entry.timestamp = Date.now() - 65 * 60 * 1000`
+    // — mixing the pinned seam with the machine clock, so the computed age was
+    // `PINNED_NOW - (realNow - 65min)`. Today that was NEGATIVE, so the control passed
+    // without ever exercising the 2x-interval stale-fallback window it claimed to; and on
+    // any machine whose clock read earlier than ~2026-08-31T11:55Z the suite went 81/1.
+    // A green suite that is green because of what day it is proves nothing, and the
+    // failure is invisible on the machine that introduced it.
+    //
+    // The rule this enforces: a scenario that PINS the clock seam must read the clock ONLY
+    // through that seam. Scenarios that never pin `_nowMs` are unaffected — they use the
+    // real clock consistently, which is self-consistent and fine (the pre-Phase-16
+    // cache-ageing scenarios do exactly that, deliberately).
+    //
+    // Comments are stripped before scanning, so a comment ABOUT Date.now() — this one
+    // included — cannot trip the gate, and equally cannot hide a real use.
+    // Mutation to prove RED: put `Date.now()` back into any scenario that sets _nowMs.
+    name: "harness-no-raw-clock-in-a-clock-pinned-scenario",
+    run: async () => {
+      const source = require("fs").readFileSync(__filename, "utf-8");
+
+      // Strip line comments (not the `//` inside a URL scheme) and block comments, so the
+      // scan sees code only.
+      const code = source
+        .replace(/\/\*[\s\S]*?\*\//g, "")
+        .split("\n")
+        .map((line) => line.replace(/(^|[^:"'`\\])\/\/.*$/, "$1"))
+        .join("\n");
+
+      // Split the scenario array into per-scenario chunks at each `name:` declaration.
+      // Everything from one `name:` to the next is that scenario's own body.
+      const nameRe = /^ {4}name: "([^"]+)",$/gm;
+      const marks = [];
+      let m;
+      while ((m = nameRe.exec(code)) !== null) {
+        marks.push({ name: m[1], index: m.index });
+      }
+
+      // Precondition guard: the chunker must actually find the scenarios. If a formatting
+      // change broke the pattern this gate would silently pass while checking nothing —
+      // the exact failure mode it exists to prevent, one level up.
+      if (marks.length < 50) {
+        throw new Error(
+          `precondition failed: the scenario chunker found only ${marks.length} scenario names in this ` +
+          "file, so this gate is scanning almost nothing — has the `    name: \"...\",` formatting changed?"
+        );
+      }
+      if (!marks.some((mark) => mark.name === "harness-no-raw-clock-in-a-clock-pinned-scenario")) {
+        throw new Error("precondition failed: the chunker did not even find this scenario's own name");
+      }
+
+      const offenders = [];
+      for (let i = 0; i < marks.length; i++) {
+        const body = code.slice(marks[i].index, i + 1 < marks.length ? marks[i + 1].index : code.length);
+        const pinsClock = /helper\._nowMs\s*=/.test(body);
+        if (!pinsClock) continue;
+        const rawClock = body.match(/\bDate\.now\(\)/g);
+        if (rawClock) {
+          offenders.push(`${marks[i].name} (${rawClock.length} raw Date.now() use(s))`);
+        }
+      }
+
+      if (offenders.length > 0) {
+        throw new Error(
+          "WR-04: these scenarios pin helper._nowMs and then also read the real machine clock via " +
+          "Date.now(), so what they measure depends on what day the suite is run — derive the value " +
+          "from the pinned constant (HAZARDS_NOW_MS / HEATRISK_NOW_MS) instead: " + offenders.join("; ")
+        );
+      }
+
+      // Control: the gate is capable of detecting the pattern at all. A synthetic chunk in
+      // exactly the offending shape must be flagged by the same predicates used above —
+      // without this, "no offenders" could mean "the predicates match nothing".
+      // Assembled from fragments on purpose: written out whole, this fixture would be
+      // literal source text in this scenario's own body and the gate above would flag
+      // ITSELF as an offender. (It did, on first run — which is a pleasant demonstration
+      // that the detection works.)
+      const pinFragment = "helper._now" + "Ms = () => HEATRISK_NOW_MS;";
+      const rawClockFragment = "entry.timestamp = Date" + ".now()" + " - 65 * 60 * 1000;";
+      const syntheticOffender = '    name: "synthetic",\n    run: async (helper) => {\n' +
+        "      " + pinFragment + "\n      " + rawClockFragment + "\n    }\n";
+      if (!/helper\._nowMs\s*=/.test(syntheticOffender) || !/\bDate\.now\(\)/.test(syntheticOffender)) {
+        throw new Error(
+          "control: this gate's own predicates do not flag a synthetic scenario written in exactly the " +
+          "offending shape — the gate cannot fail, so its green result means nothing"
+        );
+      }
+    }
+  },
+  {
     // WR-10: ORIGINAL_SEAMS captured a curated two-entry list while its own neighbouring
     // comment argued that hand-maintained lists drift, and the turf stub's module-global
     // pointInPolygon was reset by nobody — twenty scenarios save and restore it by hand, and
@@ -5258,7 +5348,13 @@ const scenarios = [
         helper._updateInterval = 60;
         const entry = helper._geoJsonCache.get(HAZARDS_URLS[4]);
         if (!entry) throw new Error("control warm-up: no cache entry for the hazards layer-4 URL");
-        entry.timestamp = Date.now() - 65 * 60 * 1000; // within the 2x-interval stale-fallback window
+        // 17-REVIEW WR-04: derived from the PINNED seam, never Date.now(). This scenario
+        // overrides helper._nowMs, and _isWithinStaleWindow compares against _nowMs() — so
+        // a raw-clock timestamp made the computed age `HAZARDS_NOW_MS - (realNow - 65min)`,
+        // a mix of the pinned seam and the machine clock. It happened to be negative today
+        // (so the control passed without ever exercising the 2x-interval window it claims
+        // to) and went out of range entirely on a machine whose clock read earlier.
+        entry.timestamp = HAZARDS_NOW_MS - 65 * 60 * 1000; // within the 2x-interval stale-fallback window
         installHttp(helper, hazardsRoutes({ 4: () => httpResponse({ status: 503, text: "service unavailable" }) }));
         const failed = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showHazardsOutlook: true });
         if (typeof failed._staleAsOf !== "number") {
@@ -6580,7 +6676,10 @@ const scenarios = [
       helper._updateInterval = 60;
       const entry = helper._geoJsonCache.get(HEATRISK_URL);
       if (!entry) throw new Error("control 1 warm-up: no cache entry for the HeatRisk URL");
-      entry.timestamp = Date.now() - 65 * 60 * 1000; // within the 2x-interval stale-fallback window
+      // 17-REVIEW WR-04: derived from the PINNED seam, never Date.now() — see the twin
+      // comment in the hazards D-15 control above. Phase 17 inherited this line from
+      // Phase 16 verbatim, including the defect.
+      entry.timestamp = HEATRISK_NOW_MS - 65 * 60 * 1000; // within the 2x-interval stale-fallback window
       installHttp(helper, heatRiskRoutes({
         heatRisk: () => httpResponse({ status: 503, text: "service unavailable" })
       }));
