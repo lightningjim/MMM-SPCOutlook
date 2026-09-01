@@ -5430,6 +5430,174 @@ const scenarios = [
         throw new Error(`geometry coordinates coincide with raw degrees: x=${geometry.x} y=${geometry.y}`);
       }
     }
+  },
+  {
+    // Pins HEAT-04: two catalog items sharing one idp_validtime collapse to the one with
+    // the GREATEST idp_filedate. Both duplicates' catalogItemVisibilities are 0 — proving
+    // the implementation is not using visibility as the discriminator, which live evidence
+    // (17-RESEARCH.md) shows would be unreliable for a duplicate pair that is not also the
+    // globally-visible tile.
+    // Mutation to prove RED: flip the dedupe tiebreak in _dedupeHeatRiskByValidTime from
+    // `filedate > existingFiledate` to `filedate < existingFiledate` (keep the OLDER item).
+    name: "heatrisk-duplicate-validtime-keeps-latest-filedate",
+    run: async (helper) => {
+      resetHelper(helper);
+      resetLogs();
+      helper._nowMs = () => HEATRISK_NOW_MS;
+      helper._products = { showHeatRisk: true };
+
+      const HOUR = 60 * 60 * 1000;
+      const loserFiledate = HEATRISK_NOW_MS - 2 * HOUR;
+      const winnerFiledate = HEATRISK_NOW_MS - 1 * HOUR; // greater (more recent) than loser
+
+      const day3Loser = heatRiskCatalogItem({
+        name: "HeatRisk_3_Mercator_stale", validtime: heatRiskValidtimeForDay(3), filedate: loserFiledate
+      });
+      const day3Winner = heatRiskCatalogItem({
+        name: "HeatRisk_3_Mercator", validtime: heatRiskValidtimeForDay(3), filedate: winnerFiledate
+      });
+      const otherDays = [1, 2, 4, 5, 6, 7].map((d) =>
+        heatRiskCatalogItem({ name: `HeatRisk_${d}_Mercator`, validtime: heatRiskValidtimeForDay(d) })
+      );
+      // Items order: day1, day2, day3(loser), day3(winner), day4..day7 — 8 total.
+      const items = [otherDays[0], otherDays[1], day3Loser, day3Winner, otherDays[2], otherDays[3], otherDays[4], otherDays[5]];
+      const categoryForItem = [1, 2, 4, 1, 3, 0, 2, 1]; // index-aligned to `items` above
+      const values = categoryForItem.map(String);
+      // Both duplicate pair entries (index 2, 3) get visibility 0 — the live-observed
+      // unreliable-signal case; index 0 is the only "visible" tile, arbitrarily.
+      const visibilities = [1, 0, 0, 0, 0, 0, 0, 0];
+
+      // Precondition guard: the fixture must actually contain a duplicate idp_validtime, or
+      // this scenario is vacuous (Phase 15's KMZ lesson — a fixture unable to express its
+      // own condition).
+      const validtimes = items.map((it) => it.attributes.idp_validtime);
+      if (new Set(validtimes).size === validtimes.length) {
+        throw new Error(
+          `precondition failed: no duplicate idp_validtime in the fixture ` +
+          `(${new Set(validtimes).size} distinct of ${validtimes.length} total)`
+        );
+      }
+
+      installHttp(helper, heatRiskRoutes({
+        heatRisk: () => httpResponse({
+          body: heatRiskIdentifyResponse({ items, values, visibilities }),
+          etag: "heatrisk-dupe-v1"
+        })
+      }));
+      const out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showHeatRisk: true });
+      assertPayloadIntact(out);
+      assertHeatRiskBlockIntact(out);
+
+      // Primary assertion: day3 carries the WINNER's category (idx3, greatest filedate) and
+      // NOT the loser's (idx2) — both halves asserted.
+      const winnerCategory = categoryForItem[3];
+      const loserCategory = categoryForItem[2];
+      if (out.heatRisk.day3.category !== winnerCategory) {
+        throw new Error(
+          `HEAT-04: expected day3 to carry the winning (greatest idp_filedate) category ` +
+          `${winnerCategory}, got ${out.heatRisk.day3.category}`
+        );
+      }
+      if (out.heatRisk.day3.category === loserCategory) {
+        throw new Error(`HEAT-04: day3 carries the LOSER's category ${loserCategory} — dedupe picked the wrong item`);
+      }
+
+      // Control: a different, non-duplicated day carries its own expected category, proving
+      // the dedupe collapsed only the duplicate pair and did not drop or shift every day.
+      if (out.heatRisk.day5.category !== categoryForItem[5]) {
+        throw new Error(
+          `control: expected day5 (non-duplicated) to carry ${categoryForItem[5]}, got ${out.heatRisk.day5.category}`
+        );
+      }
+      if (out._stale) {
+        throw new Error(`expected _stale unset on a healthy (if duplicated) response, got ${out._stale}`);
+      }
+    }
+  },
+  {
+    // Pins D-06's precondition guard: a Values/features length mismatch abandons HeatRisk
+    // for this poll entirely — never zips to the shorter length (a front-truncation would
+    // silently mis-attribute every surviving pair, a confidently wrong category on the wrong
+    // day, strictly worse than showing nothing) and never falls back to the top-level
+    // `value` as Day 1 (that field tracks catalogItemVisibilities, live-observed pointing at
+    // the Day-2 tile, not "today").
+    // Mutation to prove RED: remove the length check from _zipHeatRiskCatalog so it zips
+    // positionally to features.length regardless of a shorter Values array.
+    name: "heatrisk-mismatched-values-length-abandons-poll",
+    run: async (helper) => {
+      resetHelper(helper);
+      resetLogs();
+      helper._nowMs = () => HEATRISK_NOW_MS;
+      helper._products = { showHeatRisk: true };
+
+      const items = [];
+      for (let d = 1; d <= 7; d++) {
+        items.push(heatRiskCatalogItem({ name: `HeatRisk_${d}_Mercator`, validtime: heatRiskValidtimeForDay(d) }));
+      }
+      const mismatchedValues = ["1", "2", "3", "4", "0", "1"]; // six, one short of seven features
+
+      // Precondition guard: the fixture itself must actually carry the mismatch.
+      if (mismatchedValues.length === items.length) {
+        throw new Error(
+          `precondition failed: Values (${mismatchedValues.length}) and features ` +
+          `(${items.length}) are the same length — this fixture does not express D-06's condition`
+        );
+      }
+
+      installHttp(helper, heatRiskRoutes({
+        heatRisk: () => httpResponse({
+          body: heatRiskIdentifyResponse({ items, values: mismatchedValues }),
+          etag: "heatrisk-mismatch-v1"
+        })
+      }));
+      const out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showHeatRisk: true });
+      assertPayloadIntact(out);
+      assertHeatRiskBlockIntact(out);
+
+      // Primary assertion: all seven days null AND _stale set — the poll was abandoned, not
+      // truncated. A front-truncating zip would produce six populated days; explicitly
+      // assert NO day carries a numeric category.
+      for (let d = 1; d <= 7; d++) {
+        if (out.heatRisk["day" + d].category !== null) {
+          throw new Error(
+            `D-06: expected day${d}.category null on a length-mismatched body (poll should be ` +
+            `abandoned, not truncated), got ${out.heatRisk["day" + d].category}`
+          );
+        }
+      }
+      if (out._stale !== true) {
+        throw new Error(`D-06: expected _stale set when Values/features lengths mismatch, got ${out._stale}`);
+      }
+
+      // Control: an otherwise-identical, MATCHED 7/7 body populates every day and leaves
+      // _stale unset — proving the all-null result above is the guard firing, not the
+      // harness simply never populating HeatRisk under any condition.
+      resetHelper(helper);
+      resetLogs();
+      helper._nowMs = () => HEATRISK_NOW_MS;
+      helper._products = { showHeatRisk: true };
+      const matchedValues = ["1", "2", "3", "4", "0", "1", "2"];
+      installHttp(helper, heatRiskRoutes({
+        heatRisk: () => httpResponse({
+          body: heatRiskIdentifyResponse({ items, values: matchedValues }),
+          etag: "heatrisk-mismatch-control-v1"
+        })
+      }));
+      const controlOut = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showHeatRisk: true });
+      assertPayloadIntact(controlOut);
+      assertHeatRiskBlockIntact(controlOut);
+      const controlHasAllCategories = [1, 2, 3, 4, 5, 6, 7].every(
+        (d) => typeof controlOut.heatRisk["day" + d].category === "number"
+      );
+      if (!controlHasAllCategories) {
+        throw new Error(
+          `control: expected every day populated on a matched 7/7 body, got ${JSON.stringify(controlOut.heatRisk)}`
+        );
+      }
+      if (controlOut._stale) {
+        throw new Error(`control: expected _stale unset on a matched, healthy body, got ${controlOut._stale}`);
+      }
+    }
   }
 ];
 
