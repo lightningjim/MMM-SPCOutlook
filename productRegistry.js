@@ -519,7 +519,45 @@ const PRODUCT_REGISTRY = {
   }
 };
 
+// D-11 (DATA-03 enforcement): asserts no two PRODUCT_REGISTRY rows share object identity on
+// any value/tier/text/colour map. Catches the shared-reference reuse DATA-03's own example
+// describes (ERO's `dn` map fed through fire weather's `DN` table) at load time, on the first
+// run, rather than in the field — same "make the invalid state unrepresentable" instinct as
+// daySpanOf/dayRangeOf/dayRangeSpanning above. Sibling to those three, not a modification of
+// any of them: this is genuinely new code checking a property none of them touch (shared
+// object identity across rows, not a single row's internal shape).
+//
+// What this CANNOT see, and must be stated here: a toValue/includesFeat closure that reads a
+// foreign constant directly (e.g. a hypothetical row's toValue closing over another row's
+// dn-style table by name rather than sharing the object by reference) would pass this check
+// while still being wrong — this is a point-in-time structural check on object identity, not a
+// data-flow analysis. Pair it with the recorded spot-check inventory in 17-PATTERNS.md §9
+// (the paired artifact D-11 requires), which enumerates every actual label-to-value map by
+// name and file:line.
+const MAP_FIELDS = ["valueToTier", "tierToText", "tierToColor", "displayColor",
+                     "excludedLabels", "droughtLabels", "excludedLabelKeys", "droughtLabelKeys",
+                     "toValue", "valueToText", "valueToColor"];
+function assertNoSharedRegistryMaps(registry) {
+  const seen = new Map(); // object identity -> row id
+  for (const [rowId, row] of Object.entries(registry)) {
+    for (const field of MAP_FIELDS) {
+      const value = row[field];
+      if (value === undefined || value === null) continue;
+      const prior = seen.get(value);
+      if (prior) {
+        throw new Error(
+          `productRegistry: rows "${prior}" and "${rowId}" share the SAME ${field} object ` +
+          `by reference — this is DATA-03's exact failure shape (a label-to-value mapping ` +
+          `reused across products). Give "${rowId}" its own ${field}.`
+        );
+      }
+      seen.set(value, rowId);
+    }
+  }
+}
+assertNoSharedRegistryMaps(PRODUCT_REGISTRY); // called at module load, same as daySpanOf(...) calls above
+
 module.exports = {
   buildArcGisQuery, daySpanOf, dayRangeOf, hazardLabelKey, normalizeHazardLabel,
-  MPD_FILENAME_PATTERN, PRODUCT_REGISTRY, buildHeatRiskIdentifyUrl
+  MPD_FILENAME_PATTERN, PRODUCT_REGISTRY, buildHeatRiskIdentifyUrl, assertNoSharedRegistryMaps
 };
