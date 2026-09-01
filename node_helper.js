@@ -3376,26 +3376,29 @@ module.exports = NodeHelper.create({
       // rejection degrades that one product to a silent no-risk render rather than a throw.
       //
       // Concurrency-safety invariant (verified, not assumed — mechanically enforced by
-      // scripts/check-concurrency-invariant.sh): `_unusableFeatureCount` (two write sites,
-      // `extractPolygons` and `evaluatePolygonsCollectAll`, each a synchronous increment
-      // inside a `.forEach()` callback with no `await` between the read and the write) and
-      // `_oldestStaleAt` (one write site, `_noteStaleEntry`, a synchronous min-reduce with no
-      // `await` inside it) are both read at this function's own start
-      // (`unusableFeaturesAtStart`, above) and end (below) / reset (above). JavaScript is
-      // single-threaded with run-to-completion semantics: two concurrently-running async
-      // functions can only interleave at an `await` boundary, and none of these five sites
-      // (the two increments, the min-reduce, and their two read sites) contains one — a
-      // synchronous statement inside one runner's `.forEach()` callback cannot be preempted
-      // by another runner's continuation. `_unusableFeatureCount` is a monotone counter
-      // sampled start-vs-end, so the final count equals the sum of every member's own
-      // increments regardless of interleaving order; `_oldestStaleAt` is a commutative
-      // min-reduce, so there is no race to win. `_inFlight` (declared near the top of this
-      // file, guarded inside `socketNotificationReceived`) is confirmed to never enter this
-      // function's own call graph — it is read/written only inside
-      // `socketNotificationReceived`, so a batch built entirely inside `getSpcOutlook` cannot
-      // observe or bypass it. This does not generalise: any future helper-global field added
-      // without the same three properties (synchronous write, no `await` inside the
-      // mutation, commutative reduce) needs this audit repeated, not inherited.
+      // scripts/check-concurrency-invariant.sh): `_unusableFeatureCount` has THREE write
+      // sites — `extractPolygons`, `evaluatePolygonsCollectAll`, and `checkInPolygon` (the
+      // last reached only through `_runKmlAdvisoryRow`, one of this batch's own members —
+      // audited here because it shares the field, not because it predates the batch) —
+      // each a synchronous increment inside a `.forEach()`/`for` loop's `catch` block with
+      // no `await` between the read and the write. `_oldestStaleAt` has one write site,
+      // `_noteStaleEntry`, a synchronous min-reduce with no `await` inside it. All four
+      // mutation sites are read at this function's own start (`unusableFeaturesAtStart`,
+      // above) and end (below) / reset (above). JavaScript is single-threaded with
+      // run-to-completion semantics: two concurrently-running async functions can only
+      // interleave at an `await` boundary, and none of these six sites (the three
+      // increments, the min-reduce, and their two read sites) contains one — a synchronous
+      // statement inside one runner's loop body cannot be preempted by another runner's
+      // continuation. `_unusableFeatureCount` is a monotone counter sampled start-vs-end,
+      // so the final count equals the sum of every member's own increments regardless of
+      // interleaving order; `_oldestStaleAt` is a commutative min-reduce, so there is no
+      // race to win. `_inFlight` (declared near the top of this file, guarded inside
+      // `socketNotificationReceived`) is confirmed to never enter this function's own call
+      // graph — it is read/written only inside `socketNotificationReceived`, so a batch
+      // built entirely inside `getSpcOutlook` cannot observe or bypass it.
+      // LIMIT OF THIS CLAIM (does not generalise beyond these two fields): a future helper-
+      // global field lacking the same three properties (synchronous write, no `await`
+      // inside the mutation, commutative reduce) needs this audit repeated, not inherited.
       const kmlRows = Object.values(PRODUCT_REGISTRY).filter((row) => row.kind === "kml-advisory");
 
       const members = [
