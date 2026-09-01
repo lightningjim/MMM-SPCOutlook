@@ -951,6 +951,12 @@ module.exports = NodeHelper.create({
       // byte-identical output from here on (the "convert exactly once" discipline
       // `_runArcGisDayProduct` established).
       let tuples;
+      // WR-01/WR-02: true only on the hard-failure arm below — no fresh body AND no cached
+      // body to fall back on. It distinguishes "the fetch did not happen" from "the fetch
+      // happened and every day came back NoData", which produce an identical empty
+      // `resolvedDays` but are entirely different diagnoses and must not share the D-04
+      // branch's one-shot log budget.
+      let fetchUnavailable = false;
       if (fetchResult.data === null && fetchResult.cachedResult !== null) {
         tuples = this._heatRiskTuplesFromCache(fetchResult.cachedResult);
       } else if (fetchResult.data !== null) {
@@ -979,7 +985,12 @@ module.exports = NodeHelper.create({
         // above converge on the identical shape without a second parsing pass.
         tuples = this._cacheHeatRiskTuples(url, fetchResult, deduped);
       } else {
+        // Hard failure: no fresh body, no cached body. fetchGeoJsonCached has already
+        // logged the URL and the cause, and has already set fetchResult.failed (so
+        // anyStale is set above) — there is nothing this runner can add except a wrong
+        // diagnosis.
         tuples = [];
+        fetchUnavailable = true;
       }
 
       // HEAT-01/HEAT-02: bucket by idp_validtime, sorted ascending first so the mapping is
@@ -1027,7 +1038,17 @@ module.exports = NodeHelper.create({
       // systemic break — precisely HEAT-03's failure mode reading as "no heat risk
       // anywhere, forever" — and both warrant a signal. Accepted cost: a permanent warning
       // badge for a genuinely out-of-coverage deployment, the same trade 16 D-14 took.
-      if (resolvedDays.size === 0) {
+      //
+      // WR-02: gated on `!fetchUnavailable`. A hard fetch failure produces the same empty
+      // `resolvedDays` as a genuine all-NoData response, and the branch used to fire for
+      // both — emitting a data-CONTENT diagnosis for a NETWORK error, and worse, spending
+      // `_loggedHeatRiskAllNoData` on it. The one-shot guard was then burned for the life
+      // of the process, so the next genuine all-NoData poll — the systemic-break signal
+      // this log exists to raise — logged nothing at all. A transient 503 permanently
+      // disarming a safety diagnostic is the worst available trade, because the event that
+      // disarms it is the one guaranteed to occur. The badge still goes up on both paths;
+      // only the diagnosis and the budget are separated.
+      if (resolvedDays.size === 0 && !fetchUnavailable) {
         anyStale = true;
         if (!this._loggedHeatRiskAllNoData) {
           this._loggedHeatRiskAllNoData = true;
@@ -1036,6 +1057,10 @@ module.exports = NodeHelper.create({
             "(every present day was NoData, or no tile resolved to a valid day at all)"
           );
         }
+      } else if (resolvedDays.size === 0) {
+        // Hard fetch failure. Badge yes, diagnosis no: fetchGeoJsonCached already named the
+        // URL and the cause, and the D-04 log above would misattribute it to data content.
+        anyStale = true;
       } else {
         // D-05: gapDays are days 1..row.days that received no tuple at all (distinct from a
         // day that received a NoData tuple, which is D-04's silence above — a tile existing

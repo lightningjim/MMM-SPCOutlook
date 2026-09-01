@@ -6092,6 +6092,105 @@ const scenarios = [
     }
   },
   {
+    // WR-02 (17-REVIEW): a hard fetch failure and a genuine all-NoData response are
+    // DIFFERENT causes and must not share one diagnosis or one one-shot log budget. On a
+    // hard failure the runner falls through to `tuples = []`, resolvedDays is empty, and
+    // the D-04 branch used to fire — emitting "every present day was NoData" for what was
+    // actually a network error, and consuming `_loggedHeatRiskAllNoData` for the life of
+    // the process. The next GENUINE all-NoData poll — HEAT-03's systemic-break signal, the
+    // exact condition that log exists to report — then logged nothing at all, forever.
+    // A transient 503 permanently disarming a safety diagnostic is the worst possible
+    // trade, because the failure that disarms it is the one guaranteed to happen.
+    //
+    // Both halves are asserted: the failure must NOT spend the budget, and the genuine
+    // all-NoData poll that follows it must still fire. Staleness is asserted in both, so
+    // no diagnosis is being traded away for silence.
+    // Mutation to prove RED: drop the fetchUnavailable guard so the D-04 branch fires on a
+    // hard fetch failure again.
+    name: "heatrisk-fetch-failure-does-not-burn-the-all-nodata-log-guard",
+    run: async (helper) => {
+      resetHelper(helper);
+      resetLogs();
+      helper._nowMs = () => HEATRISK_NOW_MS;
+      helper._products = { showHeatRisk: true };
+
+      // J-1: a hard fetch failure with NOTHING in the cache to fall back on.
+      installHttp(helper, heatRiskRoutes({
+        heatRisk: () => httpResponse({ status: 503, text: "service unavailable" })
+      }));
+      const failedOut = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showHeatRisk: true });
+      assertPayloadIntact(failedOut);
+      assertHeatRiskBlockIntact(failedOut);
+
+      // Precondition guard: the failure really did leave nothing cached, so this is the
+      // data===null && cachedResult===null arm and not a stale-cache replay.
+      if (helper._geoJsonCache.get(HEATRISK_URL)) {
+        throw new Error(
+          "precondition failed: the 503 left a cache entry for the HeatRisk URL, so this is not the " +
+          `hard-failure arm this scenario exists to exercise: ${JSON.stringify(helper._geoJsonCache.get(HEATRISK_URL))}`
+        );
+      }
+      if (failedOut._stale !== true) {
+        throw new Error(`J-1: a hard HeatRisk fetch failure must still raise the badge, got _stale=${failedOut._stale}`);
+      }
+      const failureLogs = logCalls.filter((line) => line.includes("no day in this poll resolved a real category"));
+      if (failureLogs.length !== 0) {
+        throw new Error(
+          `WR-02: a hard fetch failure emitted the all-NoData data-content diagnosis ${failureLogs.length} ` +
+          `time(s) — it diagnoses the wrong cause AND consumes the one-shot guard that the genuine ` +
+          `all-NoData case depends on: ${JSON.stringify(failureLogs)}`
+        );
+      }
+
+      // J-2: now a GENUINE all-NoData response, on the SAME helper — resetHelper is
+      // deliberately not called, so _loggedHeatRiskAllNoData carries over from J-1. This
+      // is the assertion the whole scenario exists for.
+      const items = [];
+      for (let d = 1; d <= 7; d++) {
+        items.push(heatRiskCatalogItem({ name: `HeatRisk_${d}_Mercator`, validtime: heatRiskValidtimeForDay(d) }));
+      }
+      const values = items.map(() => "NoData");
+      installHttp(helper, heatRiskRoutes({
+        heatRisk: () => httpResponse({
+          body: heatRiskIdentifyResponse({ items, values }),
+          etag: "heatrisk-wr02-nodata-v1"
+        })
+      }));
+      const nodataOut = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showHeatRisk: true });
+      assertPayloadIntact(nodataOut);
+      assertHeatRiskBlockIntact(nodataOut);
+      if (nodataOut._stale !== true) {
+        throw new Error(`J-2: a genuine all-NoData response must raise the badge, got _stale=${nodataOut._stale}`);
+      }
+      const nodataLogs = logCalls.filter((line) => line.includes("no day in this poll resolved a real category"));
+      if (nodataLogs.length !== 1) {
+        throw new Error(
+          `WR-02: after a preceding transient fetch failure, a genuine all-NoData poll fired the D-04 log ` +
+          `${nodataLogs.length} time(s), expected exactly 1 — the one-shot guard was burned by the network ` +
+          `error, so HEAT-03's systemic-break signal is silent for the life of the process: ${JSON.stringify(logCalls)}`
+        );
+      }
+
+      // Control: the one-shot guard is still a ONE-shot guard — a second genuine
+      // all-NoData poll must not log again. Proving the fix did not simply remove the
+      // budget and turn a diagnostic into a per-poll spam source.
+      installHttp(helper, heatRiskRoutes({
+        heatRisk: () => httpResponse({
+          body: heatRiskIdentifyResponse({ items, values }),
+          etag: "heatrisk-wr02-nodata-v1"
+        })
+      }));
+      await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showHeatRisk: true });
+      const afterSecond = logCalls.filter((line) => line.includes("no day in this poll resolved a real category"));
+      if (afterSecond.length !== 1) {
+        throw new Error(
+          `control: the D-04 log is meant to fire once per process, got ${afterSecond.length} across two ` +
+          `consecutive genuine all-NoData polls: ${JSON.stringify(logCalls)}`
+        );
+      }
+    }
+  },
+  {
     // D-05: a gap at the TAIL of the 1-7 grid (nothing resolved beyond the highest
     // present day) is silence with no badge — consistent with routine mosaic rotation,
     // where the newest tile has not yet landed. Live capture shows 7 catalog items
