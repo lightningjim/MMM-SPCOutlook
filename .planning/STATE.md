@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: WPC & CPC Integration + Unified Day Report
 status: executing
-stopped_at: Phase 17 planned (9 plans, 8 waves)
-last_updated: "2026-09-01T13:31:49.294Z"
-last_activity: 2026-09-01 -- Phase 17 execution started
+stopped_at: Phase 17 all 9 plans executed (17-09 UAT approved); phase close pending orchestrator
+last_updated: "2026-09-01T19:46:54.121Z"
+last_activity: "2026-09-01 -- Plan 17-09 complete: mutation inventory, DATA-03 spot check, and human UAT (all five ROADMAP success criteria PASS)"
 progress:
   total_phases: 7
-  completed_phases: 3
+  completed_phases: 4
   total_plans: 33
-  completed_plans: 24
-  percent: 43
+  completed_plans: 33
+  percent: 57
 ---
 
 # Project State
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-08-15 after v2.0 scoping)
 ## Current Position
 
 Phase: 17 (nws-wpc-heatrisk-parallelized-fetching) — EXECUTING
-Plan: 1 of 9
+Plan: 9 of 9 (all plans executed; phase completion pending orchestrator close)
 Status: Executing Phase 17
-Last activity: 2026-09-01 -- Phase 17 execution started
+Last activity: 2026-09-01 -- Plan 17-09 complete: mutation inventory, DATA-03 spot check, and human UAT (all five ROADMAP success criteria PASS)
 
-Progress: [███▓░░░░░░] 33%
+Progress: [████▓░░░░░] 43%
 
 ## Performance Metrics
 
@@ -49,6 +49,8 @@ requirements, 3 Info findings, 0 blocking. Two live production defects found and
 
 **Recent Trend:** Phase 15 converged with zero rollbacks across 7 waves — worktree isolation plus a post-merge probe gate before any tracking write. Phase 14 needed three review rounds to converge. Rounds 1-2 reviewed at `standard` depth and each missed cross-file defects; round 3 at `deep` depth found the highest-severity issue in the phase (a total outage rendering as a confident all-clear). Use `--depth=deep` for phases that span node_helper.js and MMM-SPCOutlook.js together.
 
+v2.0 Phase 17 P09 (2026-09-01) — mutation inventory + DATA-03 spot check + human UAT, 2 tasks, 3 files, ~45min plus an operator UAT window on live production hardware. Closes out Phase 17's plan-level work (9/9 plans executed); phase-level close remains the orchestrator's responsibility.
+
 ## Accumulated Context
 
 ### Decisions
@@ -60,6 +62,8 @@ Decisions are logged in PROJECT.md Key Decisions table. Recent decisions affecti
 - **Live verification of location-gated products requires temporarily moving `lat`/`lon`.** Waiting for a product to appear over the deployed coordinate is not viable: MPDs are regional and live 3–6h, and on 2026-08-24 four were issued and none covered the operator. Documented procedure: move the coordinate into an active polygon (verify with a point-in-polygon test against the live KMZ — a bounding-box check is not sufficient, Phoenix fell inside MPD_1122's bbox but outside its polygon), confirm the render, restore. This corrects an optimistic assumption in D-10.
 - **WPC's `_final` filename suffix means "graphic finalized", NOT "expired".** Live-confirmed 2026-08-24: `MPD_1122_final.kmz` was active until 00:30Z while already named `_final`. `MPD_FILENAME_PATTERN` (`/^MPD_(\d+)_final\.kmz$/`) correctly requires it, and `MPD_latest.kmz` correctly fails to match so the same MPD isn't double-counted. Implementing `_final` as an expiry marker would have made MPD find nothing, ever, while appearing healthy.
 - Roadmap sequencing (binding, from research + user decisions): CFG-02 payload-shape decoupling precedes all data-source phases; data sources land ERO → WSSI/MPD → Hazards Outlook → HeatRisk; merge/precedence logic (Phase 18) follows all data sources and is validated against live captured payloads; getDom() rewrite (Phase 19) is strictly last and single-purpose.
+- [Phase 17-09]: HEAT-04 UAT accepted on fixture evidence (heatrisk-duplicate-validtime-keeps-latest-filedate) rather than live observation — upstream has never served a duplicate idp_validtime to observe
+- [Phase 17-09]: PERF-01 corroborated live on deployed hardware: 10 consecutive new-product batch settled-in log lines over 3h15m uptime, wall clock tracking the slowest member (2275ms) rather than the summed member time (4392ms)
 
 ### Pending Todos
 
@@ -103,6 +107,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-08-31T00:19:24.711Z
-Stopped at: Phase 17 planned (9 plans, 8 waves)
-Resume file: .planning/phases/17-nws-wpc-heatrisk-parallelized-fetching/17-CONTEXT.md
+Last session: 2026-09-01T19:46:54.113Z
+Stopped at: Phase 17 all 9 plans executed (17-09 UAT approved); phase close pending orchestrator
+Resume file: .planning/phases/17-nws-wpc-heatrisk-parallelized-fetching/17-09-SUMMARY.md

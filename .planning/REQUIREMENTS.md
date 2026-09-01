@@ -34,10 +34,10 @@
 
 ### Heat Risk (NWS/WPC)
 
-- [ ] **HEAT-01**: User sees their location's HeatRisk category (0–4) for Days 1–7 when `showHeatRisk` is enabled
-- [ ] **HEAT-02**: User sees each HeatRisk category attributed to the correct day, with catalog items sorted by valid time rather than array order
-- [ ] **HEAT-03**: User sees a real value rather than `NoData`, via Web Mercator reprojection of their coordinates before the identify call
-- [ ] **HEAT-04**: User sees the current mosaic tile, not a stale duplicate, when the response contains repeated valid times
+- [x] **HEAT-01**: User sees their location's HeatRisk category (0–4) for Days 1–7 when `showHeatRisk` is enabled
+- [x] **HEAT-02**: User sees each HeatRisk category attributed to the correct day, with catalog items sorted by valid time rather than array order
+- [x] **HEAT-03**: User sees a real value rather than `NoData`, via Web Mercator reprojection of their coordinates before the identify call
+- [x] **HEAT-04**: User sees the current mosaic tile, not a stale duplicate, when the response contains repeated valid times
 
 ### Cross-Source Merge and Precedence
 
@@ -60,7 +60,7 @@
 
 - [ ] **CFG-01**: User enables each new product independently via its own boolean, all defaulting to false
 - [ ] **CFG-02**: User's existing SPC and fire weather configuration continues to work, with the `extended` flag no longer gating the payload shape
-- [ ] **PERF-01**: User's Pi issues the new product fetches concurrently rather than sequentially, bounding cold-cache startup latency
+- [x] **PERF-01**: User's Pi issues the new product fetches concurrently rather than sequentially, bounding cold-cache startup latency
 - [x] **PERF-02**: User's ETag/SHA256 cache stays effective, via consistent ArcGIS query-string construction that does not multiply cache keys
 - [ ] **PERF-03**: User sees a measured cold-cache latency figure on target hardware before the milestone closes
 
@@ -68,7 +68,7 @@
 
 - [x] **DATA-01**: User's coordinates are always evaluated against WGS84 geometry, with `f=geojson` requested for every ArcGIS endpoint and no raw `f=json` fallback path
 - [x] **DATA-02**: User sees a stale indicator that accounts for the Hazards Outlook's Mon–Fri-only cadence, without false-alarming every weekend
-- [ ] **DATA-03**: Each product uses its own label-to-value vocabulary, with no mapping reused across products
+- [x] **DATA-03**: Each product uses its own label-to-value vocabulary, with no mapping reused across products
 
 ## Future Requirements
 
@@ -125,12 +125,12 @@ Deferred to v2.x. Tracked but not in this roadmap.
 | HAZ-03 | Phase 16 | Complete |
 | HAZ-04 | Phase 16 | Complete |
 | DATA-02 | Phase 16 | Complete |
-| HEAT-01 | Phase 17 | Pending |
-| HEAT-02 | Phase 17 | Pending |
-| HEAT-03 | Phase 17 | Pending |
-| HEAT-04 | Phase 17 | Pending |
-| PERF-01 | Phase 17 | Pending |
-| DATA-03 | Phase 17 | Pending |
+| HEAT-01 | Phase 17 | Complete |
+| HEAT-02 | Phase 17 | Complete |
+| HEAT-03 | Phase 17 | Complete |
+| HEAT-04 | Phase 17 | Complete |
+| PERF-01 | Phase 17 | Complete |
+| DATA-03 | Phase 17 | Complete |
 | MERGE-01 | Phase 18 | Pending |
 | MERGE-02 | Phase 18 | Pending |
 | MERGE-03 | Phase 18 | Pending |
