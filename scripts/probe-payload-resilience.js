@@ -5239,6 +5239,197 @@ const scenarios = [
         throw new Error(`D-16: stale hazard content rendered as an all-clear instead of its actual rows: ${rendered}`);
       }
     }
+  },
+  {
+    // 17-RESEARCH.md's headline finding: fetchGeoJsonCached's pre-17-02 hardcoded
+    // _isFeatureCollection check would reject every HeatRisk response permanently — a silent
+    // fetch failure (an HTTP 200 body the shared validator rejects, producing
+    // { data: null, failed: true }), never a throw — because the identify response has no
+    // top-level `features` array at all. This pins the generalized isValidBody parameter
+    // (17-02) as load-bearing infrastructure, not incidental plumbing.
+    // Mutation to prove RED: revert BOTH fetchGeoJsonCached call sites from
+    // `isValidBody(parsed.value)` back to `this._isFeatureCollection(parsed.value)`.
+    name: "heatrisk-identify-body-survives-the-shared-fetch-validator",
+    run: async (helper) => {
+      resetHelper(helper);
+      resetLogs();
+      helper._nowMs = () => HEATRISK_NOW_MS;
+      helper._products = { showHeatRisk: true };
+      installHttp(helper, heatRiskRoutes());
+      const out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showHeatRisk: true });
+      assertPayloadIntact(out);
+      assertHeatRiskBlockIntact(out);
+
+      // Precondition guard: prove the fetch actually happened, so nothing below can be
+      // mistaken for the validator accepting the body when nothing reached it at all.
+      if (!helper._fetch.calls.some((c) => c.url.includes(HEATRISK_URL))) {
+        throw new Error(
+          "precondition failed: the HeatRisk identify URL was never fetched — every " +
+          "assertion below would observe nothing"
+        );
+      }
+
+      // Primary assertion: a rejected body would leave all seven days null AND set _stale.
+      // The failure mode is a well-formed HTTP 200 body the shared validator rejects, never a
+      // throw — exactly why "the fetch resolved" alone would not catch a regression here.
+      const hasNumericCategory = Object.keys(out.heatRisk).some(
+        (k) => typeof out.heatRisk[k].category === "number"
+      );
+      if (!hasNumericCategory) {
+        throw new Error(`expected at least one day with a numeric category, got ${JSON.stringify(out.heatRisk)}`);
+      }
+      if (out._stale) {
+        throw new Error(`expected _stale unset on a healthy identify response, got ${out._stale}`);
+      }
+
+      // Control: a body missing catalogItems entirely must be rejected by the shared
+      // validator — proving the validator does reject something, so the primary assertion
+      // above is not simply "this harness never fails HeatRisk".
+      resetHelper(helper);
+      resetLogs();
+      helper._nowMs = () => HEATRISK_NOW_MS;
+      helper._products = { showHeatRisk: true };
+      const noCatalogBody = { objectId: 0, name: "Pixel", value: "1", properties: { Values: ["1"] } };
+      installHttp(helper, heatRiskRoutes({
+        heatRisk: () => httpResponse({ body: noCatalogBody, etag: "heatrisk-no-catalog-v1" })
+      }));
+      const controlOut = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showHeatRisk: true });
+      assertPayloadIntact(controlOut);
+      assertHeatRiskBlockIntact(controlOut);
+      for (let d = 1; d <= 7; d++) {
+        if (controlOut.heatRisk["day" + d].category !== null) {
+          throw new Error(
+            `control: expected all seven days null on a rejected body, got day${d}=` +
+            JSON.stringify(controlOut.heatRisk["day" + d])
+          );
+        }
+      }
+      if (controlOut._stale !== true) {
+        throw new Error(`control: expected _stale set when the shared validator rejects the body, got ${controlOut._stale}`);
+      }
+    }
+  },
+  {
+    // Pins HEAT-01/HEAT-02: category is attributed by idp_validtime, not by the catalog's
+    // own (arbitrary) array order. Fixture order matches 17-RESEARCH.md's live-observed
+    // out-of-order catalog (HeatRisk_2, HeatRisk_4, HeatRisk_5, HeatRisk_7, HeatRisk_1,
+    // HeatRisk_3, HeatRisk_6) — Values travels in the SAME array order as items, so the zip
+    // itself is correct and only the sort/bucket step is under test.
+    // Mutation to prove RED: remove the ascending sort AND bucket by array index instead of
+    // idp_validtime — i.e. `const sorted = tuples.slice();` (no .sort) and
+    // `const d = sorted.indexOf(t) + 1;` in place of the `_heatRiskDayOffset` call.
+    name: "heatrisk-day-order-follows-validtime-not-array-order",
+    run: async (helper) => {
+      resetHelper(helper);
+      resetLogs();
+      helper._nowMs = () => HEATRISK_NOW_MS;
+      helper._products = { showHeatRisk: true };
+
+      // Day -> category, distinct enough that a mis-attribution is observable.
+      const categoryForDay = {};
+      for (let d = 1; d <= 7; d++) categoryForDay[d] = d % 5;
+
+      // Out-of-order catalog: item[i] carries the day named in scrambledDayOrder[i].
+      const scrambledDayOrder = [2, 4, 5, 7, 1, 3, 6];
+      const items = scrambledDayOrder.map((d) =>
+        heatRiskCatalogItem({ name: `HeatRisk_${d}_Mercator`, validtime: heatRiskValidtimeForDay(d) })
+      );
+      // Values travels in the SAME (scrambled) array order as items — the zip is correct;
+      // only the sort/bucket step is under test.
+      const values = scrambledDayOrder.map((d) => String(categoryForDay[d]));
+
+      // Precondition guard: the fixture must not happen to be pre-sorted, or this scenario
+      // proves nothing about the sort at all.
+      const validtimes = items.map((it) => it.attributes.idp_validtime);
+      if (validtimes[0] === Math.min(...validtimes)) {
+        throw new Error(
+          `precondition failed: features[0]'s idp_validtime is already the smallest (${validtimes[0]}) — ` +
+          "the fixture is not exercising the sort"
+        );
+      }
+
+      installHttp(helper, heatRiskRoutes({
+        heatRisk: () => httpResponse({
+          body: heatRiskIdentifyResponse({ items, values }),
+          etag: "heatrisk-order-v1"
+        })
+      }));
+      const out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showHeatRisk: true });
+      assertPayloadIntact(out);
+
+      // Control: a healthy run, proving the day values came from a real evaluation and not
+      // from the seeded all-null block.
+      assertHeatRiskBlockIntact(out);
+      if (out._stale) {
+        throw new Error(`expected _stale unset on a healthy out-of-order response, got ${out._stale}`);
+      }
+
+      // Primary assertion: each day carries the category belonging to the item whose
+      // idp_validtime is the Nth smallest — never the array-order value.
+      for (let d = 1; d <= 7; d++) {
+        const actual = out.heatRisk["day" + d].category;
+        const expected = categoryForDay[d];
+        if (actual !== expected) {
+          throw new Error(
+            `day${d}: expected category ${expected} (attributed by idp_validtime), got ${actual} ` +
+            "— category is following array order instead of the sort"
+          );
+        }
+      }
+      // The inequality is the whole point: day1's category must not equal the FIRST raw
+      // Values[] entry (which belongs to the scrambled catalog's first item, day2).
+      if (out.heatRisk.day1.category === Number(values[0])) {
+        throw new Error(
+          `day1.category (${out.heatRisk.day1.category}) unexpectedly equals raw Values[0] ` +
+          `(${values[0]}) — this fixture cannot distinguish sort-by-validtime from array order`
+        );
+      }
+    }
+  },
+  {
+    // Pins HEAT-03: the URL actually issued declares Web Mercator (wkid 102100) with
+    // Mercator-magnitude coordinates, not raw degrees under a mismatched declaration — the
+    // live-reproduced root cause of a "NoData" response is a coordinate/spatialReference
+    // UNIT MISMATCH (17-RESEARCH.md Common Pitfalls #2), not sr=4326 per se; a well-formed
+    // sr=4326 request works just as well. Do not restate the superseded framing here.
+    // Mutation to prove RED: pass raw lon/lat (loc.geometry.coordinates) into row.buildUrl
+    // instead of turf.toMercator(loc)'s output.
+    name: "heatrisk-geometry-uses-mercator-not-raw-degrees",
+    run: async (helper) => {
+      resetHelper(helper);
+      resetLogs();
+      helper._nowMs = () => HEATRISK_NOW_MS;
+      helper._products = { showHeatRisk: true };
+      installHttp(helper, heatRiskRoutes());
+      const out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showHeatRisk: true });
+      assertPayloadIntact(out);
+      assertHeatRiskBlockIntact(out);
+
+      const identifyCalls = helper._fetch.calls.filter((c) => c.url.includes("NWS_HeatRisk/ImageServer/identify"));
+      // Precondition guard: exactly one identify call, or the geometry assertion below
+      // would be vacuous (reading a call that doesn't represent this poll, or none at all).
+      if (identifyCalls.length !== 1) {
+        throw new Error(`precondition failed: expected exactly one HeatRisk identify call, got ${identifyCalls.length}`);
+      }
+
+      const issuedUrl = identifyCalls[0].url;
+      const geometryMatch = /geometry=([^&]+)/.exec(issuedUrl);
+      if (!geometryMatch) {
+        throw new Error(`no geometry query parameter found in the issued URL: ${issuedUrl}`);
+      }
+      const geometry = JSON.parse(decodeURIComponent(geometryMatch[1]));
+      if (!geometry.spatialReference || geometry.spatialReference.wkid !== 102100) {
+        throw new Error(`expected spatialReference.wkid 102100, got ${JSON.stringify(geometry.spatialReference)}`);
+      }
+      if (!(Math.abs(geometry.x) > 1e6 && Math.abs(geometry.y) > 1e6)) {
+        throw new Error(`expected Mercator-magnitude coordinates (|x|,|y| > 1e6), got x=${geometry.x} y=${geometry.y}`);
+      }
+      // Control: the magnitudes must not merely coincide with the raw PROBE_LON/PROBE_LAT —
+      // proving this did not pass on a coincidence of magnitudes.
+      if (Math.abs(geometry.x) === Math.abs(PROBE_LON) || Math.abs(geometry.y) === Math.abs(PROBE_LAT)) {
+        throw new Error(`geometry coordinates coincide with raw degrees: x=${geometry.x} y=${geometry.y}`);
+      }
+    }
   }
 ];
 
