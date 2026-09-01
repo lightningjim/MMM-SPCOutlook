@@ -15,7 +15,10 @@
 # This script is the self-failing half of that argument. It locates each
 # known mutation site by a fixed anchor string, walks back to the opening
 # line of the METHOD that contains it, and fails loudly if an `await` token
-# appears anywhere in that window.
+# appears anywhere in that window. It also asserts that the number of
+# occurrences of each audited mutation text equals the number of sites it
+# enumerates, so a write site added or deleted for one of these two fields
+# cannot silently drop out of coverage (17-REVIEW WR-11).
 #
 # 17-REVIEW CR-02: it did NOT always do that. The window used to be found by
 # `awk 'NR<end && /\{[[:space:]]*$/{start=NR}'` — the last line at-or-above
@@ -58,6 +61,9 @@ DEFAULT_FILE="$SCRIPT_DIR/../node_helper.js"
 # repointed at a mutated copy of it by self_test() below.
 FILE="$DEFAULT_FILE"
 FAIL=0
+# How far below its anchor a mutation may sit. Every real distance is <= 5 lines; see the
+# bounded-search comment in check_site (WR-11).
+MUTATION_SEARCH_WINDOW=8
 
 # check_site FIELD SITE ANCHOR MUTATION
 #   FIELD    - the helper-global field name, for the failure message
@@ -80,10 +86,18 @@ check_site() {
     return
   fi
 
+  # 17-REVIEW WR-11: BOUNDED to a small window after the anchor. This used to be
+  # `tail -n "+$anchor_line" | grep -F "$mutation" | head -1`, an unbounded search to
+  # end-of-file. All three `_unusableFeatureCount` mutations are byte-identical, so
+  # deleting one site's increment made its check silently latch onto the NEXT site's
+  # line hundreds of lines away and still report OK — a site could drop out of coverage
+  # without the script noticing. Every real anchor-to-mutation distance is 5 lines or
+  # fewer; a deleted mutation is now a FAIL rather than a silent re-target.
   local relative_mutation_line
-  relative_mutation_line=$(tail -n "+$anchor_line" "$FILE" | grep -n -F "$mutation" | head -1 | cut -d: -f1)
+  relative_mutation_line=$(sed -n "${anchor_line},$((anchor_line + MUTATION_SEARCH_WINDOW))p" "$FILE" \
+    | grep -n -F "$mutation" | head -1 | cut -d: -f1)
   if [ -z "$relative_mutation_line" ]; then
-    echo "FAIL: $field @ $site:$anchor_line — mutation text not found near its anchor: $mutation"
+    echo "FAIL: $field @ $site:$anchor_line — mutation text not found within $MUTATION_SEARCH_WINDOW lines of its anchor (deleted, moved, or reworded?): $mutation"
     FAIL=1
     return
   fi
@@ -117,9 +131,39 @@ check_site() {
   fi
 }
 
+# check_site_count FIELD EXPECTED MUTATION
+#
+# 17-REVIEW WR-11: the check_site invocations below are hardcoded literals, so a NEW write
+# site for an already-audited field was invisible — the script would still print "all sites
+# clean" while auditing a strict subset of the mutations. That enumeration gap is distinct
+# from the parser gap the header acknowledges. This derives the truth from the file and
+# compares it against what the enumeration claims, so adding (or removing) a write site
+# fails loudly and forces the audit to be re-run rather than silently inherited.
+#
+# What this still cannot see: an entirely NEW shared helper-global field, written with text
+# no one has enumerated here. That gap is irreducible without a parser, and is stated in
+# getSpcOutlook's batch comment as a reasoned obligation rather than a mechanical one.
+check_site_count() {
+  local field="$1" expected="$2" mutation="$3"
+  local actual
+  actual=$(grep -c -F "$mutation" "$FILE")
+  if [ "$actual" -ne "$expected" ]; then
+    echo "FAIL: $field has $actual write site(s) matching the audited mutation text, but this script enumerates $expected — a write site was added or removed, so re-run the concurrency audit in getSpcOutlook's batch comment and update the check_site list below"
+    FAIL=1
+  else
+    echo "OK: $field has exactly $expected write site(s), matching the $expected enumerated below"
+  fi
+}
+
 # The audited sites, as one callable unit so self_test() can re-run the exact
 # same checks against a deliberately-broken copy of the file.
 audit_all_sites() {
+  check_site_count "_unusableFeatureCount" 3 \
+    "this._unusableFeatureCount = (this._unusableFeatureCount || 0) + 1;"
+
+  check_site_count "_oldestStaleAt" 1 \
+    "this._oldestStaleAt = entry.timestamp;"
+
   check_site "_unusableFeatureCount" "extractPolygons" \
     "MMM-SPCOutlook extractPolygons: skipping a feature with unusable geometry" \
     "this._unusableFeatureCount = (this._unusableFeatureCount || 0) + 1;"

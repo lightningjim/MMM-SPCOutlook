@@ -3560,9 +3560,12 @@ module.exports = NodeHelper.create({
       // the four write sites enumerated below, that no `await` token appears between the
       // opening line of the method containing it and the mutation itself — nothing more.
       // It is a grep/awk textual check over four hand-named anchors, not a data-flow
-      // analysis, and it says nothing about whether the enumeration below is complete
-      // (see the LIMIT paragraph at the end). It does now carry a self-test that proves on
-      // every run that it is capable of failing. REASONED (not machine-checked): that the
+      // analysis. WR-11: it additionally asserts that the NUMBER of occurrences of each
+      // audited mutation text in this file equals the number of sites it enumerates, so
+      // adding or deleting a write site for one of these two fields is a loud failure
+      // rather than a silent subset — but a wholly NEW shared field, written with text no
+      // one has enumerated there, remains invisible to it (see the LIMIT paragraph at the
+      // end). It also carries a self-test that proves on every run that it can fail. REASONED (not machine-checked): that the
       // increments are commutative and the min-reduce idempotent, and that the enumeration
       // is complete. Those parts are argued here and must be re-argued, not inherited, by
       // anyone adding a field. `_unusableFeatureCount` has THREE write
@@ -3570,7 +3573,8 @@ module.exports = NodeHelper.create({
       // last reached only through `_runKmlAdvisoryRow`, one of this batch's own members —
       // audited here because it shares the field, not because it predates the batch) —
       // each a synchronous increment inside a `.forEach()`/`for` loop's `catch` block with
-      // no `await` between the read and the write. `_oldestStaleAt` has one write site,
+      // no `await` between the read and the write. The count of three is itself checked by
+      // the script rather than merely asserted here (WR-11). `_oldestStaleAt` has one write site,
       // `_noteStaleEntry`, a synchronous min-reduce with no `await` inside it. All four
       // mutation sites are read at this function's own start (`unusableFeaturesAtStart`,
       // above) and end (below) / reset (above). JavaScript is single-threaded with
