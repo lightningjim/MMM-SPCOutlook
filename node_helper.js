@@ -3394,8 +3394,19 @@ module.exports = NodeHelper.create({
       // `heatRiskDaysToRender` in MMM-SPCOutlook.js), so a substituted `payload: null` on
       // rejection degrades that one product to a silent no-risk render rather than a throw.
       //
-      // Concurrency-safety invariant (verified, not assumed — mechanically enforced by
-      // scripts/check-concurrency-invariant.sh): `_unusableFeatureCount` has THREE write
+      // Concurrency-safety invariant. ONE mechanical half and one reasoned half; 17-REVIEW
+      // CR-02 found this comment claiming the mechanical half covered more than it did, so
+      // the split is now stated explicitly rather than compressed into "verified, not
+      // assumed". MECHANICAL: scripts/check-concurrency-invariant.sh asserts, for each of
+      // the four write sites enumerated below, that no `await` token appears between the
+      // opening line of the method containing it and the mutation itself — nothing more.
+      // It is a grep/awk textual check over four hand-named anchors, not a data-flow
+      // analysis, and it says nothing about whether the enumeration below is complete
+      // (see the LIMIT paragraph at the end). It does now carry a self-test that proves on
+      // every run that it is capable of failing. REASONED (not machine-checked): that the
+      // increments are commutative and the min-reduce idempotent, and that the enumeration
+      // is complete. Those parts are argued here and must be re-argued, not inherited, by
+      // anyone adding a field. `_unusableFeatureCount` has THREE write
       // sites — `extractPolygons`, `evaluatePolygonsCollectAll`, and `checkInPolygon` (the
       // last reached only through `_runKmlAdvisoryRow`, one of this batch's own members —
       // audited here because it shares the field, not because it predates the batch) —
