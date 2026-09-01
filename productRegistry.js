@@ -534,9 +534,19 @@ const PRODUCT_REGISTRY = {
 // data-flow analysis. Pair it with the recorded spot-check inventory in 17-PATTERNS.md §9
 // (the paired artifact D-11 requires), which enumerates every actual label-to-value map by
 // name and file:line.
+//
+// 17-REVIEW WR-07: `dayLayers` and `layers` were missing from this list, and they are
+// exactly the shape it exists to catch — objects/arrays shared by reference across rows.
+// Two `arcgis-day-layers` rows sharing one `eroDayLayers` would send WSSI's Day-2 request
+// to the ERO's layer id and get back a well-formed 200 carrying a plausible payload: no
+// error anywhere, confidently wrong, silently. That is DATA-03's failure shape reached by
+// a different field, and the docstring's stated coverage limit (a closure reading a
+// foreign constant by name) does not cover it. Identity comparison works on arrays as
+// well as plain objects, so `layers` needs no special handling.
 const MAP_FIELDS = ["valueToTier", "tierToText", "tierToColor", "displayColor",
                      "excludedLabels", "droughtLabels", "excludedLabelKeys", "droughtLabelKeys",
-                     "toValue", "valueToText", "valueToColor"];
+                     "toValue", "valueToText", "valueToColor",
+                     "dayLayers", "layers"];
 function assertNoSharedRegistryMaps(registry) {
   const seen = new Map(); // object identity -> row id
   for (const [rowId, row] of Object.entries(registry)) {

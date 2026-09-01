@@ -7124,11 +7124,53 @@ const scenarios = [
         throw new Error(`expected the throw message to name both row ids and the field, got: ${threw.message}`);
       }
 
+      // 17-REVIEW WR-07: the same fixture for `dayLayers`, the field the list used to omit.
+      // Two arcgis-day-layers rows sharing one dayLayers map would send one product's
+      // Day-N request to the other's layer id — a well-formed 200 carrying a plausible
+      // payload, with no error anywhere. Driven separately from valueToTier because a
+      // MAP_FIELDS entry can be dropped one at a time, and a shared assertion over one
+      // field proves nothing about another.
+      const sharedDayLayers = { 1: 10, 2: 11 };
+      let dayLayersThrew = null;
+      try {
+        assertNoSharedRegistryMaps({
+          rowOne: { dayLayers: sharedDayLayers },
+          rowTwo: { dayLayers: sharedDayLayers }
+        });
+      } catch (err) {
+        dayLayersThrew = err;
+      }
+      if (!dayLayersThrew || !dayLayersThrew.message.includes("dayLayers")) {
+        throw new Error(
+          "WR-07: expected assertNoSharedRegistryMaps to throw naming `dayLayers` on two rows sharing one " +
+          `dayLayers object by reference, got: ${dayLayersThrew ? dayLayersThrew.message : "no throw"}`
+        );
+      }
+
+      // ...and for `layers`, the hazard-window rows' array of layer descriptors. Identity
+      // comparison must work on an array exactly as it does on a plain object.
+      const sharedLayers = [{ id: 4 }, { id: 5 }];
+      let layersThrew = null;
+      try {
+        assertNoSharedRegistryMaps({
+          rowOne: { layers: sharedLayers },
+          rowTwo: { layers: sharedLayers }
+        });
+      } catch (err) {
+        layersThrew = err;
+      }
+      if (!layersThrew || !layersThrew.message.includes("layers")) {
+        throw new Error(
+          "WR-07: expected assertNoSharedRegistryMaps to throw naming `layers` on two rows sharing one " +
+          `layers array by reference, got: ${layersThrew ? layersThrew.message : "no throw"}`
+        );
+      }
+
       // Control 1: distinct-but-structurally-identical objects must NOT throw — the check
       // is object identity, not deep equality.
       const fixtureDistinct = {
-        rowOne: { valueToTier: { 1: "A" } },
-        rowTwo: { valueToTier: { 1: "A" } }
+        rowOne: { valueToTier: { 1: "A" }, dayLayers: { 1: 10 }, layers: [{ id: 4 }] },
+        rowTwo: { valueToTier: { 1: "A" }, dayLayers: { 1: 10 }, layers: [{ id: 4 }] }
       };
       assertNoSharedRegistryMaps(fixtureDistinct); // must not throw
 
