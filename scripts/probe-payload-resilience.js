@@ -5931,6 +5931,237 @@ const scenarios = [
       }
     }
   },
+  {
+    // D-07 / 16 D-15: a per-item data-age trip sets the badge but is excluded from
+    // _staleAsOf — that field describes fetch/network recency, not WPC's own publish
+    // age, and an hours-old HeatRisk tile must not make the badge speak for SPC data
+    // fetched moments ago. Applied PER item surviving HEAT-04's dedupe — live capture
+    // shows idp_filedate varying by ~15 minutes across the seven items, unlike the
+    // Hazards Outlook's per-layer uniformity, so an implementation reading only the
+    // first item's filedate must fail here.
+    // Mutation to prove RED: remove the per-item age check.
+    name: "heatrisk-stale-item-sets-badge-not-staleAsOf",
+    run: async (helper) => {
+      const maxAgeHours = PRODUCT_REGISTRY.heatRisk.maxDataAgeHours;
+      const HOUR = 60 * 60 * 1000;
+      const agedFiledate = HEATRISK_NOW_MS - (maxAgeHours + 5) * HOUR;
+
+      resetHelper(helper);
+      resetLogs();
+      helper._nowMs = () => HEATRISK_NOW_MS;
+      helper._products = { showHeatRisk: true };
+
+      const items = [];
+      for (let d = 1; d <= 7; d++) {
+        items.push(heatRiskCatalogItem({
+          name: `HeatRisk_${d}_Mercator`,
+          validtime: heatRiskValidtimeForDay(d),
+          filedate: d === 5 ? agedFiledate : HEATRISK_NOW_MS
+        }));
+      }
+      const values = items.map((_, i) => String((i + 1) % 5));
+
+      // Precondition guard: exactly one item older than maxAgeHours, the rest fresh.
+      const ages = items.map((it) => (HEATRISK_NOW_MS - it.attributes.idp_filedate) / HOUR);
+      const agedCount = ages.filter((a) => a > maxAgeHours).length;
+      if (agedCount !== 1) {
+        throw new Error(`precondition failed: expected exactly one item older than ${maxAgeHours}h, computed ages(h)=${JSON.stringify(ages)}`);
+      }
+
+      installHttp(helper, heatRiskRoutes({
+        heatRisk: () => httpResponse({
+          body: heatRiskIdentifyResponse({ items, values }),
+          etag: "heatrisk-stale-item-v1"
+        })
+      }));
+      const out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showHeatRisk: true });
+      assertPayloadIntact(out);
+      assertHeatRiskBlockIntact(out);
+
+      if (out._stale !== true) {
+        throw new Error(`D-07: expected _stale set when one surviving item exceeds maxDataAgeHours=${maxAgeHours}h, got ${out._stale}`);
+      }
+      if (out._staleAsOf !== null && out._staleAsOf !== undefined) {
+        throw new Error(
+          `D-07/16 D-15: a data-age trip dragged _staleAsOf along with it — this would make the badge speak for ` +
+          `SPC data fetched moments ago while describing a WPC file up to ${maxAgeHours}h old, got _staleAsOf=${out._staleAsOf}`
+        );
+      }
+
+      // Control 1: a genuine fetch failure (warm, then fail within the stale-fallback
+      // window) must leave a NUMERIC _staleAsOf — proving the primary assertion
+      // measures a deliberate omission, not a _staleAsOf this harness never populates
+      // for HeatRisk.
+      resetHelper(helper);
+      resetLogs();
+      helper._nowMs = () => HEATRISK_NOW_MS;
+      helper._products = { showHeatRisk: true };
+      const freshItems = [];
+      for (let d = 1; d <= 7; d++) {
+        freshItems.push(heatRiskCatalogItem({ name: `HeatRisk_${d}_Mercator`, validtime: heatRiskValidtimeForDay(d) }));
+      }
+      const freshValues = freshItems.map((_, i) => String((i + 1) % 5));
+      installHttp(helper, heatRiskRoutes({
+        heatRisk: () => httpResponse({
+          body: heatRiskIdentifyResponse({ items: freshItems, values: freshValues }),
+          etag: "heatrisk-stale-item-control1-v1"
+        })
+      }));
+      const warm = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showHeatRisk: true });
+      if (warm._stale) {
+        throw new Error("control 1 warm-up: an all-fresh poll was unexpectedly flagged stale");
+      }
+      helper._updateInterval = 60;
+      const entry = helper._geoJsonCache.get(HEATRISK_URL);
+      if (!entry) throw new Error("control 1 warm-up: no cache entry for the HeatRisk URL");
+      entry.timestamp = Date.now() - 65 * 60 * 1000; // within the 2x-interval stale-fallback window
+      installHttp(helper, heatRiskRoutes({
+        heatRisk: () => httpResponse({ status: 503, text: "service unavailable" })
+      }));
+      const failed = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showHeatRisk: true });
+      if (typeof failed._staleAsOf !== "number") {
+        throw new Error(
+          `control 1: a genuine fetch failure did not leave a numeric _staleAsOf — got ${failed._staleAsOf}, ` +
+          "which would make the primary assertion above vacuous"
+        );
+      }
+
+      // Control 2: the aged idp_filedate lands on a DEDUPED-AWAY LOSER — _stale must NOT
+      // be set, proving the age check runs on surviving items only (D-07's "applied per
+      // item surviving HEAT-04's dedupe").
+      resetHelper(helper);
+      resetLogs();
+      helper._nowMs = () => HEATRISK_NOW_MS;
+      helper._products = { showHeatRisk: true };
+      const day3Loser = heatRiskCatalogItem({
+        name: "HeatRisk_3_Mercator_loser", validtime: heatRiskValidtimeForDay(3), filedate: agedFiledate
+      });
+      const day3Winner = heatRiskCatalogItem({
+        name: "HeatRisk_3_Mercator", validtime: heatRiskValidtimeForDay(3), filedate: HEATRISK_NOW_MS
+      });
+      const otherDays = [1, 2, 4, 5, 6, 7].map((d) =>
+        heatRiskCatalogItem({ name: `HeatRisk_${d}_Mercator`, validtime: heatRiskValidtimeForDay(d) })
+      );
+      const dedupeItems = [otherDays[0], otherDays[1], day3Loser, day3Winner, otherDays[2], otherDays[3], otherDays[4], otherDays[5]];
+      const dedupeValues = [1, 2, 4, 1, 3, 0, 2, 1].map(String);
+      installHttp(helper, heatRiskRoutes({
+        heatRisk: () => httpResponse({
+          body: heatRiskIdentifyResponse({ items: dedupeItems, values: dedupeValues }),
+          etag: "heatrisk-stale-item-control2-v1"
+        })
+      }));
+      const controlOut2 = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showHeatRisk: true });
+      assertPayloadIntact(controlOut2);
+      assertHeatRiskBlockIntact(controlOut2);
+      if (controlOut2._stale) {
+        throw new Error(
+          `control 2: an aged idp_filedate on a deduped-away loser unexpectedly set _stale=${controlOut2._stale} — ` +
+          "the age check must run on surviving items only"
+        );
+      }
+    }
+  },
+  {
+    // Pins the day-offset-cache-staleness class Phase 16 discovered ("day-offset drift
+    // on a cache hit") and this phase inherits: HeatRisk's day key is derived by
+    // comparing a STATIC idp_validtime against TODAY'S LIVE CLOCK, from ONE URL covering
+    // all seven days. Caching an already-bucketed day-keyed result would silently
+    // misdate every category by one day per elapsed day, with no error and no badge.
+    // Mutation to prove RED: change _cacheHeatRiskTuples to store the bucketed
+    // { day1: ..., day2: ... } result and the runner to return it directly on a hit —
+    // i.e. adopt _runArcGisDayProduct's cache shape.
+    name: "heatrisk-day-offset-recomputed-on-cache-hit",
+    run: async (helper) => {
+      resetHelper(helper);
+      resetLogs();
+      helper._nowMs = () => HEATRISK_NOW_MS;
+      helper._products = { showHeatRisk: true };
+
+      const items = [];
+      for (let d = 1; d <= 7; d++) {
+        items.push(heatRiskCatalogItem({ name: `HeatRisk_${d}_Mercator`, validtime: heatRiskValidtimeForDay(d) }));
+      }
+      const values = items.map((_, i) => String((i + 1) % 5));
+      const bodyFn = () => httpResponse({
+        body: heatRiskIdentifyResponse({ items, values }),
+        etag: "heatrisk-day-offset-v1"
+      });
+      const fetchFn = installHttp(helper, heatRiskRoutes({ heatRisk: bodyFn }));
+
+      const warm = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showHeatRisk: true });
+      assertPayloadIntact(warm);
+      assertHeatRiskBlockIntact(warm);
+      for (let d = 1; d <= 7; d++) {
+        const expected = Number(values[d - 1]);
+        if (warm.heatRisk["day" + d].category !== expected) {
+          throw new Error(`warm-up: expected day${d} category ${expected}, got ${warm.heatRisk["day" + d].category}`);
+        }
+      }
+
+      // Precondition guard: the cache entry exists and its stored tuples carry NO key
+      // matching /^day\d+$/ and no dayOffset key — the clock-independent whitelist
+      // actually held. Without this, the assertion below could not distinguish a
+      // correct re-bucketing from a lucky replay.
+      const entry = helper._geoJsonCache.get(HEATRISK_URL);
+      if (!entry || !entry.result || !Array.isArray(entry.result.tuples)) {
+        throw new Error(`precondition failed: no cache entry (or malformed tuples) for the HeatRisk URL: ${JSON.stringify(entry)}`);
+      }
+      for (const tuple of entry.result.tuples) {
+        const keys = Object.keys(tuple);
+        const badKey = keys.find((k) => /^day\d+$/.test(k) || k === "dayOffset" || k === "offsetStart" || k === "offsetEnd");
+        if (badKey) {
+          throw new Error(`precondition failed: cached tuple carries a clock-dependent key "${badKey}": ${JSON.stringify(entry.result.tuples)}`);
+        }
+      }
+
+      // Advance the clock by exactly one day and re-run with the SAME body/etag, so the
+      // fetch takes the cache-hit path. The route is deliberately NOT reinstalled here —
+      // fetchFn's own call log must accumulate across both polls for the control below.
+      helper._nowMs = () => HEATRISK_NOW_MS + 86400000;
+      const advanced = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showHeatRisk: true });
+      assertPayloadIntact(advanced);
+      assertHeatRiskBlockIntact(advanced);
+
+      // Control: the second poll actually took the cache-hit path — a matching ETag on
+      // the second request. Without this the scenario could pass by simply refetching,
+      // which proves nothing about the cache contract.
+      const identifyCalls = fetchFn.calls.filter((c) => c.url.includes(HEATRISK_URL));
+      if (identifyCalls.length !== 2) {
+        throw new Error(`control failed: expected exactly two HeatRisk identify requests, got ${identifyCalls.length}`);
+      }
+      if (identifyCalls[1].headers["If-None-Match"] !== "heatrisk-day-offset-v1") {
+        throw new Error(
+          `control failed: expected the second poll's request to carry If-None-Match: heatrisk-day-offset-v1, ` +
+          `proving a real cache entry was written and consulted, got headers=${JSON.stringify(identifyCalls[1].headers)}`
+        );
+      }
+
+      // Primary assertion: every category has shifted DOWN one day — what was day2 on
+      // the first run is day1 on the second, and day7 is now null (its tile is now
+      // yesterday's, falling outside 1..7). At least two specific correspondences are
+      // asserted so a partial shift is caught.
+      const expectedDay1 = Number(values[1]); // was day2's value
+      const expectedDay6 = Number(values[6]); // was day7's value
+      if (advanced.heatRisk.day1.category !== expectedDay1) {
+        throw new Error(
+          `day-offset drift: expected day1 to now carry the value formerly attributed to day2 (${expectedDay1}), ` +
+          `got ${advanced.heatRisk.day1.category} — a cached bucketed result would return the identical day mapping`
+        );
+      }
+      if (advanced.heatRisk.day6.category !== expectedDay6) {
+        throw new Error(
+          `day-offset drift: expected day6 to now carry the value formerly attributed to day7 (${expectedDay6}), ` +
+          `got ${advanced.heatRisk.day6.category}`
+        );
+      }
+      if (advanced.heatRisk.day7.category !== null) {
+        throw new Error(
+          `day-offset drift: expected day7 null (its tile is now yesterday's, outside the 1..7 span), got ` +
+          `${advanced.heatRisk.day7.category}`
+        );
+      }
+    }
+  }
 ];
 
 // ---------------------------------------------------------------------
