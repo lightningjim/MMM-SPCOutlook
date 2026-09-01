@@ -2,9 +2,9 @@
 gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: WPC & CPC Integration + Unified Day Report
-status: executing
-stopped_at: Phase 17 all 9 plans executed (17-09 UAT approved); phase close pending orchestrator
-last_updated: "2026-09-01T19:46:54.121Z"
+status: ready_to_plan
+stopped_at: Phase 17 complete (9/9) — ready to discuss Phase 18
+last_updated: 2026-09-01T19:56:40.950Z
 last_activity: "2026-09-01 -- Plan 17-09 complete: mutation inventory, DATA-03 spot check, and human UAT (all five ROADMAP success criteria PASS)"
 progress:
   total_phases: 7
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-08-15 after v2.0 scoping)
 
 **Core value:** Accurately and efficiently tell the user if they're in a weather risk zone right now — no false negatives, no unnecessary CPU burn on the RPi.
-**Current focus:** Phase 17 — nws-wpc-heatrisk-parallelized-fetching
+**Current focus:** Phase 18 — merge, precedence & unified payload schema
 
 ## Current Position
 
-Phase: 17 (nws-wpc-heatrisk-parallelized-fetching) — EXECUTING
-Plan: 9 of 9 (all plans executed; phase completion pending orchestrator close)
-Status: Executing Phase 17
-Last activity: 2026-09-01 -- Plan 17-09 complete: mutation inventory, DATA-03 spot check, and human UAT (all five ROADMAP success criteria PASS)
+Phase: 18
+Plan: Not started
+Status: Ready to plan
+Last activity: 2026-09-01
 
 Progress: [████▓░░░░░] 43%
 
@@ -36,7 +36,7 @@ Progress: [████▓░░░░░] 43%
 
 **Velocity (v1.0 + v1.1 + v1.2 baseline):**
 
-- Total plans completed: 35
+- Total plans completed: 44
 - v1.0: 7 phases, 13 plans (8 days)
 - v1.1: 3 phases, 3 plans (1 day)
 - v1.2: 3 phases, 8 plans, 17 tasks (~8 days, 36 commits)
