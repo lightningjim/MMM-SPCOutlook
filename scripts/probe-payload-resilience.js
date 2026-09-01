@@ -887,6 +887,12 @@ function installDeferredHttp(helper, routes, { timeoutMs = 3000 } = {}) {
         settleReject(err);
       }
     };
+    // Deliberately NOT unref()'d: an unref'd timer lets Node treat "nothing else keeping
+    // the event loop alive" as "the process is done" and exit silently — abandoning this
+    // promise forever with zero diagnostic and a misleading exit code 0, exactly the
+    // hang-with-no-diagnostic failure mode this timer exists to prevent. Refed, a
+    // genuinely abandoned request keeps the process alive until this fires and rejects
+    // loudly; on the happy path every request is released long before this ever fires.
     const timer = setTimeout(() => {
       removeFromPending();
       settleReject(new Error(
@@ -894,7 +900,6 @@ function installDeferredHttp(helper, routes, { timeoutMs = 3000 } = {}) {
         `released. Still-pending URLs at timeout: ${pending.map((p) => p.url).join(", ") || "(none other)"}`
       ));
     }, timeoutMs);
-    if (typeof timer.unref === "function") timer.unref();
     pending.push(entry);
     return promise;
   };
@@ -6417,6 +6422,213 @@ const scenarios = [
       // not throw. (The suite's own self-check additionally re-requires productRegistry.js
       // fresh, out of process, after the full run — see the plan's SUMMARY.)
       assertNoSharedRegistryMaps(PRODUCT_REGISTRY);
+    }
+  },
+  {
+    // PERF-01 / D-10: proves the six-member Promise.allSettled batch genuinely overlaps in
+    // flight — a later member's request issued before an earlier member's response
+    // resolves — the structural difference sequential awaits cannot produce. Drives the
+    // real path through the _fetch transport seam via installDeferredHttp (Task 2's new
+    // harness infrastructure), since no other stub in this suite can hold a request open
+    // long enough to observe simultaneous issuance without depending on wall-clock timing.
+    //
+    // The existing ~25-hop sequential SPC/fire-weather chain (PERF-01 out of scope,
+    // unchanged) runs BEFORE the new-product batch inside getSpcOutlook and shares this
+    // same _fetch seam, so this scenario must drain it first — releasing only its own
+    // requests, one at a time as they appear, via `.lyr.geojson`'s existing catch-all
+    // substring — before the six-member batch's own requests can even be issued. The
+    // moment a batch-member URL appears pending, draining stops so the overlap can be
+    // observed undisturbed. Uses adm-zip (via kmzOf) for a genuinely empty spcMD index
+    // KMZ, so it is gated on kml-deps like every other advisory-chain scenario.
+    name: "new-product-batch-fetches-issue-before-siblings-resolve",
+    requires: "kml-deps",
+    run: async (helper) => {
+      resetHelper(helper);
+      resetLogs();
+      helper._nowMs = () => HEATRISK_NOW_MS;
+
+      // Member id -> the one representative URL that identifies that member's own FIRST
+      // request, matching node_helper.js's own `members` array order exactly (excessiveRain
+      // is member 1, heatRisk is member 4).
+      const BATCH_MARKERS = [
+        { id: "excessiveRain", url: ERO_URLS[1] },
+        { id: "winterImpact", url: WSSI_URLS[1] },
+        { id: "hazardsOutlook", url: HAZARDS_URLS[PRODUCT_REGISTRY.hazardsOutlook.layers[0].id] },
+        { id: "heatRisk", url: HEATRISK_URL },
+        { id: "spcMD", url: PRODUCT_REGISTRY.spcMD.discoveryUrl },
+        { id: "mpd", url: PRODUCT_REGISTRY.mpd.discoveryUrl }
+      ];
+      const isBatchUrl = (url) => BATCH_MARKERS.some((m) => url.includes(m.url));
+      const pendingBatchIds = (fetchFn) => {
+        const found = new Set();
+        for (const p of fetchFn.pending) {
+          for (const m of BATCH_MARKERS) {
+            if (p.url.includes(m.url)) found.add(m.id);
+          }
+        }
+        return found;
+      };
+      const quietFeatures = () => httpResponse({ body: EMPTY_FEATURE_COLLECTION, etag: "batch-quiet-v1" });
+      const quietSpcMdIndex = () => httpResponse({
+        buffer: kmzOf({ "activemd.kml": activeIndexKml([]) }),
+        etag: "batch-spcmd-quiet-v1"
+      });
+      const quietMpdListing = () => httpResponse({ text: mpdListingHtml([]), etag: "batch-mpd-quiet-v1" });
+      const healthyHeatRisk = () => {
+        const items = healthyHeatRiskItems();
+        return httpResponse({
+          body: heatRiskIdentifyResponse({ items, values: items.map(() => "1") }),
+          etag: "batch-heatrisk-quiet-v1"
+        });
+      };
+      const buildRoutes = () => [
+        [".lyr.geojson", quietFeatures],
+        ...Object.values(ERO_URLS).map((u) => [u, quietFeatures]),
+        ...Object.values(WSSI_URLS).map((u) => [u, quietFeatures]),
+        ...Object.values(HAZARDS_URLS).map((u) => [u, quietFeatures]),
+        [HEATRISK_URL, healthyHeatRisk],
+        [PRODUCT_REGISTRY.spcMD.discoveryUrl, quietSpcMdIndex],
+        [PRODUCT_REGISTRY.mpd.discoveryUrl, quietMpdListing]
+      ];
+
+      // Drains every currently pending request that is NOT one of the six batch-member
+      // URLs above, a small number of event-loop turns at a time (setImmediate, never a
+      // wall-clock sleep), stopping the instant `minDistinctMembers` batch members are
+      // simultaneously pending — so a batch-member request is never accidentally released
+      // by this scenario's own draining before it can be observed.
+      const MAX_TICKS = 400;
+      async function drainOldChainUntil(fetchFn, minDistinctMembers) {
+        let ticks = 0;
+        while (pendingBatchIds(fetchFn).size < minDistinctMembers && ticks < MAX_TICKS) {
+          for (const entry of fetchFn.pending.filter((p) => !isBatchUrl(p.url))) entry.release();
+          await new Promise((resolve) => setImmediate(resolve));
+          ticks++;
+        }
+        return ticks;
+      }
+
+      // Releases EVERY currently pending request, repeatedly, until `promise` itself
+      // settles — a single releaseAll() only releases what is pending at that instant, but
+      // each product's own per-day/per-layer/per-candidate internal loop issues further
+      // requests as each prior one resolves (ERO's days 2-5, WSSI's days 2-3, every other
+      // Hazards layer, every spcMD/mpd candidate KMZ), each of which this same deferred
+      // stub holds pending in turn. Without continuous draining those later requests are
+      // never released, `promise` never settles, and — since nothing else is scheduled —
+      // the process would eventually run out of other work and either wait on the safety
+      // timers (real time, one 3000ms tick per still-open request) or, if a caller had
+      // unref()'d them, exit silently with no diagnostic at all.
+      async function driveToCompletion(fetchFn, promise) {
+        let settled = false;
+        promise.then(() => { settled = true; }, () => { settled = true; });
+        let ticks = 0;
+        while (!settled && ticks < MAX_TICKS) {
+          fetchFn.releaseAll();
+          await new Promise((resolve) => setImmediate(resolve));
+          ticks++;
+        }
+        if (!settled) {
+          throw new Error(
+            `driveToCompletion: outlook promise did not settle after ${MAX_TICKS} drain ticks — ` +
+            `still pending: ${fetchFn.pending.map((p) => p.url).join(", ") || "(none)"}`
+          );
+        }
+        return ticks;
+      }
+
+      const allSixToggles = {
+        showExcessiveRain: true, showWinterImpact: true, showHazardsOutlook: true,
+        showHeatRisk: true, showSPCMD: true, showMPD: true
+      };
+      helper._products = allSixToggles;
+      installDeferredHttp(helper, buildRoutes());
+      const outlookPromise = helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, allSixToggles);
+
+      const ticksUsed = await drainOldChainUntil(helper._fetch, 2);
+
+      // PRECONDITION GUARD: at least two different batch members pending — otherwise
+      // either the batch is sequential (the thing under test) or the fixture failed to
+      // enable multiple products. Distinguish the two in the message.
+      const pendingIds = pendingBatchIds(helper._fetch);
+      if (pendingIds.size < 2) {
+        throw new Error(
+          `precondition failed: expected at least two different batch members pending after ` +
+          `${ticksUsed} drain ticks, got ${pendingIds.size} (${[...pendingIds].join(", ") || "none"}). ` +
+          `Pending URLs: ${helper._fetch.pending.map((p) => p.url).join(", ") || "(none)"}. ` +
+          `Enabled toggles: ${JSON.stringify(allSixToggles)}`
+        );
+      }
+
+      // PRIMARY ASSERTION: member 4 (HeatRisk)'s request has been ISSUED (present in
+      // `calls`) while member 1 (ERO)'s day-1 request is STILL PENDING — i.e. HeatRisk was
+      // issued before ERO's response resolved. Under sequential awaits member 4 cannot
+      // even be issued until member 1's entire per-day loop completes, so this is exactly
+      // the structural difference a reversion to sequential awaits collapses.
+      const heatRiskIssued = helper._fetch.calls.some((c) => c.url.includes(HEATRISK_URL));
+      const eroDay1StillPending = helper._fetch.pending.some((p) => p.url.includes(ERO_URLS[1]));
+      if (!heatRiskIssued || !eroDay1StillPending) {
+        throw new Error(
+          `PERF-01: expected the HeatRisk identify URL (member 4) to be issued while the ERO day-1 URL ` +
+          `(member 1) is still pending, got heatRiskIssued=${heatRiskIssued} eroDay1StillPending=${eroDay1StillPending}. ` +
+          `Calls so far: ${helper._fetch.calls.map((c) => c.url).join(", ")}. ` +
+          `Pending: ${helper._fetch.pending.map((p) => p.url).join(", ")}`
+        );
+      }
+
+      // Release everything and let the poll complete. Concurrency must not have cost
+      // correctness.
+      await driveToCompletion(helper._fetch, outlookPromise);
+      const out = await outlookPromise;
+      assertPayloadIntact(out);
+      assertHeatRiskBlockIntact(out);
+      if (out._stale) {
+        throw new Error(`expected _stale unset after a fully successful concurrent batch, got ${out._stale}`);
+      }
+      for (const key of ["excessiveRain", "winterImpact", "hazardsOutlook", "heatRisk", "advisories"]) {
+        if (out[key] === undefined) {
+          throw new Error(`expected ${key} present in the settled payload, got no such key: ${Object.keys(out).join(", ")}`);
+        }
+      }
+
+      // SECOND ASSERTION (D-10's log): the per-run timing line carries a numeric timing
+      // for every one of the six member ids.
+      const timingLine = logCalls.find((line) => line.includes("new-product batch settled in"));
+      if (!timingLine) {
+        throw new Error(`expected a "new-product batch settled in <n>ms" log line, got: ${JSON.stringify(logCalls)}`);
+      }
+      const jsonStart = timingLine.indexOf("{");
+      if (jsonStart === -1) {
+        throw new Error(`expected the timing log line to carry a JSON payload, got: ${timingLine}`);
+      }
+      const timings = JSON.parse(timingLine.slice(jsonStart));
+      for (const m of BATCH_MARKERS) {
+        if (typeof timings[m.id] !== "number") {
+          throw new Error(`expected a numeric timing for member "${m.id}", got ${JSON.stringify(timings)}`);
+        }
+      }
+
+      // CONTROL ASSERTION: with only ONE product toggle enabled, exactly one batch member's
+      // request is pending at the same yield point — proving the multi-pending observation
+      // above is caused by the batch, not by the harness issuing spurious requests.
+      resetHelper(helper);
+      resetLogs();
+      helper._nowMs = () => HEATRISK_NOW_MS;
+      const singleToggle = { showHeatRisk: true };
+      helper._products = singleToggle;
+      installDeferredHttp(helper, buildRoutes());
+      const controlPromise = helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, singleToggle);
+      await drainOldChainUntil(helper._fetch, 1);
+      const controlPendingIds = pendingBatchIds(helper._fetch);
+      if (controlPendingIds.size !== 1) {
+        throw new Error(
+          `control: expected exactly one batch member pending with a single toggle enabled, got ` +
+          `${controlPendingIds.size} (${[...controlPendingIds].join(", ")}). Pending URLs: ` +
+          `${helper._fetch.pending.map((p) => p.url).join(", ")}`
+        );
+      }
+      await driveToCompletion(helper._fetch, controlPromise);
+      const controlOut = await controlPromise;
+      assertPayloadIntact(controlOut);
+      assertHeatRiskBlockIntact(controlOut);
     }
   }
 ];
