@@ -6703,6 +6703,129 @@ const scenarios = [
     }
   },
   {
+    // WR-09 (17-REVIEW): getSpcOutlook's concurrency audit enumerated two shared fields and
+    // closed with "LIMIT OF THIS CLAIM (does not generalise beyond these two fields)" —
+    // omitting `_geoJsonCache`, the largest shared mutable structure the batch touches, and
+    // the ONLY one whose access pattern is a read-modify-write spanning an await. Four of
+    // the six concurrent members write it. It is safe today only because their URL
+    // keyspaces happen to be disjoint, which was stated nowhere and enforced nowhere.
+    //
+    // Extending check-concurrency-invariant.sh to cover it is not possible in kind: that
+    // script asserts "no await in the window", and here the await IS the pattern. So the
+    // premise is enforced instead, on the condition that actually tears an entry — two
+    // fetches for the SAME cache key in flight at once, whoever issued them. This scenario
+    // drives that condition directly, because no current pair of registry rows can produce
+    // it (which is the point: the check exists for the future row that can).
+    // Mutation to prove RED: remove the in-flight-key check from fetchGeoJsonCached.
+    name: "geojson-cache-concurrent-same-key-fetches-are-reported",
+    run: async (helper) => {
+      resetHelper(helper);
+      resetLogs();
+      helper._nowMs = () => HEATRISK_NOW_MS;
+
+      const url = ERO_URLS[1];
+      const fetchFn = installDeferredHttp(helper, [
+        [url, () => httpResponse({ body: EMPTY_FEATURE_COLLECTION, etag: "wr09-v1" })]
+      ]);
+
+      // Two concurrent fetches for ONE key: both enter, both read the (absent) entry, and
+      // both will write it back after their awaits resolve. Neither is released until both
+      // are in flight, so the overlap is guaranteed rather than raced for.
+      const first = helper.fetchGeoJsonCached(url);
+      const second = helper.fetchGeoJsonCached(url);
+
+      // Precondition guard: both really are in flight simultaneously. If the harness ever
+      // serialised them this scenario would assert nothing.
+      if (fetchFn.pending.length !== 2) {
+        fetchFn.releaseAll();
+        await Promise.allSettled([first, second]);
+        throw new Error(
+          `precondition failed: expected 2 concurrently-pending fetches for one cache key, got ` +
+          `${fetchFn.pending.length} — the two calls did not overlap, so no read-modify-write could interleave`
+        );
+      }
+
+      fetchFn.releaseAll();
+      await Promise.allSettled([first, second]);
+
+      const contention = logCalls.filter((line) => line.includes("two fetches are in flight for the SAME"));
+      if (contention.length !== 1) {
+        throw new Error(
+          `WR-09: two concurrent fetches for the same _geoJsonCache key produced ${contention.length} ` +
+          `contention reports, expected exactly 1. The batch's safety argument for _geoJsonCache assumes ` +
+          `every concurrent member addresses a disjoint URL set; nothing observes a violation of it: ` +
+          JSON.stringify(logCalls)
+        );
+      }
+      if (!contention[0].includes(url)) {
+        throw new Error(`WR-09: the contention report does not name the offending URL: ${contention[0]}`);
+      }
+
+      // Control 1: SEQUENTIAL fetches of the same key — the ordinary poll-after-poll case,
+      // and by far the most common thing this code does — must NOT report contention. A
+      // detector that fires on normal operation is noise, and noise is how a real report
+      // gets ignored.
+      resetHelper(helper);
+      resetLogs();
+      helper._nowMs = () => HEATRISK_NOW_MS;
+      installHttp(helper, [[url, () => httpResponse({ body: EMPTY_FEATURE_COLLECTION, etag: "wr09-seq-v1" })]]);
+      await helper.fetchGeoJsonCached(url);
+      await helper.fetchGeoJsonCached(url);
+      await helper.fetchGeoJsonCached(url);
+      const seqContention = logCalls.filter((line) => line.includes("two fetches are in flight for the SAME"));
+      if (seqContention.length !== 0) {
+        throw new Error(
+          `control 1: three SEQUENTIAL fetches of one key reported contention ${seqContention.length} ` +
+          `time(s) — the in-flight key was not released: ${JSON.stringify(seqContention)}`
+        );
+      }
+
+      // Control 2: the six real batch members, all enabled, must not trip it either. This
+      // is the disjoint-keyspace premise itself, asserted rather than assumed — and it is
+      // what turns the check from a tripwire for a hypothetical into a live statement about
+      // the product set as it actually ships.
+      resetHelper(helper);
+      resetLogs();
+      helper._nowMs = () => HEATRISK_NOW_MS;
+      const allProducts = {
+        showExcessiveRain: true, showWinterImpact: true, showHazardsOutlook: true,
+        showHeatRisk: true, showSpcMD: true, showMpd: true
+      };
+      helper._products = allProducts;
+      installHttp(helper, heatRiskRoutes());
+      const out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, allProducts);
+      assertPayloadIntact(out);
+      const batchContention = logCalls.filter((line) => line.includes("two fetches are in flight for the SAME"));
+      if (batchContention.length !== 0) {
+        throw new Error(
+          "control 2: the shipped six-member batch violates its own disjoint-URL premise — two members " +
+          `address the same _geoJsonCache key concurrently: ${JSON.stringify(batchContention)}`
+        );
+      }
+
+      // Control 3: the detector is one-shot per process, like the HeatRisk log guards, so a
+      // genuine violation cannot flood the log on every poll.
+      resetHelper(helper);
+      resetLogs();
+      helper._nowMs = () => HEATRISK_NOW_MS;
+      const fetchFn3 = installDeferredHttp(helper, [
+        [url, () => httpResponse({ body: EMPTY_FEATURE_COLLECTION, etag: "wr09-oneshot-v1" })]
+      ]);
+      const a = helper.fetchGeoJsonCached(url);
+      const b = helper.fetchGeoJsonCached(url);
+      const c = helper.fetchGeoJsonCached(url);
+      fetchFn3.releaseAll();
+      await Promise.allSettled([a, b, c]);
+      const oneShot = logCalls.filter((line) => line.includes("two fetches are in flight for the SAME"));
+      if (oneShot.length !== 1) {
+        throw new Error(
+          `control 3: expected the contention report to be one-shot, got ${oneShot.length} reports from ` +
+          "three concurrent same-key fetches"
+        );
+      }
+    }
+  },
+  {
     // D-05: a gap at the TAIL of the 1-7 grid (nothing resolved beyond the highest
     // present day) is silence with no badge — consistent with routine mosaic rotation,
     // where the newest tile has not yet landed. Live capture shows 7 catalog items

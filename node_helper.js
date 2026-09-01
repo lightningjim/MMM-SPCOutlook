@@ -244,6 +244,14 @@ module.exports = NodeHelper.create({
     // by anything upstream-controlled, so 16-REVIEW WR-06's unbounded-growth class stays
     // unrepresentable rather than merely bounded.
     this._loggedHeatRiskDayCollision = false;
+    // WR-09: cache keys currently being fetched, url -> in-flight count. `_geoJsonCache` is
+    // the largest shared mutable structure PERF-01's batch touches and the only one whose
+    // access pattern is a read-modify-write SPANNING an await (read the entry, await the
+    // fetch, write the entry back). Its safety rests entirely on the six members' URL
+    // keyspaces being disjoint, which was an unstated, unenforced premise. This makes the
+    // premise observable: see fetchGeoJsonCached.
+    this._inFlightCacheKeys = new Map();
+    this._loggedCacheKeyContention = false;
     this._products = this._productToggles();
   },
 
@@ -2564,6 +2572,56 @@ module.exports = NodeHelper.create({
    * @returns object with { data, cachedResult, stale, mode, newEtag, newHash } — data is null on cache hit or error
    */
   async fetchGeoJsonCached(url, isValidBody = (body) => this._isFeatureCollection(body)) {
+    // WR-09: `_geoJsonCache` is helper-global mutable state that four of PERF-01's six
+    // concurrent batch members write, and unlike `_unusableFeatureCount` and
+    // `_oldestStaleAt` its access pattern is a read-modify-write that SPANS an await —
+    // `_geoJsonCachedInner` reads the entry, awaits `_fetch`, then writes the entry back.
+    // check-concurrency-invariant.sh cannot express that invariant: the interleave point is
+    // inherent to the pattern rather than an accident to be forbidden, so "no await in the
+    // window" would be a guaranteed failure rather than a check. The safety argument here is
+    // a different KIND of argument — it rests on the six members' URL keyspaces being
+    // DISJOINT (four static base URLs, one lat/lon-derived identify URL, two host-scoped
+    // discovery trees), so no two concurrent readers ever address the same cache entry.
+    //
+    // That premise was previously neither stated nor enforced. It is enforced here, and it
+    // is enforced on the condition that actually matters rather than on member identity: a
+    // torn entry requires two fetches for the SAME key to be in flight at the same time,
+    // whoever issued them. A future product reusing a sibling's URL, a second module
+    // instance polling a different location, or a discovery tree that starts emitting a
+    // sibling's URL all produce exactly that, and all of them would otherwise be silent.
+    // Detection is deliberately a loud log rather than a throw or a lock: serialising the
+    // fetch would change behaviour to work around a bug that should be fixed, and throwing
+    // would turn a latent correctness risk into an immediate outage.
+    if (!this._inFlightCacheKeys) this._inFlightCacheKeys = new Map();
+    const inFlightForUrl = this._inFlightCacheKeys.get(url) || 0;
+    if (inFlightForUrl > 0 && !this._loggedCacheKeyContention) {
+      this._loggedCacheKeyContention = true;
+      Log.error(
+        "MMM-SPCOutlook fetchGeoJsonCached: two fetches are in flight for the SAME _geoJsonCache key at " +
+        "once (" + url + "). The concurrency-safety argument for _geoJsonCache in getSpcOutlook's batch " +
+        "comment assumes every concurrent member addresses a DISJOINT set of URLs; that assumption no " +
+        "longer holds, and the read-modify-write around the fetch can now produce a torn cache entry."
+      );
+    }
+    this._inFlightCacheKeys.set(url, inFlightForUrl + 1);
+    try {
+      return await this._fetchGeoJsonCachedInner(url, isValidBody);
+    } finally {
+      const remaining = (this._inFlightCacheKeys.get(url) || 1) - 1;
+      if (remaining <= 0) {
+        this._inFlightCacheKeys.delete(url);
+      } else {
+        this._inFlightCacheKeys.set(url, remaining);
+      }
+    }
+  },
+
+  /**
+   * The body of `fetchGeoJsonCached`, split out only so the wrapper above can do its
+   * in-flight-key bookkeeping in a `finally` without threading one through this function's
+   * many return points. Never call this directly — the wrapper is the contract.
+   */
+  async _fetchGeoJsonCachedInner(url, isValidBody = (body) => this._isFeatureCollection(body)) {
     const entry = this._geoJsonCache.get(url);
 
     const headers = {};
@@ -3527,9 +3585,27 @@ module.exports = NodeHelper.create({
       // `socketNotificationReceived`) is confirmed to never enter this function's own call
       // graph — it is read/written only inside `socketNotificationReceived`, so a batch
       // built entirely inside `getSpcOutlook` cannot observe or bypass it.
-      // LIMIT OF THIS CLAIM (does not generalise beyond these two fields): a future helper-
-      // global field lacking the same three properties (synchronous write, no `await`
-      // inside the mutation, commutative reduce) needs this audit repeated, not inherited.
+      //
+      // A THIRD shared structure, argued differently (WR-09): `_geoJsonCache` is the largest
+      // shared mutable structure this batch touches — four of the six members write it — and
+      // it is the only one whose access pattern is a read-modify-write that SPANS an await:
+      // `fetchGeoJsonCached` reads `_geoJsonCache.get(url)`, awaits `_fetch(url)`, and then
+      // the runners write `_geoJsonCache.set(url, ...)`. The synchronous-mutation argument
+      // above therefore does NOT apply to it, and check-concurrency-invariant.sh cannot
+      // audit it: the interleave point is inherent to the pattern, not an accident to
+      // forbid. Its safety rests on a different premise entirely — that the six members'
+      // URL keyspaces are DISJOINT (four static base URLs, one lat/lon-derived identify URL,
+      // two host-scoped discovery trees), so no two concurrent readers ever address the same
+      // cache entry and there is no read-modify-write to interleave. That premise was
+      // previously unstated here and unenforced anywhere. It is now enforced at runtime by
+      // the in-flight-key check at the top of `fetchGeoJsonCached`, which logs loudly if two
+      // fetches for one key are ever in flight at once — the condition that actually tears
+      // an entry, independent of which member issued them.
+      //
+      // LIMIT OF THIS CLAIM (does not generalise beyond the three structures named above):
+      // a future helper-global field lacking either the synchronous-write properties
+      // (synchronous write, no `await` inside the mutation, commutative reduce) or an
+      // enforced key-disjointness premise needs this audit repeated, not inherited.
       const kmlRows = Object.values(PRODUCT_REGISTRY).filter((row) => row.kind === "kml-advisory");
 
       const members = [
