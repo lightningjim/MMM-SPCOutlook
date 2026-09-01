@@ -5840,6 +5840,136 @@ const scenarios = [
     }
   },
   {
+    // CR-01 (17-REVIEW): D-06/HEAT-01's contract is "anything that is not an integer 0-4
+    // becomes category: null — never coerced to 0". `Number("")`, `Number(null)`,
+    // `Number("  ")`, `Number(false)` and `Number([])` are ALL exactly 0, and 0 satisfies
+    // `Number.isInteger(0) && 0 >= 0 && 0 <= 4` — so a degraded `properties.Values` used to
+    // render seven affirmative days of "Little to No Risk" (category 0), with resolvedDays
+    // non-empty so D-04's all-NoData branch never fired: no ⚠ badge, no log, no signal of
+    // any kind. That is the confident-all-clear-during-a-heat-wave shape this project's
+    // value statement forbids, on a heat-SAFETY product. "NoData" alone was never the only
+    // absence sentinel a degraded upstream can emit.
+    //
+    // Each falsy-but-Number-zeroing shape is driven as its own sub-case so a partial
+    // regression (e.g. handling "" but not null) names the exact offender rather than
+    // failing anonymously.
+    // Mutation to prove RED: restore `const parsedValue = Number(rawValue);` with the
+    // `rawValue !== "NoData"` guard in _cacheHeatRiskTuples.
+    name: "heatrisk-falsy-values-are-absence-never-category-zero",
+    run: async (helper) => {
+      // Every one of these is a value some degraded upstream can put in Values[i], and
+      // every one of them is `0` after Number(). None of them is a category.
+      const zeroingShapes = [
+        { label: "empty string", value: "" },
+        { label: "null", value: null },
+        { label: "whitespace-only string", value: "  " },
+        { label: "boolean false", value: false },
+        { label: "empty array", value: [] }
+      ];
+
+      // Precondition guard: this scenario is only meaningful if Number() really does zero
+      // every shape above. If a future JS engine changed that, the scenario would be
+      // asserting nothing and must say so rather than pass quietly.
+      for (const shape of zeroingShapes) {
+        if (Number(shape.value) !== 0) {
+          throw new Error(
+            `precondition failed: Number(${JSON.stringify(shape.value)}) is ${Number(shape.value)}, not 0 — ` +
+            "this scenario exists to prove those exact shapes are not coerced to category 0"
+          );
+        }
+      }
+
+      for (const shape of zeroingShapes) {
+        resetHelper(helper);
+        resetLogs();
+        helper._nowMs = () => HEATRISK_NOW_MS;
+        helper._products = { showHeatRisk: true };
+
+        const items = [];
+        for (let d = 1; d <= 7; d++) {
+          items.push(heatRiskCatalogItem({ name: `HeatRisk_${d}_Mercator`, validtime: heatRiskValidtimeForDay(d) }));
+        }
+        const values = items.map(() => shape.value);
+
+        installHttp(helper, heatRiskRoutes({
+          heatRisk: () => httpResponse({
+            body: heatRiskIdentifyResponse({ items, values }),
+            etag: `heatrisk-falsy-${zeroingShapes.indexOf(shape)}-v1`
+          })
+        }));
+
+        const out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showHeatRisk: true });
+        assertPayloadIntact(out);
+        assertHeatRiskBlockIntact(out);
+
+        for (let d = 1; d <= 7; d++) {
+          const entry = out.heatRisk["day" + d];
+          if (entry.category !== null) {
+            throw new Error(
+              `CR-01: Values entry ${shape.label} (${JSON.stringify(shape.value)}) was coerced to ` +
+              `category ${entry.category} ("${entry.text}") on day${d} — absence must be null, never 0. ` +
+              "This renders an affirmative all-clear on a heat-safety product from a degraded payload."
+            );
+          }
+        }
+
+        // A degraded payload must also SIGNAL. With every day null, resolvedDays is empty,
+        // so D-04's branch fires: badge plus a one-shot log. Without this half, a fix that
+        // nulled the categories but left the poll looking healthy would still hide the
+        // degradation behind a blank block.
+        if (out._stale !== true) {
+          throw new Error(
+            `CR-01: an all-${shape.label} Values payload left _stale=${out._stale} — a payload that ` +
+            "resolved no category at all must raise the staleness badge (D-04)"
+          );
+        }
+        const matches = logCalls.filter((line) => line.includes("no day in this poll resolved a real category"));
+        if (matches.length !== 1) {
+          throw new Error(
+            `CR-01: expected exactly one all-NoData-class log for an all-${shape.label} payload, got ` +
+            `${matches.length}: ${JSON.stringify(logCalls)}`
+          );
+        }
+      }
+
+      // Control: the real integer-string shape the live service emits still parses, and
+      // category 0 itself is still a legitimate reading when it arrives as "0". Without
+      // this, a fix that simply nulled everything would pass the assertions above while
+      // destroying the product.
+      resetHelper(helper);
+      resetLogs();
+      helper._nowMs = () => HEATRISK_NOW_MS;
+      helper._products = { showHeatRisk: true };
+      const controlItems = [];
+      for (let d = 1; d <= 7; d++) {
+        controlItems.push(heatRiskCatalogItem({ name: `HeatRisk_${d}_Mercator`, validtime: heatRiskValidtimeForDay(d) }));
+      }
+      const controlValues = ["0", "1", "2", "3", "4", "0", "2"];
+      installHttp(helper, heatRiskRoutes({
+        heatRisk: () => httpResponse({
+          body: heatRiskIdentifyResponse({ items: controlItems, values: controlValues }),
+          etag: "heatrisk-falsy-control-v1"
+        })
+      }));
+      const controlOut = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showHeatRisk: true });
+      assertPayloadIntact(controlOut);
+      assertHeatRiskBlockIntact(controlOut);
+      for (let d = 1; d <= 7; d++) {
+        const expected = Number(controlValues[d - 1]);
+        if (controlOut.heatRisk["day" + d].category !== expected) {
+          throw new Error(
+            `control: a genuine integer-string category was rejected — expected day${d} category ` +
+            `${expected}, got ${controlOut.heatRisk["day" + d].category}. A fix must reject absence, ` +
+            "not real readings (category 0 from a real \"0\" is a legitimate Little to No Risk)."
+          );
+        }
+      }
+      if (controlOut._stale) {
+        throw new Error(`control: a healthy integer-string payload was flagged stale (${controlOut._stale})`);
+      }
+    }
+  },
+  {
     // D-05: a gap at the TAIL of the 1-7 grid (nothing resolved beyond the highest
     // present day) is silence with no badge — consistent with routine mosaic rotation,
     // where the newest tile has not yet landed. Live capture shows 7 catalog items

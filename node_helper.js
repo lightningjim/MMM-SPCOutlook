@@ -555,9 +555,28 @@ module.exports = NodeHelper.create({
 
       // D-06/HEAT-01: the literal "NoData" sentinel, and anything that is not an integer
       // 0-4, becomes category: null — never thrown, never coerced to 0.
+      //
+      // 17-REVIEW CR-01: an earlier form of this read `Number(rawValue)` first and then
+      // range-checked the result, which inverted the contract above for a whole family of
+      // inputs — `Number("")`, `Number(null)`, `Number("  ")`, `Number(false)` and
+      // `Number([])` are ALL exactly 0, and 0 passes `Number.isInteger(v) && v >= 0 &&
+      // v <= 4`. A degraded `properties.Values` therefore rendered seven affirmative days
+      // of "Little to No Risk", and because `resolvedDays` was then non-empty, D-04's
+      // all-NoData branch never fired: no badge, no log, no signal. On a heat-SAFETY
+      // product that is the exact confident-all-clear-during-a-hazard shape this project
+      // exists to prevent.
+      //
+      // So the parse is now allow-list first, coerce second: ONLY a bare non-negative
+      // integer string (the live-observed shape — properties.Values carries strings) or a
+      // real JS number is even a candidate. Everything else — "NoData", "", "  ", null,
+      // false, [], {}, "1.5", "1e0", " 1 " with junk — is ABSENCE, and absence is null.
+      // The old explicit `rawValue !== "NoData"` guard is subsumed: "NoData" fails the
+      // integer-string test like every other non-numeric string, so there is no longer a
+      // privileged sentinel that alone means absence.
       const rawValue = tuple.rawValue;
-      const parsedValue = Number(rawValue);
-      const category = (rawValue !== "NoData" && Number.isInteger(parsedValue) && parsedValue >= 0 && parsedValue <= 4)
+      const isIntegerString = typeof rawValue === "string" && /^\d+$/.test(rawValue.trim());
+      const parsedValue = (isIntegerString || typeof rawValue === "number") ? Number(rawValue) : NaN;
+      const category = (Number.isInteger(parsedValue) && parsedValue >= 0 && parsedValue <= 4)
         ? parsedValue
         : null;
 
