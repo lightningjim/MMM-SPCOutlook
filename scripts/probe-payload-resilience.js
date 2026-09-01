@@ -5752,6 +5752,185 @@ const scenarios = [
       }
     }
   },
+  {
+    // D-05: a gap at the TAIL of the 1-7 grid (nothing resolved beyond the highest
+    // present day) is silence with no badge — consistent with routine mosaic rotation,
+    // where the newest tile has not yet landed. Live capture shows 7 catalog items
+    // spanning only 6 distinct idp_validtime values; a blanket gap-is-stale rule would
+    // badge that routine response.
+    // Mutation to prove RED: make any gap set anyStale (the blanket rule).
+    name: "heatrisk-tail-gap-is-silent",
+    run: async (helper) => {
+      resetHelper(helper);
+      resetLogs();
+      helper._nowMs = () => HEATRISK_NOW_MS;
+      helper._products = { showHeatRisk: true };
+
+      const days = [1, 2, 3, 4, 5];
+      const items = days.map((d) => heatRiskCatalogItem({ name: `HeatRisk_${d}_Mercator`, validtime: heatRiskValidtimeForDay(d) }));
+      const values = days.map((d) => String(d % 5));
+
+      // Precondition guard: exactly five items present, their computed day offsets
+      // against HEATRISK_NOW_MS are 1,2,3,4,5, and nothing buckets to 6 or 7.
+      const todayUtcMsForGuard = Date.UTC(2026, 7, 31);
+      const offsets = items.map((it) => Math.round((it.attributes.idp_validtime - todayUtcMsForGuard) / 86400000));
+      if (items.length !== 5 || JSON.stringify(offsets) !== JSON.stringify([1, 2, 3, 4, 5])) {
+        throw new Error(`precondition failed: expected exactly items at day offsets [1,2,3,4,5], computed ${JSON.stringify(offsets)}`);
+      }
+
+      installHttp(helper, heatRiskRoutes({
+        heatRisk: () => httpResponse({
+          body: heatRiskIdentifyResponse({ items, values }),
+          etag: "heatrisk-tail-gap-v1"
+        })
+      }));
+      const out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showHeatRisk: true });
+      assertPayloadIntact(out);
+      assertHeatRiskBlockIntact(out);
+
+      if (out._stale) {
+        throw new Error(`D-05: expected _stale unset on a tail-gap (days 6-7 missing) response, got ${out._stale}`);
+      }
+      for (const d of days) {
+        if (typeof out.heatRisk["day" + d].category !== "number") {
+          throw new Error(`D-05: expected day${d} to carry a numeric category, got ${JSON.stringify(out.heatRisk["day" + d])}`);
+        }
+      }
+      for (const d of [6, 7]) {
+        if (out.heatRisk["day" + d].category !== null) {
+          throw new Error(`D-05: expected day${d} (tail gap) null, got ${out.heatRisk["day" + d].category}`);
+        }
+      }
+
+      // Control: the same fixture with the day-3 item REMOVED (making it an interior
+      // gap) DOES set _stale — proving the "no badge" above is the tail branch and not a
+      // gap check that never fires.
+      resetHelper(helper);
+      resetLogs();
+      helper._nowMs = () => HEATRISK_NOW_MS;
+      helper._products = { showHeatRisk: true };
+      const interiorDays = [1, 2, 4, 5];
+      const interiorItems = interiorDays.map((d) => heatRiskCatalogItem({ name: `HeatRisk_${d}_Mercator`, validtime: heatRiskValidtimeForDay(d) }));
+      const interiorValues = interiorDays.map((d) => String(d % 5));
+      installHttp(helper, heatRiskRoutes({
+        heatRisk: () => httpResponse({
+          body: heatRiskIdentifyResponse({ items: interiorItems, values: interiorValues }),
+          etag: "heatrisk-tail-gap-control-v1"
+        })
+      }));
+      const controlOut = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showHeatRisk: true });
+      assertPayloadIntact(controlOut);
+      assertHeatRiskBlockIntact(controlOut);
+      if (controlOut._stale !== true) {
+        throw new Error(`control: expected _stale set when day3 is missing (an interior gap), got ${controlOut._stale}`);
+      }
+    }
+  },
+  {
+    // D-05: a gap at DAY 1, or any INTERIOR gap (resolved days on both sides), sets
+    // anyStale and logs once — the sequence itself is broken, and a day is being
+    // attributed by a rule that has just demonstrated it is unreliable. A missing Day 1
+    // during a heat wave rendering identically to a Day 1 with no heat risk would
+    // violate this project's core value statement ("no false negatives") directly.
+    // Mutation to prove RED: invert the `d < maxPresent` comparison, or drop the
+    // interior branch so all gaps are treated as tail gaps.
+    name: "heatrisk-day1-gap-sets-stale",
+    run: async (helper) => {
+      resetHelper(helper);
+      resetLogs();
+      helper._nowMs = () => HEATRISK_NOW_MS;
+      helper._products = { showHeatRisk: true };
+
+      // Arm 1: Day 1 missing, days 2-7 present.
+      const arm1Days = [2, 3, 4, 5, 6, 7];
+      const arm1Items = arm1Days.map((d) => heatRiskCatalogItem({ name: `HeatRisk_${d}_Mercator`, validtime: heatRiskValidtimeForDay(d) }));
+      const arm1Values = arm1Days.map((d) => String(d % 5));
+
+      // Precondition guard: no item buckets to day 1, and days 2-7 are all present.
+      if (arm1Items.length !== 6) {
+        throw new Error(`precondition failed: expected 6 items in arm 1, got ${arm1Items.length}`);
+      }
+
+      installHttp(helper, heatRiskRoutes({
+        heatRisk: () => httpResponse({
+          body: heatRiskIdentifyResponse({ items: arm1Items, values: arm1Values }),
+          etag: "heatrisk-day1-gap-v1"
+        })
+      }));
+      const out1 = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showHeatRisk: true });
+      assertPayloadIntact(out1);
+      assertHeatRiskBlockIntact(out1);
+
+      if (out1._stale !== true) {
+        throw new Error(`D-05: expected _stale set when Day 1 is missing, got ${out1._stale}`);
+      }
+      if (out1.heatRisk.day1.category !== null) {
+        throw new Error(`D-05: expected day1 null when Day 1 is missing, got ${out1.heatRisk.day1.category}`);
+      }
+      // Assert days 2-7 are populated explicitly — a badge with an empty block would
+      // mean the whole poll was abandoned, which is a different branch (D-06).
+      for (const d of arm1Days) {
+        if (typeof out1.heatRisk["day" + d].category !== "number") {
+          throw new Error(`D-05: expected day${d} populated (not the whole poll abandoned), got ${JSON.stringify(out1.heatRisk["day" + d])}`);
+        }
+      }
+
+      // Arm 2: Day 3 missing (an INTERIOR gap), days 1,2,4,5,6,7 present — both arms
+      // exercise the `d < maxPresent` branch; asserting both is what proves the branch
+      // is position-aware rather than a "day 1 specifically" special case.
+      resetHelper(helper);
+      resetLogs();
+      helper._nowMs = () => HEATRISK_NOW_MS;
+      helper._products = { showHeatRisk: true };
+      const arm2Days = [1, 2, 4, 5, 6, 7];
+      const arm2Items = arm2Days.map((d) => heatRiskCatalogItem({ name: `HeatRisk_${d}_Mercator`, validtime: heatRiskValidtimeForDay(d) }));
+      const arm2Values = arm2Days.map((d) => String(d % 5));
+      installHttp(helper, heatRiskRoutes({
+        heatRisk: () => httpResponse({
+          body: heatRiskIdentifyResponse({ items: arm2Items, values: arm2Values }),
+          etag: "heatrisk-day1-gap-arm2-v1"
+        })
+      }));
+      const out2 = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showHeatRisk: true });
+      assertPayloadIntact(out2);
+      assertHeatRiskBlockIntact(out2);
+
+      if (out2._stale !== true) {
+        throw new Error(`D-05: expected _stale set when day3 (interior) is missing, got ${out2._stale}`);
+      }
+      if (out2.heatRisk.day3.category !== null) {
+        throw new Error(`D-05: expected day3 null on an interior gap, got ${out2.heatRisk.day3.category}`);
+      }
+      for (const d of arm2Days) {
+        if (typeof out2.heatRisk["day" + d].category !== "number") {
+          throw new Error(`D-05: expected day${d} populated on the interior-gap arm, got ${JSON.stringify(out2.heatRisk["day" + d])}`);
+        }
+      }
+
+      // Control: the tail-gap fixture from the previous scenario (days 1-5 present, 6-7
+      // missing) leaves _stale unset — proving this scenario's badge is the interior
+      // branch firing.
+      resetHelper(helper);
+      resetLogs();
+      helper._nowMs = () => HEATRISK_NOW_MS;
+      helper._products = { showHeatRisk: true };
+      const tailDays = [1, 2, 3, 4, 5];
+      const tailItems = tailDays.map((d) => heatRiskCatalogItem({ name: `HeatRisk_${d}_Mercator`, validtime: heatRiskValidtimeForDay(d) }));
+      const tailValues = tailDays.map((d) => String(d % 5));
+      installHttp(helper, heatRiskRoutes({
+        heatRisk: () => httpResponse({
+          body: heatRiskIdentifyResponse({ items: tailItems, values: tailValues }),
+          etag: "heatrisk-day1-gap-control-v1"
+        })
+      }));
+      const controlOut = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showHeatRisk: true });
+      assertPayloadIntact(controlOut);
+      assertHeatRiskBlockIntact(controlOut);
+      if (controlOut._stale) {
+        throw new Error(`control: expected _stale unset on a tail-gap-only fixture, got ${controlOut._stale}`);
+      }
+    }
+  },
 ];
 
 // ---------------------------------------------------------------------
