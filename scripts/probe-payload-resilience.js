@@ -1051,7 +1051,7 @@ const scenarios = [
       // line the real fetchGeoJsonCached emits for this body, named per URL.
       for (let d = 1; d <= 5; d++) {
         requireLog(
-          ["rejected an unusable response body for", ERO_URLS[d], "not a usable FeatureCollection"],
+          ["rejected an unusable response body for", ERO_URLS[d], "not a usable body"],
           `a rejected ERO body on day ${d} produced no diagnostic log line`
         );
       }
@@ -1598,7 +1598,7 @@ const scenarios = [
           throw new Error("last-known-good was served without the stale flag");
         }
         requireLog(
-          ["rejected an unusable response body for", ERO_URLS[1], "not a usable FeatureCollection"],
+          ["rejected an unusable response body for", ERO_URLS[1], "not a usable body"],
           "the degrade was not diagnosable from the log"
         );
         const entry = helper._geoJsonCache.get(ERO_URLS[1]);

@@ -1450,6 +1450,24 @@ module.exports = NodeHelper.create({
            body.exceededTransferLimit !== true && Array.isArray(body.features);
   },
   /**
+   * Body-shape validator for the HeatRisk ImageServer `identify` response, passed to
+   * `fetchGeoJsonCached` as its `isValidBody` argument. This response has no top-level
+   * `features` array at all — its features live at `body.catalogItems.features`, and its
+   * per-day values live at `body.properties.Values` — so it is a structurally different
+   * shape from `_isFeatureCollection`'s GeoJSON FeatureCollection contract, not a variant
+   * of it. Mirrors `_isFeatureCollection`'s `!body.error` guard: ArcGIS REST returns most
+   * failures as HTTP 200 with an `error` body, never a non-2xx status.
+   * @param body - the parsed identify response body
+   * @returns true only when body is a non-null object with a string `value`, an array
+   *   `properties.Values`, and an array `catalogItems.features`, and carries no `error` key
+   */
+  _isHeatRiskIdentifyResponse(body) {
+    return !!body && typeof body === "object" && !body.error &&
+           typeof body.value === "string" &&
+           !!body.properties && Array.isArray(body.properties.Values) &&
+           !!body.catalogItems && Array.isArray(body.catalogItems.features);
+  },
+  /**
    * Extract polygon features from a GeoJSON object, mapping labels to numeric values.
    * @param geojson - GeoJSON FeatureCollection containing Polygon and/or MultiPolygon features
    * @param toValue - function mapping a feature's LABEL string to a numeric value
@@ -2034,9 +2052,18 @@ module.exports = NodeHelper.create({
   /**
    * Fetch a GeoJSON URL with ETag/hash caching, returning parsed data or cached result on hit/error.
    * @param url - GeoJSON endpoint URL to fetch
+   * @param isValidBody - body-shape validator for the cache-miss branches; defaults to
+   *   `_isFeatureCollection` so every caller before this phase (SPC, fire weather, ERO,
+   *   WSSI, Hazards Outlook) is byte-identical in behavior. HeatRisk is the first caller to
+   *   pass a different validator: its identify response has no top-level `features` array at
+   *   all (features live at `body.catalogItems.features`), so `_isFeatureCollection` would
+   *   reject every single HeatRisk response as an unusable body, permanently. Phase 14's
+   *   WR-08/CR-02 hardening is what put a shape check inside this function in the first
+   *   place — this parameter generalizes that check rather than special-casing HeatRisk
+   *   inside `_isFeatureCollection` or forking a second copy of this ~170-line function.
    * @returns object with { data, cachedResult, stale, mode, newEtag, newHash } — data is null on cache hit or error
    */
-  async fetchGeoJsonCached(url) {
+  async fetchGeoJsonCached(url, isValidBody = (body) => this._isFeatureCollection(body)) {
     const entry = this._geoJsonCache.get(url);
 
     const headers = {};
@@ -2190,7 +2217,7 @@ module.exports = NodeHelper.create({
       // Cache miss — parse, validate the shape, and return new data
       const parsed = parseBody();
       if (!parsed.ok) return rejectBody(parsed.reason);
-      if (!this._isFeatureCollection(parsed.value)) return rejectBody('not a usable FeatureCollection');
+      if (!isValidBody(parsed.value)) return rejectBody('not a usable body');
       return { data: parsed.value, rawText, newEtag, newHash: null, mode: 'etag' };
     } else {
       // Hash mode — compute SHA256 of raw text
@@ -2206,7 +2233,7 @@ module.exports = NodeHelper.create({
       // Cache miss — parse, validate the shape, and return new data
       const parsed = parseBody();
       if (!parsed.ok) return rejectBody(parsed.reason);
-      if (!this._isFeatureCollection(parsed.value)) return rejectBody('not a usable FeatureCollection');
+      if (!isValidBody(parsed.value)) return rejectBody('not a usable body');
       return { data: parsed.value, rawText, newEtag: null, newHash, mode: 'hash' };
     }
   },
