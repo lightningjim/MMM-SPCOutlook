@@ -19,7 +19,7 @@
 // D-10 makes this suite the verification standard for the phase, so a run
 // that could not execute a scenario must never be reportable as green.
 
-const { PRODUCT_REGISTRY, daySpanOf } = require("../productRegistry.js");
+const { PRODUCT_REGISTRY, daySpanOf, assertNoSharedRegistryMaps } = require("../productRegistry.js");
 const {
   loadNodeHelper, loadFrontendModule, renderDom, resetHelper, resetLogs, turfStub, logCalls,
   hasRealKmlDeps, missingKmlDeps, makeKmzBuffer
@@ -826,6 +826,93 @@ function installHttp(helper, routes) {
     return httpResponse({ status: 503, text: "service unavailable" });
   };
   helper._fetch.calls = calls;
+  return helper._fetch;
+}
+
+// PERF-01 / D-10: no existing helper in this file can hold a request open — every route
+// above resolves synchronously or via a plain async function that resolves immediately.
+// Holding a request open until the SCENARIO explicitly releases it is the only way to
+// observe concurrent issuance (a later member's request issued before an earlier
+// member's response resolves) without depending on wall-clock timing, which would be
+// flaky on a Raspberry Pi and would not be a proof of structure at all. Placed here,
+// beside installHttp, rather than in module-stubs.js: it is a per-scenario network stub
+// built on the exact same httpResponse/route-matching conventions installHttp already
+// establishes in this file, not a node_helper-loading or global-seam concern the way
+// everything module-stubs.js owns (turf, kml-deps resolution, the frontend vm loader) is.
+//
+// Matches installHttp's routing/recording contract exactly (substring match against
+// `routes`, `{ url, headers }` recorded synchronously at call time, an unrouted URL takes
+// the same 503 default) but returns a PENDING promise for every matched route instead of
+// resolving immediately. Control surface, all live on `helper._fetch`:
+//   `pending`         — array of `{ url, release(), reject(err) }`, in issue order
+//   `releaseAll()`    — resolves every currently pending request
+//   `releaseMatching(substring)` — resolves only pending requests whose URL matches
+// A bounded safety timer (default 3000ms, well under this suite's sub-second runtime)
+// rejects any request never explicitly released, naming every URL still pending at that
+// moment — so a mis-written scenario fails loudly with a diagnosable message instead of
+// hanging the whole suite forever.
+function installDeferredHttp(helper, routes, { timeoutMs = 3000 } = {}) {
+  const calls = [];
+  const pending = [];
+  helper._fetch = (url, options) => {
+    calls.push({ url, headers: (options && options.headers) || {}, at: calls.length });
+    let handler = null;
+    for (const [matcher, candidate] of routes) {
+      if (url.includes(matcher)) { handler = candidate; break; }
+    }
+    if (!handler) {
+      // Unrouted: the same hard-failure default installHttp uses, resolved IMMEDIATELY
+      // (never held) — an unrouted URL must fail loudly, not hang the scenario.
+      return Promise.resolve(httpResponse({ status: 503, text: "service unavailable" }));
+    }
+    let settleResolve, settleReject;
+    const promise = new Promise((resolve, reject) => {
+      settleResolve = resolve;
+      settleReject = reject;
+    });
+    const removeFromPending = () => {
+      const idx = pending.indexOf(entry);
+      if (idx !== -1) pending.splice(idx, 1);
+    };
+    const entry = {
+      url,
+      release: () => {
+        clearTimeout(timer);
+        removeFromPending();
+        settleResolve(handler(url, options));
+      },
+      reject: (err) => {
+        clearTimeout(timer);
+        removeFromPending();
+        settleReject(err);
+      }
+    };
+    // Deliberately NOT unref()'d: an unref'd timer lets Node treat "nothing else keeping
+    // the event loop alive" as "the process is done" and exit silently — abandoning this
+    // promise forever with zero diagnostic and a misleading exit code 0, exactly the
+    // hang-with-no-diagnostic failure mode this timer exists to prevent. Refed, a
+    // genuinely abandoned request keeps the process alive until this fires and rejects
+    // loudly; on the happy path every request is released long before this ever fires.
+    const timer = setTimeout(() => {
+      removeFromPending();
+      settleReject(new Error(
+        `installDeferredHttp: safety timeout (${timeoutMs}ms) — request to ${url} was never ` +
+        `released. Still-pending URLs at timeout: ${pending.map((p) => p.url).join(", ") || "(none other)"}`
+      ));
+    }, timeoutMs);
+    pending.push(entry);
+    return promise;
+  };
+  helper._fetch.calls = calls;
+  helper._fetch.pending = pending;
+  helper._fetch.releaseAll = () => {
+    for (const entry of [...pending]) entry.release();
+  };
+  helper._fetch.releaseMatching = (substring) => {
+    for (const entry of [...pending]) {
+      if (entry.url.includes(substring)) entry.release();
+    }
+  };
   return helper._fetch;
 }
 
@@ -6160,6 +6247,388 @@ const scenarios = [
           `${advanced.heatRisk.day7.category}`
         );
       }
+    }
+  },
+  {
+    // D-03's gate term, pinned directly: a HeatRisk-only day above the floor must render
+    // its own row AND must not suppress the all-clear at the same time — the "gate speaks,
+    // render is silent" defect class Phase 15 shipped for MPD (MPD-01). Direct sibling of
+    // frontend-advisory-only-is-not-an-all-clear / frontend-hazards-window-band-only-is-
+    // not-an-all-clear, applied to HeatRisk.
+    name: "frontend-heatrisk-only-is-not-an-all-clear",
+    run: async (helper) => {
+      const frontend = loadFrontendModule();
+      const config = {
+        lat: PROBE_LAT, lon: PROBE_LON, extended: false, updateInterval: 60,
+        proximityWeighting: false, showExcessiveRain: false, showWinterImpact: false,
+        showHazardsOutlook: false, showHeatRisk: true, showMinorHeat: false
+      };
+      const allNullHeatRisk = () => {
+        const block = {};
+        for (let d = 1; d <= 7; d++) block["day" + d] = { category: null, text: "", color: "" };
+        return block;
+      };
+
+      // Precondition guard: the SAME otherwise-all-quiet payload with heatRisk carrying
+      // no reading at all must render the plain all-clear. If it does not, some OTHER
+      // term in the payload is already disqualifying the gate and this scenario proves
+      // nothing about HeatRisk.
+      const controlPayload = { ...noRiskPayloadWithAdvisory({ spcMD: [], mpd: [] }), heatRisk: allNullHeatRisk() };
+      const controlRendered = renderDom(frontend, { config, spcrisk: controlPayload });
+      if (controlRendered !== "No Severe Weather Risk") {
+        throw new Error(
+          "precondition failed: the otherwise-all-quiet control payload (heatRisk all null) did not " +
+          `render the plain all-clear — some other term is already disqualifying the gate: ${controlRendered}`
+        );
+      }
+
+      const heatRiskBlock = allNullHeatRisk();
+      heatRiskBlock.day3 = { category: 3, text: "Major", color: "e22f33" };
+      const payload = { ...noRiskPayloadWithAdvisory({ spcMD: [], mpd: [] }), heatRisk: heatRiskBlock };
+      const rendered = renderDom(frontend, { config, spcrisk: payload });
+      if (rendered.includes("No Severe Weather Risk")) {
+        throw new Error(
+          "D-03: a HeatRisk-only day above the floor (category 3, showMinorHeat false) suppressed the " +
+          `all-clear was not the outcome; instead it rendered the all-clear anyway: ${rendered}`
+        );
+      }
+      if (!rendered.includes("Heat Risk (Day 3)")) {
+        throw new Error(`D-03: a HeatRisk-only day above the floor did not render its own row: ${rendered}`);
+      }
+    }
+  },
+  {
+    // D-03's shared-predicate discipline plus D-01's floor — the scenario that would have
+    // caught Phase 15's MPD-invisible defect class. Arm A: a Minor (category 1) day with
+    // showMinorHeat off must render NEITHER its own row NOR nothing — a blank module is
+    // exactly the failure this pins, and it is what a gate reading the raw category while
+    // the render loop reads the floored one would produce. Arm B: the identical payload
+    // with showMinorHeat on flips to the opposite outcome, driven purely by the frontend
+    // flag (D-02: showMinorHeat never crosses the wire, so this payload is byte-identical
+    // in both arms).
+    name: "frontend-heatrisk-minor-floor-is-not-a-blank-module",
+    run: async (helper) => {
+      const frontend = loadFrontendModule();
+      const baseConfig = {
+        lat: PROBE_LAT, lon: PROBE_LON, extended: false, updateInterval: 60,
+        proximityWeighting: false, showExcessiveRain: false, showWinterImpact: false,
+        showHazardsOutlook: false, showHeatRisk: true
+      };
+      const allNullHeatRisk = () => {
+        const block = {};
+        for (let d = 1; d <= 7; d++) block["day" + d] = { category: null, text: "", color: "" };
+        return block;
+      };
+
+      const minorBlock = allNullHeatRisk();
+      minorBlock.day3 = { category: 1, text: "Minor", color: "f4f257" };
+      const payload = { ...noRiskPayloadWithAdvisory({ spcMD: [], mpd: [] }), heatRisk: minorBlock };
+
+      // Arm A: showMinorHeat off. A blank module (neither the row nor the all-clear) is
+      // exactly the failure D-03 exists to make unrepresentable.
+      const armA = renderDom(frontend, { config: { ...baseConfig, showMinorHeat: false }, spcrisk: payload });
+      if (armA.includes("Heat Risk (Day 3)")) {
+        throw new Error(`Arm A (showMinorHeat false): expected the Minor row filtered out by the floor, got: ${armA}`);
+      }
+      if (!armA.includes("No Severe Weather Risk")) {
+        throw new Error(`Arm A (showMinorHeat false): expected the all-clear restored, got a blank module: ${armA}`);
+      }
+
+      // Arm B: the SAME payload object, showMinorHeat on — the opposite outcome, driven
+      // only by the frontend flag.
+      const armB = renderDom(frontend, { config: { ...baseConfig, showMinorHeat: true }, spcrisk: payload });
+      if (!armB.includes("Heat Risk (Day 3)")) {
+        throw new Error(`Arm B (showMinorHeat true): expected the Minor row to render, got: ${armB}`);
+      }
+      if (armB.includes("No Severe Weather Risk")) {
+        throw new Error(`Arm B (showMinorHeat true): expected the all-clear suppressed by the rendered row, got: ${armB}`);
+      }
+
+      // Control: a category-2 (Moderate) day with showMinorHeat off DOES render — proving
+      // Arm A's non-render is the D-01 floor at work, not a renderer that never renders.
+      const moderateBlock = allNullHeatRisk();
+      moderateBlock.day3 = { category: 2, text: "Moderate", color: "ffc700" };
+      const controlPayload = { ...noRiskPayloadWithAdvisory({ spcMD: [], mpd: [] }), heatRisk: moderateBlock };
+      const controlRendered = renderDom(frontend, { config: { ...baseConfig, showMinorHeat: false }, spcrisk: controlPayload });
+      if (!controlRendered.includes("Heat Risk (Day 3)")) {
+        throw new Error(
+          `control: a category-2 day with showMinorHeat false did not render (${controlRendered}) — Arm A's ` +
+          "non-render would then prove nothing about the floor specifically"
+        );
+      }
+    }
+  },
+  {
+    // DATA-03 / D-11: a unit-style test of the validator itself, run once against a
+    // scenario-local fixture registry — never the real PRODUCT_REGISTRY — unlike every
+    // other entry in this file, which drives a poll through getSpcOutlook/getDom.
+    name: "registry-rejects-shared-label-maps-at-load-time",
+    run: async (helper) => {
+      // The shipped state is clean: this already ran once at productRegistry.js's own
+      // module-load call (or loadNodeHelper() could never have succeeded). Re-running it
+      // explicitly here means a future regression fails THIS scenario with a diagnosable
+      // message, rather than only ever crashing module load for the whole suite.
+      assertNoSharedRegistryMaps(PRODUCT_REGISTRY);
+
+      // A scenario-local fixture with two rows sharing the SAME valueToTier object by
+      // reference. Built fresh, sharing no object with the real PRODUCT_REGISTRY, so
+      // nothing below can mutate it.
+      const sharedMap = { 1: "A" };
+      const fixtureShared = {
+        rowOne: { valueToTier: sharedMap },
+        rowTwo: { valueToTier: sharedMap }
+      };
+      let threw = null;
+      try {
+        assertNoSharedRegistryMaps(fixtureShared);
+      } catch (err) {
+        threw = err;
+      }
+      if (!threw) {
+        throw new Error(
+          "expected assertNoSharedRegistryMaps to throw on two rows sharing the same valueToTier " +
+          "object by reference, it did not throw"
+        );
+      }
+      if (!threw.message.includes("rowOne") || !threw.message.includes("rowTwo") || !threw.message.includes("valueToTier")) {
+        throw new Error(`expected the throw message to name both row ids and the field, got: ${threw.message}`);
+      }
+
+      // Control 1: distinct-but-structurally-identical objects must NOT throw — the check
+      // is object identity, not deep equality.
+      const fixtureDistinct = {
+        rowOne: { valueToTier: { 1: "A" } },
+        rowTwo: { valueToTier: { 1: "A" } }
+      };
+      assertNoSharedRegistryMaps(fixtureDistinct); // must not throw
+
+      // Control 2: a row whose map field is undefined/null is skipped without throwing.
+      const fixtureMissing = {
+        rowOne: { valueToTier: sharedMap },
+        rowTwo: { valueToTier: undefined },
+        rowThree: { valueToTier: null }
+      };
+      assertNoSharedRegistryMaps(fixtureMissing); // must not throw
+
+      // Coverage limit (D-11's own documented gap, restated here rather than only in the
+      // validator's own comment): identity cannot see a toValue closure that reads a
+      // foreign constant BY NAME rather than sharing the object by reference.
+      // 17-PATTERNS.md §9's enumerated label-to-value table is the paired recorded
+      // spot-check artifact D-11 requires alongside this assertion — D-11 explicitly
+      // rejected the assertion alone as overstating its own coverage.
+
+      // The real PRODUCT_REGISTRY must remain provably unmutated by everything above —
+      // re-run the exact same call this scenario opened with and confirm it still does
+      // not throw. (The suite's own self-check additionally re-requires productRegistry.js
+      // fresh, out of process, after the full run — see the plan's SUMMARY.)
+      assertNoSharedRegistryMaps(PRODUCT_REGISTRY);
+    }
+  },
+  {
+    // PERF-01 / D-10: proves the six-member Promise.allSettled batch genuinely overlaps in
+    // flight — a later member's request issued before an earlier member's response
+    // resolves — the structural difference sequential awaits cannot produce. Drives the
+    // real path through the _fetch transport seam via installDeferredHttp (Task 2's new
+    // harness infrastructure), since no other stub in this suite can hold a request open
+    // long enough to observe simultaneous issuance without depending on wall-clock timing.
+    //
+    // The existing ~25-hop sequential SPC/fire-weather chain (PERF-01 out of scope,
+    // unchanged) runs BEFORE the new-product batch inside getSpcOutlook and shares this
+    // same _fetch seam, so this scenario must drain it first — releasing only its own
+    // requests, one at a time as they appear, via `.lyr.geojson`'s existing catch-all
+    // substring — before the six-member batch's own requests can even be issued. The
+    // moment a batch-member URL appears pending, draining stops so the overlap can be
+    // observed undisturbed. Uses adm-zip (via kmzOf) for a genuinely empty spcMD index
+    // KMZ, so it is gated on kml-deps like every other advisory-chain scenario.
+    name: "new-product-batch-fetches-issue-before-siblings-resolve",
+    requires: "kml-deps",
+    run: async (helper) => {
+      resetHelper(helper);
+      resetLogs();
+      helper._nowMs = () => HEATRISK_NOW_MS;
+
+      // Member id -> the one representative URL that identifies that member's own FIRST
+      // request, matching node_helper.js's own `members` array order exactly (excessiveRain
+      // is member 1, heatRisk is member 4).
+      const BATCH_MARKERS = [
+        { id: "excessiveRain", url: ERO_URLS[1] },
+        { id: "winterImpact", url: WSSI_URLS[1] },
+        { id: "hazardsOutlook", url: HAZARDS_URLS[PRODUCT_REGISTRY.hazardsOutlook.layers[0].id] },
+        { id: "heatRisk", url: HEATRISK_URL },
+        { id: "spcMD", url: PRODUCT_REGISTRY.spcMD.discoveryUrl },
+        { id: "mpd", url: PRODUCT_REGISTRY.mpd.discoveryUrl }
+      ];
+      const isBatchUrl = (url) => BATCH_MARKERS.some((m) => url.includes(m.url));
+      const pendingBatchIds = (fetchFn) => {
+        const found = new Set();
+        for (const p of fetchFn.pending) {
+          for (const m of BATCH_MARKERS) {
+            if (p.url.includes(m.url)) found.add(m.id);
+          }
+        }
+        return found;
+      };
+      const quietFeatures = () => httpResponse({ body: EMPTY_FEATURE_COLLECTION, etag: "batch-quiet-v1" });
+      const quietSpcMdIndex = () => httpResponse({
+        buffer: kmzOf({ "activemd.kml": activeIndexKml([]) }),
+        etag: "batch-spcmd-quiet-v1"
+      });
+      const quietMpdListing = () => httpResponse({ text: mpdListingHtml([]), etag: "batch-mpd-quiet-v1" });
+      const healthyHeatRisk = () => {
+        const items = healthyHeatRiskItems();
+        return httpResponse({
+          body: heatRiskIdentifyResponse({ items, values: items.map(() => "1") }),
+          etag: "batch-heatrisk-quiet-v1"
+        });
+      };
+      const buildRoutes = () => [
+        [".lyr.geojson", quietFeatures],
+        ...Object.values(ERO_URLS).map((u) => [u, quietFeatures]),
+        ...Object.values(WSSI_URLS).map((u) => [u, quietFeatures]),
+        ...Object.values(HAZARDS_URLS).map((u) => [u, quietFeatures]),
+        [HEATRISK_URL, healthyHeatRisk],
+        [PRODUCT_REGISTRY.spcMD.discoveryUrl, quietSpcMdIndex],
+        [PRODUCT_REGISTRY.mpd.discoveryUrl, quietMpdListing]
+      ];
+
+      // Drains every currently pending request that is NOT one of the six batch-member
+      // URLs above, a small number of event-loop turns at a time (setImmediate, never a
+      // wall-clock sleep), stopping the instant `minDistinctMembers` batch members are
+      // simultaneously pending — so a batch-member request is never accidentally released
+      // by this scenario's own draining before it can be observed.
+      const MAX_TICKS = 400;
+      async function drainOldChainUntil(fetchFn, minDistinctMembers) {
+        let ticks = 0;
+        while (pendingBatchIds(fetchFn).size < minDistinctMembers && ticks < MAX_TICKS) {
+          for (const entry of fetchFn.pending.filter((p) => !isBatchUrl(p.url))) entry.release();
+          await new Promise((resolve) => setImmediate(resolve));
+          ticks++;
+        }
+        return ticks;
+      }
+
+      // Releases EVERY currently pending request, repeatedly, until `promise` itself
+      // settles — a single releaseAll() only releases what is pending at that instant, but
+      // each product's own per-day/per-layer/per-candidate internal loop issues further
+      // requests as each prior one resolves (ERO's days 2-5, WSSI's days 2-3, every other
+      // Hazards layer, every spcMD/mpd candidate KMZ), each of which this same deferred
+      // stub holds pending in turn. Without continuous draining those later requests are
+      // never released, `promise` never settles, and — since nothing else is scheduled —
+      // the process would eventually run out of other work and either wait on the safety
+      // timers (real time, one 3000ms tick per still-open request) or, if a caller had
+      // unref()'d them, exit silently with no diagnostic at all.
+      async function driveToCompletion(fetchFn, promise) {
+        let settled = false;
+        promise.then(() => { settled = true; }, () => { settled = true; });
+        let ticks = 0;
+        while (!settled && ticks < MAX_TICKS) {
+          fetchFn.releaseAll();
+          await new Promise((resolve) => setImmediate(resolve));
+          ticks++;
+        }
+        if (!settled) {
+          throw new Error(
+            `driveToCompletion: outlook promise did not settle after ${MAX_TICKS} drain ticks — ` +
+            `still pending: ${fetchFn.pending.map((p) => p.url).join(", ") || "(none)"}`
+          );
+        }
+        return ticks;
+      }
+
+      const allSixToggles = {
+        showExcessiveRain: true, showWinterImpact: true, showHazardsOutlook: true,
+        showHeatRisk: true, showSPCMD: true, showMPD: true
+      };
+      helper._products = allSixToggles;
+      installDeferredHttp(helper, buildRoutes());
+      const outlookPromise = helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, allSixToggles);
+
+      const ticksUsed = await drainOldChainUntil(helper._fetch, 2);
+
+      // PRECONDITION GUARD: at least two different batch members pending — otherwise
+      // either the batch is sequential (the thing under test) or the fixture failed to
+      // enable multiple products. Distinguish the two in the message.
+      const pendingIds = pendingBatchIds(helper._fetch);
+      if (pendingIds.size < 2) {
+        throw new Error(
+          `precondition failed: expected at least two different batch members pending after ` +
+          `${ticksUsed} drain ticks, got ${pendingIds.size} (${[...pendingIds].join(", ") || "none"}). ` +
+          `Pending URLs: ${helper._fetch.pending.map((p) => p.url).join(", ") || "(none)"}. ` +
+          `Enabled toggles: ${JSON.stringify(allSixToggles)}`
+        );
+      }
+
+      // PRIMARY ASSERTION: member 4 (HeatRisk)'s request has been ISSUED (present in
+      // `calls`) while member 1 (ERO)'s day-1 request is STILL PENDING — i.e. HeatRisk was
+      // issued before ERO's response resolved. Under sequential awaits member 4 cannot
+      // even be issued until member 1's entire per-day loop completes, so this is exactly
+      // the structural difference a reversion to sequential awaits collapses.
+      const heatRiskIssued = helper._fetch.calls.some((c) => c.url.includes(HEATRISK_URL));
+      const eroDay1StillPending = helper._fetch.pending.some((p) => p.url.includes(ERO_URLS[1]));
+      if (!heatRiskIssued || !eroDay1StillPending) {
+        throw new Error(
+          `PERF-01: expected the HeatRisk identify URL (member 4) to be issued while the ERO day-1 URL ` +
+          `(member 1) is still pending, got heatRiskIssued=${heatRiskIssued} eroDay1StillPending=${eroDay1StillPending}. ` +
+          `Calls so far: ${helper._fetch.calls.map((c) => c.url).join(", ")}. ` +
+          `Pending: ${helper._fetch.pending.map((p) => p.url).join(", ")}`
+        );
+      }
+
+      // Release everything and let the poll complete. Concurrency must not have cost
+      // correctness.
+      await driveToCompletion(helper._fetch, outlookPromise);
+      const out = await outlookPromise;
+      assertPayloadIntact(out);
+      assertHeatRiskBlockIntact(out);
+      if (out._stale) {
+        throw new Error(`expected _stale unset after a fully successful concurrent batch, got ${out._stale}`);
+      }
+      for (const key of ["excessiveRain", "winterImpact", "hazardsOutlook", "heatRisk", "advisories"]) {
+        if (out[key] === undefined) {
+          throw new Error(`expected ${key} present in the settled payload, got no such key: ${Object.keys(out).join(", ")}`);
+        }
+      }
+
+      // SECOND ASSERTION (D-10's log): the per-run timing line carries a numeric timing
+      // for every one of the six member ids.
+      const timingLine = logCalls.find((line) => line.includes("new-product batch settled in"));
+      if (!timingLine) {
+        throw new Error(`expected a "new-product batch settled in <n>ms" log line, got: ${JSON.stringify(logCalls)}`);
+      }
+      const jsonStart = timingLine.indexOf("{");
+      if (jsonStart === -1) {
+        throw new Error(`expected the timing log line to carry a JSON payload, got: ${timingLine}`);
+      }
+      const timings = JSON.parse(timingLine.slice(jsonStart));
+      for (const m of BATCH_MARKERS) {
+        if (typeof timings[m.id] !== "number") {
+          throw new Error(`expected a numeric timing for member "${m.id}", got ${JSON.stringify(timings)}`);
+        }
+      }
+
+      // CONTROL ASSERTION: with only ONE product toggle enabled, exactly one batch member's
+      // request is pending at the same yield point — proving the multi-pending observation
+      // above is caused by the batch, not by the harness issuing spurious requests.
+      resetHelper(helper);
+      resetLogs();
+      helper._nowMs = () => HEATRISK_NOW_MS;
+      const singleToggle = { showHeatRisk: true };
+      helper._products = singleToggle;
+      installDeferredHttp(helper, buildRoutes());
+      const controlPromise = helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, singleToggle);
+      await drainOldChainUntil(helper._fetch, 1);
+      const controlPendingIds = pendingBatchIds(helper._fetch);
+      if (controlPendingIds.size !== 1) {
+        throw new Error(
+          `control: expected exactly one batch member pending with a single toggle enabled, got ` +
+          `${controlPendingIds.size} (${[...controlPendingIds].join(", ")}). Pending URLs: ` +
+          `${helper._fetch.pending.map((p) => p.url).join(", ")}`
+        );
+      }
+      await driveToCompletion(helper._fetch, controlPromise);
+      const controlOut = await controlPromise;
+      assertPayloadIntact(controlOut);
+      assertHeatRiskBlockIntact(controlOut);
     }
   }
 ];
