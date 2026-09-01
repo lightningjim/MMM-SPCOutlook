@@ -2733,6 +2733,12 @@ module.exports = NodeHelper.create({
    *   (empty hazards/windowBand arrays when the toggle is off, D-05). day9..day14 are
    *   the first keys in this module past day8 and live INSIDE this block, not at the
    *   payload's top level, so no existing day-bounded loop or assertion is affected;
+   *   heatRisk: { day1..dayN: { category, text, color } } (day span from
+   *   PRODUCT_REGISTRY.heatRisk.days, never a literal 7) — always present, regardless of
+   *   this._products.showHeatRisk (all-null defaults when the toggle is off, D-05/D-02).
+   *   category is the raw 0-4 the service reported, or null when that day had no resolved
+   *   reading; null and 0 are DELIBERATELY DISTINCT because Phase 18's MERGE-03 must tell
+   *   "no reading" apart from "Little to No Risk was reported";
    *   advisories: { spcMD: [...], mpd: [...] } — one { label, hazardType } entry per
    *   active SPC Mesoscale Discussion / WPC Mesoscale Precipitation Discussion covering
    *   the location (D-03). Both keys are always arrays, empty when the row's toggle is
@@ -3354,6 +3360,15 @@ module.exports = NodeHelper.create({
       const hazardsPayload = hazardsResult.payload;
       if (hazardsResult.anyStale) anyStale = true;
 
+      // A direct named call, not a `kind`-loop — like hazardsOutlook above, this row is
+      // singular. 17-05 folds all of these (ERO, WSSI, hazardsOutlook, HeatRisk, and the
+      // kml-advisory loop below) into one Promise.allSettled batch; this task deliberately
+      // lands the sequential form first so a HeatRisk bug and a concurrency bug can never
+      // be confused for each other.
+      const heatRiskResult = await this._runHeatRiskProduct(PRODUCT_REGISTRY.heatRisk, loc, productToggles);
+      const heatRiskPayload = heatRiskResult.payload;
+      if (heatRiskResult.anyStale) anyStale = true;
+
       // `kml-advisory` rows (SPC MD, WPC MPD) are driven here, inside getSpcOutlook, rather
       // than as a separate top-level fetch in socketNotificationReceived, so that an advisory
       // fetch failure folds into this run's own `anyStale` exactly like a product-layer
@@ -3484,6 +3499,11 @@ module.exports = NodeHelper.create({
         // Sibling block per Phase 14 D-02 — Phase 18 owns the merged schema; do not
         // pre-adopt it here.
         hazardsOutlook: hazardsPayload,
+        // heatRisk is its own sibling block for the same reason — Phase 14 D-02, not
+        // Phase 18's unified schema. day1..dayN each carry { category, text, color };
+        // category is the raw 0-4 the service reported, or null for no reading (Phase 18
+        // MERGE-03 must tell those two apart).
+        heatRisk: heatRiskPayload,
         advisories: advisories
       };
 
