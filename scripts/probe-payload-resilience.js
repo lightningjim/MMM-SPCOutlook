@@ -315,6 +315,123 @@ for (const layer of PRODUCT_REGISTRY.hazardsOutlook.layers) {
 // deterministic and the suite cannot go red at a date boundary (T-16-26).
 const HAZARDS_NOW_MS = Date.UTC(2026, 7, 26, 13, 0);
 
+// ---------------------------------------------------------------------
+// HeatRisk fixture/route builders (plan 17-06)
+// ---------------------------------------------------------------------
+
+// The pinned "now" for every HeatRisk scenario in this file — Mon Aug 31 2026 13:00Z,
+// matching 17-RESEARCH.md's live pull (the same session that captured the out-of-order
+// catalog and the exact idp_validtime/idp_filedate values used below). Every HeatRisk
+// scenario sets helper._nowMs to this constant as its first act after resetHelper, so
+// _todayUtcMs() derives from it and day offsets are deterministic — 16-REVIEW WR-05's
+// pinned-clock precedent, applied to a fourth product.
+const HEATRISK_NOW_MS = Date.UTC(2026, 7, 31, 13, 0);
+
+// idp_validtime sits at exactly 12:00:00.000Z on every live-observed feature
+// (17-RESEARCH.md's Day-Offset Arithmetic section) — half a day past UTC midnight, so
+// Math.round(0.5) === 1 places day 1's tile at that exact instant. This is the single place
+// every fixture in this file derives a day's idp_validtime, so no scenario can drift from
+// that alignment by hand-copying an offset.
+function heatRiskValidtimeForDay(d) {
+  return Date.UTC(2026, 7, 31, 12, 0) + (d - 1) * 86400000;
+}
+
+// Never hand-copy the HeatRisk identify URL — deriving it from the registry's OWN buildUrl,
+// against the exact reprojection the runner itself performs (turf.toMercator on a turf.point
+// built from PROBE_LON/PROBE_LAT), keeps this probe's dependency chain honoring the same
+// byte-stability contract ERO_URLS/WSSI_URLS/HAZARDS_URLS already honor (PERF-02, D-09). A
+// hand-copied literal would make this route silently miss the moment buildHeatRiskIdentifyUrl
+// changes, and every heatrisk-* scenario would then be testing installHttp's 503 default
+// instead of the product it claims to. turfStub is the SAME object node_helper.js's own
+// `@turf/turf` require resolves to under loadNodeHelper(), so this computation is guaranteed
+// byte-identical to the runner's own reprojection, not merely similar.
+const HEATRISK_LOC = turfStub.point([PROBE_LON, PROBE_LAT]);
+const HEATRISK_MERCATOR = turfStub.toMercator(HEATRISK_LOC);
+const [HEATRISK_MERCATOR_X, HEATRISK_MERCATOR_Y] = HEATRISK_MERCATOR.geometry.coordinates;
+const HEATRISK_URL = PRODUCT_REGISTRY.heatRisk.buildUrl(HEATRISK_MERCATOR_X, HEATRISK_MERCATOR_Y);
+
+let heatRiskObjectIdSeq = 90000000;
+
+// One catalogItems.features[] entry, live-observed field names. `filedate` defaults to
+// HEATRISK_NOW_MS (fresh) so a freshness/D-07 scenario must opt into staleness explicitly,
+// mirroring hazardsFeature's own defaulting note. `category` inside `attributes` here is the
+// mosaic dataset's own per-item attribute — live-observed constant 1 on every feature, NOT
+// the risk value (the actual per-day risk category lives in properties.Values[i], zipped in
+// separately by heatRiskIdentifyResponse below) — so it is not parameterised here.
+function heatRiskCatalogItem({ name, validtime, filedate, ingestdate }) {
+  const resolvedFiledate = filedate !== undefined ? filedate : HEATRISK_NOW_MS;
+  return {
+    attributes: {
+      objectid: heatRiskObjectIdSeq++,
+      name,
+      category: 1,
+      idp_ingestdate: ingestdate !== undefined ? ingestdate : resolvedFiledate,
+      idp_filedate: resolvedFiledate,
+      idp_validtime: validtime
+    }
+  };
+}
+
+// Builds a full identify-shaped body. `values` may be a DIFFERENT LENGTH from `items`
+// (D-06's mismatched-length scenario needs exactly that) or omitted entirely — `properties`
+// then carries no Values key at all, not an empty array, so _isHeatRiskIdentifyResponse's
+// Array.isArray(body.properties.Values) check rejects it the same way a genuinely absent
+// field would. `value`/`visibilities` default to a shape deliberately WRONG for "today" —
+// the live-observed [1,0,0,0,0,0,0] with index 0 pointing at the Day-2 tile, not Day 1 — so
+// any implementation that ever reads either field fails a scenario rather than passing by
+// luck (17-RESEARCH.md's confirmed-not-"today" finding).
+function heatRiskIdentifyResponse({ items = [], values, value, visibilities } = {}) {
+  const properties = {};
+  if (values !== undefined) properties.Values = values;
+  return {
+    objectId: 0,
+    name: "Pixel",
+    value: value !== undefined ? value : "1",
+    location: { x: 0, y: 0, spatialReference: { wkid: 102100, latestWkid: 3857 } },
+    properties,
+    catalogItems: { objectIdFieldName: "objectid", features: items },
+    catalogItemVisibilities: visibilities !== undefined ? visibilities : [1, 0, 0, 0, 0, 0, 0]
+  };
+}
+
+// A complete, healthy 7-item HeatRisk identify body in canonical day1..day7 order.
+function healthyHeatRiskItems() {
+  const items = [];
+  for (let d = 1; d <= 7; d++) {
+    items.push(heatRiskCatalogItem({ name: `HeatRisk_${d}_Mercator`, validtime: heatRiskValidtimeForDay(d) }));
+  }
+  return items;
+}
+
+// WR-02's trap, reciprocal direction: once a scenario turns on all six products, an
+// UNROUTED HeatRisk identify URL would take installHttp's 503 default and corrupt a
+// scenario about something else entirely — this is what (f) adds to every pre-existing
+// route builder below (eroHttpRoutes, wssiRoutes, hazardsRoutes, advisoryRoutes). A quiet,
+// healthy 200 here is the fix.
+function okEmptyHeatRisk() {
+  const items = healthyHeatRiskItems();
+  return httpResponse({
+    body: heatRiskIdentifyResponse({ items, values: items.map(() => "1") }),
+    etag: "heatrisk-healthy-v1"
+  });
+}
+
+// Routes for HeatRisk HTTP-seam scenarios, mirroring hazardsRoutes: HEATRISK_URL is the
+// subject (a healthy default unless `overrides.heatRisk` supplies its own handler), and
+// every ERO/WSSI/hazards layer plus the ".lyr.geojson" catch-all answers 200-empty by
+// default — WR-02's trap in its usual direction: without routing every OTHER product, an
+// unrouted URL takes installHttp's 503 default, sets anyStale, and any `_stale` assertion in
+// a HeatRisk scenario would pass for a reason that has nothing to do with its subject.
+function heatRiskRoutes(overrides = {}) {
+  const okEmpty = () => httpResponse({ body: EMPTY_FEATURE_COLLECTION, etag: "heatrisk-quiet-v1" });
+  const routes = [[HEATRISK_URL, overrides.heatRisk || okEmptyHeatRisk]];
+  for (const url of Object.values(ERO_URLS)) routes.push([url, okEmpty]);
+  for (const url of Object.values(WSSI_URLS)) routes.push([url, okEmpty]);
+  for (const url of Object.values(HAZARDS_URLS)) routes.push([url, okEmpty]);
+  routes.push([".lyr.geojson", okEmpty]);
+  return routes;
+}
+
 // The live MPD hazard-type table, verbatim from RESEARCH.md's MPD_1118_final.kmz sample.
 // Used by harness-real-kml-deps-round-trip to pin togeojson's description-object shape
 // (RESEARCH.md Pitfall 3) as executable ground truth before any product code depends on it.
@@ -471,6 +588,9 @@ function advisoryRoutes({ index, members = [], listing } = {}) {
   routes.push([".lyr.geojson", okEmpty]);
   for (const url of Object.values(ERO_URLS)) routes.push([url, okEmpty]);
   for (const url of Object.values(WSSI_URLS)) routes.push([url, okEmpty]);
+  // (f): the reciprocal of heatRiskRoutes' own quiet defaults — a sixth product cannot
+  // silently 503 the moment an advisory scenario enables it too.
+  routes.push([HEATRISK_URL, okEmptyHeatRisk]);
   return routes;
 }
 
@@ -721,7 +841,9 @@ function eroHttpRoutes(day1Handler) {
     [ERO_URLS[3], okEmpty],
     [ERO_URLS[4], okEmpty],
     [ERO_URLS[5], okEmpty],
-    [".lyr.geojson", okEmpty]
+    [".lyr.geojson", okEmpty],
+    // (f): a sixth product cannot silently 503 the moment an ERO scenario enables it too.
+    [HEATRISK_URL, okEmptyHeatRisk]
   ];
 }
 
@@ -741,7 +863,9 @@ function wssiRoutes(day1Handler) {
     [ERO_URLS[3], okEmpty],
     [ERO_URLS[4], okEmpty],
     [ERO_URLS[5], okEmpty],
-    [".lyr.geojson", okEmpty]
+    [".lyr.geojson", okEmpty],
+    // (f): a sixth product cannot silently 503 the moment a WSSI scenario enables it too.
+    [HEATRISK_URL, okEmptyHeatRisk]
   ];
 }
 
@@ -762,7 +886,10 @@ function hazardsRoutes(overrides = {}) {
     [ERO_URLS[1], okEmpty], [ERO_URLS[2], okEmpty], [ERO_URLS[3], okEmpty],
     [ERO_URLS[4], okEmpty], [ERO_URLS[5], okEmpty],
     [WSSI_URLS[1], okEmpty], [WSSI_URLS[2], okEmpty], [WSSI_URLS[3], okEmpty],
-    [".lyr.geojson", okEmpty]
+    [".lyr.geojson", okEmpty],
+    // (f): a sixth product cannot silently 503 the moment a Hazards Outlook scenario
+    // enables it too.
+    [HEATRISK_URL, okEmptyHeatRisk]
   );
   return routes;
 }
@@ -922,6 +1049,53 @@ function assertHazardsBlockIntact(out) {
   }
   if (!Array.isArray(block.windowBand)) {
     throw new Error("assertHazardsBlockIntact: windowBand is not an array");
+  }
+}
+
+// (g): the probe's own independent statement of the HeatRisk payload contract (WR-10) —
+// exactly day1..day7, each an object with exactly category/text/color, category either null
+// or an integer 0..4, text/color always strings, and a null category paired with empty
+// text/color. The day count is written as a literal 7 here deliberately: this is the probe
+// stating the contract independently of the registry, so a change to
+// PRODUCT_REGISTRY.heatRisk.days fails loudly here instead of silently agreeing with itself.
+function assertHeatRiskBlockIntact(out) {
+  const block = out && out.heatRisk;
+  if (typeof block !== "object" || block === null) {
+    throw new Error("assertHeatRiskBlockIntact: heatRisk missing or not an object");
+  }
+  const keys = Object.keys(block);
+  if (keys.length !== 7) {
+    throw new Error(`assertHeatRiskBlockIntact: heatRisk has ${keys.length} keys, expected 7 (day1..day7)`);
+  }
+  for (let d = 1; d <= 7; d++) {
+    const key = "day" + d;
+    const entry = block[key];
+    if (typeof entry !== "object" || entry === null) {
+      throw new Error(`assertHeatRiskBlockIntact: ${key} missing or not an object`);
+    }
+    const entryKeys = Object.keys(entry).sort();
+    const expectedKeys = ["category", "color", "text"];
+    if (entryKeys.length !== 3 || entryKeys.join(",") !== expectedKeys.join(",")) {
+      throw new Error(
+        `assertHeatRiskBlockIntact: ${key} has keys ${JSON.stringify(entryKeys)}, expected exactly category/text/color`
+      );
+    }
+    const { category, text, color } = entry;
+    if (category !== null && !(Number.isInteger(category) && category >= 0 && category <= 4)) {
+      throw new Error(`assertHeatRiskBlockIntact: ${key}.category is not null or an integer 0..4 (got ${JSON.stringify(category)})`);
+    }
+    if (typeof text !== "string") {
+      throw new Error(`assertHeatRiskBlockIntact: ${key}.text is not a string (got ${JSON.stringify(text)})`);
+    }
+    if (typeof color !== "string") {
+      throw new Error(`assertHeatRiskBlockIntact: ${key}.color is not a string (got ${JSON.stringify(color)})`);
+    }
+    if (category === null && (text !== "" || color !== "")) {
+      throw new Error(
+        `assertHeatRiskBlockIntact: ${key} has category null but text/color not empty ` +
+        `(text=${JSON.stringify(text)}, color=${JSON.stringify(color)})`
+      );
+    }
   }
 }
 
