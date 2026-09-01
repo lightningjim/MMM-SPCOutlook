@@ -53,7 +53,7 @@ Full details: `.planning/milestones/v1.2-ROADMAP.md`
 - [x] **Phase 14: Foundation & WPC Excessive Rainfall Outlook** - Decouple payload shape from `extended`, establish per-product toggles and endpoint conventions, ship ERO (7/7 plans; 3 review rounds, all blocking gaps closed; probe suite 15/15 mutation-proven — see 14-REVIEW.md / 14-REVIEW-FIX.md) — completed 2026-08-23
 - [x] **Phase 15: WPC Winter Storm Severity & Mesoscale Precipitation Discussion** - Ship WSSI Overall Impact and MPD advisories
 - [x] **Phase 16: WPC Day 3–7 / CPC Day 8–14 Hazards Outlook** - Ship per-day and window-spanning hazard entries with weekday-aware staleness (completed 2026-08-27)
-- [ ] **Phase 17: NWS/WPC HeatRisk & Parallelized Fetching** - Ship the raster-identify HeatRisk product and parallelize all new fetches
+- [x] **Phase 17: NWS/WPC HeatRisk & Parallelized Fetching** - Ship the raster-identify HeatRisk product and parallelize all new fetches (completed 2026-09-01)
 - [ ] **Phase 18: Merge, Precedence & Unified Payload Schema** - Build the cross-source dedup/precedence logic and single backend payload; measure cold-cache latency
 - [ ] **Phase 19: Unified Day Report — getDom() Rewrite** - Replace per-product sections with the merged per-day report, with full behavior-parity verification
 
@@ -208,7 +208,7 @@ Plans:
   4. With all six new product toggles enabled, backend timing/logs show the new product fetches issued concurrently via `Promise.all` rather than sequentially (PERF-01).
   5. A spot check across all six new products confirms no label-to-value mapping is reused between products (e.g. ERO's `dn` is never fed through the fire weather `DN` table) (DATA-03).
 
-**Plans:** 8/9 plans executed
+**Plans:** 9/9 plans complete
 
 Plans:
 **Wave 1**
@@ -242,7 +242,7 @@ Plans:
 
 **Wave 8** *(blocked on Wave 7)*
 
-- [ ] 17-09-PLAN.md — Phase mutation inventory, DATA-03 recorded spot check, human UAT checkpoint (wave 8)
+- [x] 17-09-PLAN.md — Phase mutation inventory, DATA-03 recorded spot check, human UAT checkpoint (wave 8)
 
 ### Phase 18: Merge, Precedence & Unified Payload Schema
 
@@ -300,7 +300,7 @@ Phases execute in numeric order: 14 → 15 → 16 → 17 → 18 → 19
 | 14. Foundation & WPC Excessive Rainfall Outlook | v2.0 | 7/7 | Complete | 2026-08-23 |
 | 15. WPC Winter Storm Severity & Mesoscale Precipitation Discussion | v2.0 | 6/9 | In Progress|  |
 | 16. WPC Day 3–7 / CPC Day 8–14 Hazards Outlook | v2.0 | 8/8 | Complete    | 2026-08-27 |
-| 17. NWS/WPC HeatRisk & Parallelized Fetching | v2.0 | 8/9 | In Progress|  |
+| 17. NWS/WPC HeatRisk & Parallelized Fetching | v2.0 | 9/9 | Complete   | 2026-09-01 |
 | 18. Merge, Precedence & Unified Payload Schema | v2.0 | 0/? | Not started | - |
 | 19. Unified Day Report — getDom() Rewrite | v2.0 | 0/? | Not started | - |
 
