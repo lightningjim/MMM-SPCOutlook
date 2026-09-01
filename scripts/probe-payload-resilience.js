@@ -6826,6 +6826,94 @@ const scenarios = [
     }
   },
   {
+    // WR-10 (17-REVIEW): D-02/D-05 specify that a toggle-off poll must still emit the full
+    // seven-day block, must not raise anyStale, and must issue no identify request. Every
+    // other product has such a scenario; HeatRisk had none — all 23 assertHeatRiskBlockIntact
+    // call sites ran with showHeatRisk: true. The behaviour was correct, but a regression
+    // (moving the payload seeding below the toggle check, say) would have been caught by no
+    // assertion at all, and before WR-05 assertPayloadIntact would not have caught a missing
+    // block either. Mirrors hazards-toggle-off-emits-the-full-block-and-fetches-nothing.
+    // Mutation to prove RED: move the `payload` seeding loop in _runHeatRiskProduct below
+    // the `productToggles[row.configFlag]` check.
+    name: "heatrisk-toggle-off-emits-the-full-block-and-fetches-nothing",
+    run: async (helper) => {
+      resetHelper(helper);
+      resetLogs();
+      helper._nowMs = () => HEATRISK_NOW_MS;
+      helper._products = { showHeatRisk: false };
+
+      // A HEALTHY, fully-populated body is routed deliberately: if the toggle-off path ever
+      // fetched and parsed it, the categories below would be non-null and this scenario
+      // would say so. Routing an empty body instead would let a fetching implementation
+      // pass.
+      const fetchFn = installHttp(helper, heatRiskRoutes());
+
+      const out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showHeatRisk: false });
+      assertPayloadIntact(out);
+      assertHeatRiskBlockIntact(out);
+
+      for (let d = 1; d <= 7; d++) {
+        const entry = out.heatRisk["day" + d];
+        if (entry.category !== null || entry.text !== "" || entry.color !== "") {
+          throw new Error(
+            `D-02/D-05: with the toggle off day${d} must be the "no reading taken" shape ` +
+            `{ category: null, text: "", color: "" }, got ${JSON.stringify(entry)}`
+          );
+        }
+      }
+
+      // D-02: an all-null block from a toggle being OFF is "no reading taken", NOT D-04's
+      // all-NoData failure state. The two are shape-identical and must be distinguished by
+      // the badge alone, which is exactly why this assertion matters.
+      if (out._stale) {
+        throw new Error(`D-02: the toggle-off block must not be flagged stale, got _stale=${out._stale}`);
+      }
+      const nodataLogs = logCalls.filter((line) => line.includes("no day in this poll resolved a real category"));
+      if (nodataLogs.length !== 0) {
+        throw new Error(
+          `D-02: a toggle-off poll emitted D-04's all-NoData diagnosis — it is a "no reading taken" state, ` +
+          `not a failure: ${JSON.stringify(nodataLogs)}`
+        );
+      }
+
+      const identifyCalls = fetchFn.calls.filter((c) => c.url.includes(HEATRISK_URL));
+      if (identifyCalls.length !== 0) {
+        throw new Error(
+          `D-02: ${identifyCalls.length} identify request(s) were issued with the toggle off: ` +
+          JSON.stringify(identifyCalls.map((c) => c.url))
+        );
+      }
+
+      // Control: the very same routes with the toggle ON do populate the block and do issue
+      // exactly one identify request — proving the assertions above measure the toggle and
+      // not a harness that never fetches anything.
+      resetHelper(helper);
+      resetLogs();
+      helper._nowMs = () => HEATRISK_NOW_MS;
+      helper._products = { showHeatRisk: true };
+      const controlFetchFn = installHttp(helper, heatRiskRoutes());
+      const controlOut = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showHeatRisk: true });
+      assertPayloadIntact(controlOut);
+      assertHeatRiskBlockIntact(controlOut);
+      const controlIdentifyCalls = controlFetchFn.calls.filter((c) => c.url.includes(HEATRISK_URL));
+      if (controlIdentifyCalls.length !== 1) {
+        throw new Error(
+          `control: expected exactly one identify request with the toggle on, got ${controlIdentifyCalls.length}`
+        );
+      }
+      let populated = 0;
+      for (let d = 1; d <= 7; d++) {
+        if (controlOut.heatRisk["day" + d].category !== null) populated++;
+      }
+      if (populated !== 7) {
+        throw new Error(
+          `control: expected all seven days populated with the toggle on, got ${populated} — the toggle-off ` +
+          "assertions above would then be vacuous"
+        );
+      }
+    }
+  },
+  {
     // D-05: a gap at the TAIL of the 1-7 grid (nothing resolved beyond the highest
     // present day) is silence with no badge — consistent with routine mosaic rotation,
     // where the newest tile has not yet landed. Live capture shows 7 catalog items
