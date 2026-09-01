@@ -2,10 +2,10 @@
 gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: WPC & CPC Integration + Unified Day Report
-status: ready-to-execute
+status: executing
 stopped_at: Phase 17 planned (9 plans, 8 waves)
-last_updated: "2026-08-31T23:57:12.675Z"
-last_activity: 2026-08-31 -- Phase 17 planning complete
+last_updated: "2026-09-01T13:31:49.294Z"
+last_activity: 2026-09-01 -- Phase 17 execution started
 progress:
   total_phases: 7
   completed_phases: 3
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-08-15 after v2.0 scoping)
 
 **Core value:** Accurately and efficiently tell the user if they're in a weather risk zone right now — no false negatives, no unnecessary CPU burn on the RPi.
-**Current focus:** Phase 17 — nws/wpc heatrisk & parallelized fetching
+**Current focus:** Phase 17 — nws-wpc-heatrisk-parallelized-fetching
 
 ## Current Position
 
-Phase: 17
-Plan: 9 plans across 8 waves, none started
-Status: Ready to execute
-Last activity: 2026-08-31 -- Phase 17 planning complete
+Phase: 17 (nws-wpc-heatrisk-parallelized-fetching) — EXECUTING
+Plan: 1 of 9
+Status: Executing Phase 17
+Last activity: 2026-09-01 -- Phase 17 execution started
 
 Progress: [███▓░░░░░░] 33%
 
