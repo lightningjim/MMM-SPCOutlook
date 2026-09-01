@@ -1843,12 +1843,22 @@ module.exports = NodeHelper.create({
    * of it. Mirrors `_isFeatureCollection`'s `!body.error` guard: ArcGIS REST returns most
    * failures as HTTP 200 with an `error` body, never a non-2xx status.
    * @param body - the parsed identify response body
-   * @returns true only when body is a non-null object with a string `value`, an array
-   *   `properties.Values`, and an array `catalogItems.features`, and carries no `error` key
+   *
+   * 17-REVIEW WR-06: this used to also require `typeof body.value === "string"` — the one
+   * field `_runHeatRiskProduct` documents that it must NEVER read, because live capture
+   * showed that scalar tracking `catalogItemVisibilities` rather than "today". Gating the
+   * whole product's usability on a field the pipeline refuses to consume meant a benign
+   * upstream change (`value: null` for a point outside the raster, or a numeric `value`)
+   * would route every poll through `rejectBody`: a permanent, total product outage caused
+   * by data the module had already decided was untrustworthy, signalled only by one log
+   * line and the ⚠ badge. A validator should assert exactly what the consumer consumes —
+   * no less, or an unparseable body slips through; no more, or the product can be taken
+   * down by a field that does not matter.
+   * @returns true only when body is a non-null object with an array `properties.Values`
+   *   and an array `catalogItems.features`, and carries no `error` key
    */
   _isHeatRiskIdentifyResponse(body) {
     return !!body && typeof body === "object" && !body.error &&
-           typeof body.value === "string" &&
            !!body.properties && Array.isArray(body.properties.Values) &&
            !!body.catalogItems && Array.isArray(body.catalogItems.features);
   },

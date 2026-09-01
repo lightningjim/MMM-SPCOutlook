@@ -6446,6 +6446,127 @@ const scenarios = [
     }
   },
   {
+    // WR-06 (17-REVIEW): _isHeatRiskIdentifyResponse gated the whole product's usability on
+    // `typeof body.value === "string"` — the ONE field _runHeatRiskProduct documents that
+    // it must never read ("Under no circumstance is the response's top-level scalar reading
+    // ... read here"), because live capture showed it tracking catalogItemVisibilities
+    // rather than "today". Coupling usability to a field the pipeline refuses to consume
+    // means a benign upstream change — `value: null` for a point outside the raster, or a
+    // numeric `value` — routes every poll through rejectBody. That is a permanent, total
+    // product outage whose only signal is one log line and the ⚠ badge, caused by data the
+    // module had already decided was untrustworthy.
+    //
+    // A validator should assert exactly what the consumer consumes: properties.Values and
+    // catalogItems.features. Nothing more, because everything more is a way to fail for a
+    // reason that does not matter; nothing less, because everything less is a way to
+    // succeed on a body that cannot be parsed.
+    // Mutation to prove RED: restore `typeof body.value === "string" &&` in
+    // _isHeatRiskIdentifyResponse.
+    name: "heatrisk-unused-top-level-value-does-not-gate-usability",
+    run: async (helper) => {
+      const items = healthyHeatRiskItems();
+      const values = ["1", "2", "3", "4", "0", "1", "2"];
+
+      // Every shape a benign upstream change could put in the field the pipeline ignores.
+      const irrelevantValues = [
+        { label: "null (point outside the raster)", value: null },
+        { label: "a number rather than a string", value: 1 },
+        { label: "a numeric zero", value: 0 },
+        { label: "the literal NoData sentinel", value: "NoData" }
+      ];
+
+      for (const shape of irrelevantValues) {
+        resetHelper(helper);
+        resetLogs();
+        helper._nowMs = () => HEATRISK_NOW_MS;
+        helper._products = { showHeatRisk: true };
+
+        installHttp(helper, heatRiskRoutes({
+          heatRisk: () => httpResponse({
+            body: heatRiskIdentifyResponse({ items, values, value: shape.value }),
+            etag: `heatrisk-value-${irrelevantValues.indexOf(shape)}-v1`
+          })
+        }));
+        const out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showHeatRisk: true });
+        assertPayloadIntact(out);
+        assertHeatRiskBlockIntact(out);
+
+        for (let d = 1; d <= 7; d++) {
+          const expected = Number(values[d - 1]);
+          if (out.heatRisk["day" + d].category !== expected) {
+            throw new Error(
+              `WR-06: an otherwise-healthy body carrying top-level value=${shape.label} failed to populate ` +
+              `day${d} (expected category ${expected}, got ${out.heatRisk["day" + d].category}) — the ` +
+              "validator is gating the product on a field the pipeline deliberately never reads"
+            );
+          }
+        }
+        if (out._stale) {
+          throw new Error(
+            `WR-06: an otherwise-healthy body carrying top-level value=${shape.label} raised _stale=${out._stale}`
+          );
+        }
+        const rejectLogs = logCalls.filter((line) => line.includes("rejected an unusable"));
+        if (rejectLogs.length !== 0) {
+          throw new Error(
+            `WR-06: top-level value=${shape.label} routed a healthy body through rejectBody: ` +
+            JSON.stringify(rejectLogs)
+          );
+        }
+      }
+
+      // Control: the validator still REJECTS a body missing what the pipeline actually
+      // consumes. Loosening a validator is only safe if it still refuses the shapes that
+      // would make the parse silently wrong — without this, "accepts everything" would
+      // pass the assertions above.
+      const unusableBodies = [
+        { label: "no properties.Values array", body: heatRiskIdentifyResponse({ items }) },
+        {
+          label: "no catalogItems.features array",
+          body: (() => {
+            const b = heatRiskIdentifyResponse({ items, values });
+            b.catalogItems = {};
+            return b;
+          })()
+        },
+        {
+          label: "an ArcGIS error body",
+          body: { error: { code: 400, message: "Unable to complete operation" } }
+        }
+      ];
+      for (const unusable of unusableBodies) {
+        resetHelper(helper);
+        resetLogs();
+        helper._nowMs = () => HEATRISK_NOW_MS;
+        helper._products = { showHeatRisk: true };
+        installHttp(helper, heatRiskRoutes({
+          heatRisk: () => httpResponse({
+            body: unusable.body,
+            etag: `heatrisk-unusable-${unusableBodies.indexOf(unusable)}-v1`
+          })
+        }));
+        const out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showHeatRisk: true });
+        assertPayloadIntact(out);
+        assertHeatRiskBlockIntact(out);
+        for (let d = 1; d <= 7; d++) {
+          if (out.heatRisk["day" + d].category !== null) {
+            throw new Error(
+              `control: a body with ${unusable.label} still populated day${d} with category ` +
+              `${out.heatRisk["day" + d].category} — the validator has been loosened past the point of ` +
+              "refusing bodies the pipeline cannot parse"
+            );
+          }
+        }
+        if (out._stale !== true) {
+          throw new Error(
+            `control: a body with ${unusable.label} left _stale=${out._stale} — an unusable body must ` +
+            "raise the badge, not degrade silently"
+          );
+        }
+      }
+    }
+  },
+  {
     // D-05: a gap at the TAIL of the 1-7 grid (nothing resolved beyond the highest
     // present day) is silence with no badge — consistent with routine mosaic rotation,
     // where the newest tile has not yet landed. Live capture shows 7 catalog items
