@@ -944,7 +944,21 @@ module.exports = NodeHelper.create({
       // under a Mercator spatial reference, not the choice of geographic reference system
       // itself; this reprojection keeps the declared coordinates and the declared
       // spatialReference in agreement.
-      const projected = turf.toMercator(loc);
+      //
+      // WR-08: never hand `loc` ITSELF to toMercator. `loc` is the single turf Point built
+      // once per poll and used by EVERY product's containment check, now shared across five
+      // concurrently-running batch members. turf.toMercator accepts a `{ mutate: true }`
+      // option; turf 7.3.4 defaults to mutate:false, so passing `loc` directly happens to be
+      // correct today — by inheritance, not by statement. If that option were ever added
+      // here, or a future turf changed the default, every other product would evaluate
+      // point-in-polygon against Web Mercator metres and report NO RISK ANYWHERE, with no
+      // badge and no error, because of one line in a fifth product. A structural clone costs
+      // one two-element array per poll and removes the dependency on a default entirely:
+      // there is no longer anything to mutate that anyone else can observe. Cloning rather
+      // than reading `loc.geometry.coordinates` keeps this agnostic to whether `loc` is a
+      // Feature or a bare geometry, and cannot alias the coordinate array the way rebuilding
+      // a point from that same array reference would.
+      const projected = turf.toMercator(JSON.parse(JSON.stringify(loc)));
       const [mercatorX, mercatorY] = projected.geometry.coordinates;
       const url = row.buildUrl(mercatorX, mercatorY);
 

@@ -6567,6 +6567,142 @@ const scenarios = [
     }
   },
   {
+    // WR-08 (17-REVIEW): `loc` is the ONE turf Point Feature built per poll
+    // (turf.point([lon, lat])) and used by EVERY product's containment check. PERF-01 now
+    // shares it across five concurrently-running batch members. _runHeatRiskProduct hands
+    // it to turf.toMercator, which accepts a `{ mutate: true }` option; turf 7.3.4 defaults
+    // to mutate:false, so this is correct today — by inheritance, not by statement. If that
+    // option were ever added, or a future turf changed the default, every OTHER product
+    // would evaluate point-in-polygon against Web Mercator metres and report no risk
+    // anywhere, with no badge and no error: a total, silent, all-products false negative
+    // caused by one line in a fifth product.
+    //
+    // Nothing pinned it. turfStub.toMercator always built a fresh object, so no scenario
+    // COULD observe a mutating implementation, and every HeatRisk scenario routed the other
+    // products to empty collections so no containment ran concurrently to be corrupted.
+    // This scenario supplies both missing halves: a deliberately MUTATING toMercator, and a
+    // real polygon for a sibling batch member to evaluate containment against.
+    // Mutation to prove RED: pass `loc` straight to turf.toMercator in _runHeatRiskProduct
+    // instead of a fresh point built from its coordinates.
+    name: "heatrisk-mercator-projection-never-mutates-the-shared-point",
+    run: async (helper) => {
+      resetHelper(helper);
+      resetLogs();
+      helper._nowMs = () => HEATRISK_NOW_MS;
+      helper._products = { showHeatRisk: true, showExcessiveRain: true };
+
+      const originalToMercator = turfStub.toMercator;
+      const originalPointInPolygon = turfStub.pointInPolygon;
+      const originalPoint = turfStub.point;
+      try {
+        // Every Point built this poll, so the shared `loc` can be inspected directly after
+        // the run rather than inferred.
+        const builtPoints = [];
+        turfStub.point = (coords) => {
+          const pt = originalPoint(coords);
+          builtPoints.push(pt);
+          return pt;
+        };
+
+        // A toMercator that mutates its argument in place — exactly what turf would do
+        // under `{ mutate: true }`, and what a future default change would make of every
+        // existing call. The correct call site is unaffected by this because it hands over
+        // a throwaway point; an incorrect one hands over `loc` itself.
+        turfStub.toMercator = (point) => {
+          const target = (point && point.geometry) ? point.geometry : point;
+          const coords = target && target.coordinates;
+          if (!Array.isArray(coords) || coords.length < 2) {
+            throw new Error("mutating toMercator stub: expected a Point or Point Feature with coordinates");
+          }
+          const [lon, lat] = coords;
+          const EARTH_RADIUS_M = 6378137;
+          coords[0] = ((lon * Math.PI) / 180) * EARTH_RADIUS_M;
+          coords[1] = Math.log(Math.tan(Math.PI / 4 + (lat * Math.PI) / 360)) * EARTH_RADIUS_M;
+          return { type: "Feature", properties: {}, geometry: { type: "Point", coordinates: [coords[0], coords[1]] } };
+        };
+
+        // Record the coordinates every containment check is actually handed. A sibling
+        // batch member evaluating Mercator metres against a degree-space polygon is the
+        // observable consequence this scenario exists to catch.
+        const containmentPoints = [];
+        turfStub.pointInPolygon = (pt) => {
+          const coords = (pt && pt.geometry && pt.geometry.coordinates) || (pt && pt.coordinates);
+          if (Array.isArray(coords)) containmentPoints.push([coords[0], coords[1]]);
+          return true;
+        };
+
+        // ERO day 1 carries a real polygon so a SIBLING batch member runs containment in
+        // the same batch as the HeatRisk reprojection — the concurrency half of the claim.
+        installHttp(helper, [
+          [ERO_URLS[1], () => httpResponse({ body: ERO_SLGT_BODY, etag: "ero-wr08-v1" })],
+          [ERO_URLS[2], () => httpResponse({ body: EMPTY_FEATURE_COLLECTION, etag: "empty-v1" })],
+          [ERO_URLS[3], () => httpResponse({ body: EMPTY_FEATURE_COLLECTION, etag: "empty-v1" })],
+          [ERO_URLS[4], () => httpResponse({ body: EMPTY_FEATURE_COLLECTION, etag: "empty-v1" })],
+          [ERO_URLS[5], () => httpResponse({ body: EMPTY_FEATURE_COLLECTION, etag: "empty-v1" })],
+          [HEATRISK_URL, okEmptyHeatRisk],
+          [".lyr.geojson", () => httpResponse({ body: EMPTY_FEATURE_COLLECTION, etag: "empty-v1" })]
+        ]);
+
+        const out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, {
+          showHeatRisk: true, showExcessiveRain: true
+        });
+        assertPayloadIntact(out);
+        assertHeatRiskBlockIntact(out);
+
+        // Precondition guard 1: the shared point really was built, and we can identify it
+        // as the one carrying the probe's own degree coordinates.
+        const isDegreeScale = ([x, y]) => Math.abs(x) <= 180 && Math.abs(y) <= 90;
+        if (builtPoints.length === 0) {
+          throw new Error("precondition failed: no turf.point was built during the poll, so there is nothing to check");
+        }
+        // Precondition guard 2: a sibling product's containment actually ran. Without this
+        // the concurrency half of the assertion below would be vacuous.
+        if (containmentPoints.length === 0) {
+          throw new Error(
+            "precondition failed: no containment check ran during the poll, so this scenario cannot observe " +
+            "a sibling batch member being corrupted by the reprojection"
+          );
+        }
+
+        for (const pt of builtPoints) {
+          const coords = pt.coordinates || (pt.geometry && pt.geometry.coordinates);
+          if (!Array.isArray(coords)) continue;
+          if (!isDegreeScale(coords)) {
+            throw new Error(
+              `WR-08: a turf Point built this poll was mutated to Web Mercator metres ` +
+              `(${JSON.stringify(coords)}). \`loc\` is shared by every product's containment check and by ` +
+              "five concurrent batch members — mutating it makes every other product evaluate " +
+              "point-in-polygon in the wrong units and report no risk anywhere, with no badge."
+            );
+          }
+        }
+
+        for (const coords of containmentPoints) {
+          if (!isDegreeScale(coords)) {
+            throw new Error(
+              `WR-08: a sibling batch member ran its containment check against Web Mercator metres ` +
+              `(${JSON.stringify(coords)}) instead of degrees — the HeatRisk reprojection mutated the ` +
+              "shared point out from under it"
+            );
+          }
+        }
+
+        // The sibling product must also still produce its real answer, not merely
+        // degree-scale coordinates.
+        if (out.excessiveRain.day1Risk === "NONE") {
+          throw new Error(
+            "WR-08: the sibling ERO product resolved to NONE while standing inside its polygon — the " +
+            "shared point was corrupted, which is the user-visible form of this defect"
+          );
+        }
+      } finally {
+        turfStub.toMercator = originalToMercator;
+        turfStub.pointInPolygon = originalPointInPolygon;
+        turfStub.point = originalPoint;
+      }
+    }
+  },
+  {
     // D-05: a gap at the TAIL of the 1-7 grid (nothing resolved beyond the highest
     // present day) is silence with no badge — consistent with routine mosaic rotation,
     // where the newest tile has not yet landed. Live capture shows 7 catalog items
