@@ -5598,7 +5598,160 @@ const scenarios = [
         throw new Error(`control: expected _stale unset on a matched, healthy body, got ${controlOut._stale}`);
       }
     }
-  }
+  },
+  {
+    // D-04: if any day resolves to a real 0-4, the identify call and the Mercator
+    // reprojection are demonstrably working, so a "NoData" elsewhere is genuine data
+    // absence — no row, no badge (15 D-04's "a clean zero-result is not stale").
+    // Mutation to prove RED: make any NoData day set anyStale (the blanket rule).
+    name: "heatrisk-partial-nodata-is-silent",
+    run: async (helper) => {
+      resetHelper(helper);
+      resetLogs();
+      helper._nowMs = () => HEATRISK_NOW_MS;
+      helper._products = { showHeatRisk: true };
+
+      const items = [];
+      for (let d = 1; d <= 7; d++) {
+        items.push(heatRiskCatalogItem({ name: `HeatRisk_${d}_Mercator`, validtime: heatRiskValidtimeForDay(d) }));
+      }
+      // Days 2, 4, 6 are "NoData" (interior, so this is not accidentally a tail case);
+      // the rest carry real 0-4 categories.
+      const noDataDays = new Set([2, 4, 6]);
+      const values = [];
+      for (let d = 1; d <= 7; d++) values.push(noDataDays.has(d) ? "NoData" : String(d % 5));
+
+      // Precondition guard: the fixture must carry BOTH at least one "NoData" and at
+      // least one parseable 0-4 value, or this scenario is accidentally testing the
+      // all-NoData branch (the next scenario) instead of the partial branch.
+      const hasNoData = values.some((v) => v === "NoData");
+      const hasReal = values.some((v) => v !== "NoData");
+      if (!hasNoData || !hasReal) {
+        throw new Error(
+          `precondition failed: fixture must carry both a NoData day and a real 0-4 day, got Values=${JSON.stringify(values)}`
+        );
+      }
+
+      installHttp(helper, heatRiskRoutes({
+        heatRisk: () => httpResponse({
+          body: heatRiskIdentifyResponse({ items, values }),
+          etag: "heatrisk-partial-nodata-v1"
+        })
+      }));
+      const out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showHeatRisk: true });
+      assertPayloadIntact(out);
+      assertHeatRiskBlockIntact(out);
+
+      // Primary assertion: silence AND no badge — both halves. NoData days null, real
+      // days carry their numeric categories.
+      if (out._stale) {
+        throw new Error(`D-04: expected _stale unset on a partial-NoData response, got ${out._stale}`);
+      }
+      for (let d = 1; d <= 7; d++) {
+        const category = out.heatRisk["day" + d].category;
+        if (noDataDays.has(d)) {
+          if (category !== null) throw new Error(`D-04: expected day${d} (NoData) to be null, got ${category}`);
+        } else if (typeof category !== "number") {
+          throw new Error(`D-04: expected day${d} (real) to carry a numeric category, got ${JSON.stringify(category)}`);
+        }
+      }
+
+      // Control: an otherwise-identical fixture where EVERY Values entry is "NoData"
+      // must set _stale — proving the "no badge" above is a real branch, not a harness
+      // that never badges HeatRisk at all.
+      resetHelper(helper);
+      resetLogs();
+      helper._nowMs = () => HEATRISK_NOW_MS;
+      helper._products = { showHeatRisk: true };
+      const allNoDataValues = values.map(() => "NoData");
+      installHttp(helper, heatRiskRoutes({
+        heatRisk: () => httpResponse({
+          body: heatRiskIdentifyResponse({ items, values: allNoDataValues }),
+          etag: "heatrisk-partial-nodata-control-v1"
+        })
+      }));
+      const controlOut = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showHeatRisk: true });
+      assertPayloadIntact(controlOut);
+      assertHeatRiskBlockIntact(controlOut);
+      if (controlOut._stale !== true) {
+        throw new Error(`control: expected _stale set when every day is NoData, got ${controlOut._stale}`);
+      }
+    }
+  },
+  {
+    // D-04's total-absence branch: every day resolves to "NoData" — the module cannot
+    // distinguish an out-of-coverage location from a systemic break, and both warrant a
+    // signal (HEAT-03's failure mode reading as "no heat risk anywhere, forever"). This
+    // is precisely the false-negative shape this project exists to prevent. Accepted
+    // cost: a permanent badge for a genuinely out-of-coverage deployment, the same trade
+    // 16 D-14 took. Norman, OK sits solidly inside HeatRisk's CONUS coverage, so for this
+    // deployment the badge is a break signal, not a coverage signal.
+    // Mutation to prove RED: remove the all-NoData check so the branch never fires.
+    name: "heatrisk-all-nodata-sets-stale",
+    run: async (helper) => {
+      resetHelper(helper);
+      resetLogs();
+      helper._nowMs = () => HEATRISK_NOW_MS;
+      helper._products = { showHeatRisk: true };
+
+      const items = [];
+      for (let d = 1; d <= 7; d++) {
+        items.push(heatRiskCatalogItem({ name: `HeatRisk_${d}_Mercator`, validtime: heatRiskValidtimeForDay(d) }));
+      }
+      const values = items.map(() => "NoData");
+
+      // Precondition guard: every entry must be exactly "NoData".
+      if (!values.every((v) => v === "NoData")) {
+        throw new Error(`precondition failed: fixture is not all-NoData, got Values=${JSON.stringify(values)}`);
+      }
+
+      const bodyFn = () => httpResponse({
+        body: heatRiskIdentifyResponse({ items, values }),
+        etag: "heatrisk-all-nodata-v1"
+      });
+      installHttp(helper, heatRiskRoutes({ heatRisk: bodyFn }));
+
+      const out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showHeatRisk: true });
+      assertPayloadIntact(out);
+      assertHeatRiskBlockIntact(out);
+      if (out._stale !== true) {
+        throw new Error(`D-04: expected _stale set on an all-NoData response, got ${out._stale}`);
+      }
+      for (let d = 1; d <= 7; d++) {
+        if (out.heatRisk["day" + d].category !== null) {
+          throw new Error(`D-04: expected day${d} null on an all-NoData response, got ${out.heatRisk["day" + d].category}`);
+        }
+      }
+
+      // Second assertion, D-04's own reason for existing: the log fires exactly ONCE
+      // across two consecutive getSpcOutlook runs with the same fixture — the one-shot
+      // guard works. resetHelper is deliberately NOT called between the two runs, so
+      // _loggedHeatRiskAllNoData persists.
+      installHttp(helper, heatRiskRoutes({ heatRisk: bodyFn }));
+      await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showHeatRisk: true });
+      const matches = logCalls.filter((line) => line.includes("no day in this poll resolved a real category"));
+      if (matches.length !== 1) {
+        throw new Error(
+          `expected the all-NoData log to fire exactly once across two consecutive runs, got ${matches.length}: ` +
+          JSON.stringify(logCalls)
+        );
+      }
+
+      // Control: a healthy all-real-values run leaves _stale unset — proving the badge
+      // above is this branch firing, not a permanently-tripped flag.
+      resetHelper(helper);
+      resetLogs();
+      helper._nowMs = () => HEATRISK_NOW_MS;
+      helper._products = { showHeatRisk: true };
+      installHttp(helper, heatRiskRoutes());
+      const controlOut = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showHeatRisk: true });
+      assertPayloadIntact(controlOut);
+      assertHeatRiskBlockIntact(controlOut);
+      if (controlOut._stale) {
+        throw new Error(`control: expected _stale unset on a healthy all-real-values response, got ${controlOut._stale}`);
+      }
+    }
+  },
 ];
 
 // ---------------------------------------------------------------------
