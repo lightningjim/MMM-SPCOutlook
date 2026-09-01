@@ -263,6 +263,38 @@ function dayRangeSpanning(layers) {
   ]);
 }
 
+const HEATRISK_BASE_URL = "https://mapservices.weather.noaa.gov/experimental/rest/services/NWS_HeatRisk/ImageServer";
+
+// Builds the identify URL for a single point against the HeatRisk raster mosaic. Deliberately
+// its OWN function, not a bent buildArcGisQuery: buildArcGisQuery is hardcoded to a MapServer
+// feature-layer `/{layerId}/query?...&f=geojson` shape, while this is an ImageServer `identify`
+// call with a completely different parameter shape (geometry/geometryType/returnGeometry,
+// f=json not f=geojson).
+//
+// Does NO reprojection itself — mercatorX/mercatorY arrive already Web-Mercator-projected by
+// the caller (17-04 calls turf.toMercator()). The geometry's x/y and its declared
+// spatialReference.wkid MUST originate from the SAME reprojection so a unit/declaration
+// mismatch is unrepresentable: that mismatch, NOT sr=4326 itself, is the live-reproduced root
+// cause of a "NoData" response (17-RESEARCH.md Common Pitfalls #2).
+function buildHeatRiskIdentifyUrl(mercatorX, mercatorY) {
+  if (!(typeof HEATRISK_BASE_URL === "string" && HEATRISK_BASE_URL.startsWith("https://mapservices.weather.noaa.gov/"))) {
+    throw new Error("buildHeatRiskIdentifyUrl: baseUrl must be an https mapservices.weather.noaa.gov URL, got " +
+                    JSON.stringify(HEATRISK_BASE_URL));
+  }
+  if (!(Number.isFinite(mercatorX) && Number.isFinite(mercatorY))) {
+    throw new Error("buildHeatRiskIdentifyUrl: mercatorX/mercatorY must be finite numbers, got " +
+                    JSON.stringify({ mercatorX, mercatorY }));
+  }
+  // Object key order fixed at (x, y, spatialReference) on every call, and the query parameters
+  // appended in this exact fixed order — PERF-02's byte-stable-query-string requirement:
+  // incidental reordering would defeat the ETag/hash cache. returnCatalogItems=true is kept
+  // explicit even though the service appears to default to it — never rely on an unconfirmed
+  // default (Phase 14 D-09's precedent).
+  const geometry = JSON.stringify({ x: mercatorX, y: mercatorY, spatialReference: { wkid: 102100 } });
+  return `${HEATRISK_BASE_URL}/identify?geometry=${encodeURIComponent(geometry)}` +
+         `&geometryType=esriGeometryPoint&sr=102100&returnGeometry=false&returnCatalogItems=true&f=json`;
+}
+
 const PRODUCT_REGISTRY = {
   excessiveRain: {
     id: "excessiveRain",
@@ -446,11 +478,86 @@ const PRODUCT_REGISTRY = {
     // excludedLabels + droughtLabels. Also no valueToTier/tierToText/
     // tierToColor: this product has no severity ladder anywhere in its
     // schema (Pitfall 1), so a max-comparator is meaningless (D-02).
+  },
+  heatRisk: {
+    id: "heatRisk",
+    // Fourth kind, beside "arcgis-day-layers", "kml-advisory", "arcgis-hazard-window" — 15 D-01
+    // left the `kind` slot open for a non-day-layer product and this is the planner's resolution
+    // of CONTEXT.md's discretion item: the row exists (rather than a standalone function)
+    // because `configFlag` makes _productToggles pick it up with zero edits, `maxDataAgeHours`
+    // needs a home consistent with 16 D-13/D-14, and D-11's identity assertion below iterates
+    // PRODUCT_REGISTRY — a standalone function would leave HeatRisk outside that invariant.
+    kind: "arcgis-identify-point",
+    configFlag: "showHeatRisk",
+    baseUrl: HEATRISK_BASE_URL,
+    // NOT buildUrl(day) — a single identify call covers all 7 days at once; the day key comes
+    // back inside the response's catalogItems, never from the request URL.
+    buildUrl: buildHeatRiskIdentifyUrl,
+    // The SOLE place HeatRisk's day span is declared (16-REVIEW WR-03: derive spans, never
+    // restate them). 17-04's runner reads row.days; no literal 7 for HeatRisk may appear
+    // anywhere else in node_helper.js.
+    days: 7,
+    // D-07: hourly cadence ("Data is updated hourly", live serviceDescription,
+    // [CARRIED: STACK.md]) — 12h allows ~11 missed cycles before the staleness badge fires.
+    maxDataAgeHours: 12,
+    // Module-authored text, keyed by the raw 0-4 category the service returns directly —
+    // HeatRisk carries no upstream label field to translate.
+    valueToText: { 0: "Little to No Risk", 1: "Minor", 2: "Moderate", 3: "Major", 4: "Extreme" },
+    // Hex, no leading "#" (matches eroTierToColor/wssiTierToColor convention, and how
+    // MMM-SPCOutlook.js renders: "color:#" + value). Machine-readable RGB decoded from this
+    // service's own /legend?f=json raster-class swatch PNGs (step 1 of the plan's sourcing
+    // order), cross-confirmed byte-for-byte against the identical hex table embedded in this
+    // same service's /?f=json serviceDescription HTML. Both retrieved live 2026-09-01.
+    valueToColor: { 0: "e8f9e7", 1: "f4f257", 2: "f69632", 3: "e22f33", 4: "7a0e7f" },
+    paletteSource: "https://mapservices.weather.noaa.gov/experimental/rest/services/NWS_HeatRisk/" +
+                   "ImageServer/legend?f=json (raster-class swatch RGB, cross-confirmed against " +
+                   "the ImageServer's own serviceDescription HTML color table), retrieved 2026-09-01",
+    // Deliberately NO toValue, includesFeat, valueToTier, dayLayers, layers, excludedLabels:
+    // HeatRisk has no label vocabulary at all (its value is a raw numeric category straight off
+    // the service) and no polygon evaluation, so extractPolygons/evaluatePolygons/checkInPolygon
+    // never apply to it.
   }
-  // Future row (HeatRisk) lands in Phase 17 (D-08) — not added here.
 };
+
+// D-11 (DATA-03 enforcement): asserts no two PRODUCT_REGISTRY rows share object identity on
+// any value/tier/text/colour map. Catches the shared-reference reuse DATA-03's own example
+// describes (ERO's `dn` map fed through fire weather's `DN` table) at load time, on the first
+// run, rather than in the field — same "make the invalid state unrepresentable" instinct as
+// daySpanOf/dayRangeOf/dayRangeSpanning above. Sibling to those three, not a modification of
+// any of them: this is genuinely new code checking a property none of them touch (shared
+// object identity across rows, not a single row's internal shape).
+//
+// What this CANNOT see, and must be stated here: a toValue/includesFeat closure that reads a
+// foreign constant directly (e.g. a hypothetical row's toValue closing over another row's
+// dn-style table by name rather than sharing the object by reference) would pass this check
+// while still being wrong — this is a point-in-time structural check on object identity, not a
+// data-flow analysis. Pair it with the recorded spot-check inventory in 17-PATTERNS.md §9
+// (the paired artifact D-11 requires), which enumerates every actual label-to-value map by
+// name and file:line.
+const MAP_FIELDS = ["valueToTier", "tierToText", "tierToColor", "displayColor",
+                     "excludedLabels", "droughtLabels", "excludedLabelKeys", "droughtLabelKeys",
+                     "toValue", "valueToText", "valueToColor"];
+function assertNoSharedRegistryMaps(registry) {
+  const seen = new Map(); // object identity -> row id
+  for (const [rowId, row] of Object.entries(registry)) {
+    for (const field of MAP_FIELDS) {
+      const value = row[field];
+      if (value === undefined || value === null) continue;
+      const prior = seen.get(value);
+      if (prior) {
+        throw new Error(
+          `productRegistry: rows "${prior}" and "${rowId}" share the SAME ${field} object ` +
+          `by reference — this is DATA-03's exact failure shape (a label-to-value mapping ` +
+          `reused across products). Give "${rowId}" its own ${field}.`
+        );
+      }
+      seen.set(value, rowId);
+    }
+  }
+}
+assertNoSharedRegistryMaps(PRODUCT_REGISTRY); // called at module load, same as daySpanOf(...) calls above
 
 module.exports = {
   buildArcGisQuery, daySpanOf, dayRangeOf, hazardLabelKey, normalizeHazardLabel,
-  MPD_FILENAME_PATTERN, PRODUCT_REGISTRY
+  MPD_FILENAME_PATTERN, PRODUCT_REGISTRY, buildHeatRiskIdentifyUrl, assertNoSharedRegistryMaps
 };
