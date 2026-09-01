@@ -14,7 +14,22 @@
     // Discussions are a shipping, always-on feature being migrated into the registry under
     // D-02, not a new product. Defaulting this false would silently delete a live
     // capability for every existing user on upgrade.
-    showSPCMD: true
+    showSPCMD: true,
+    showHeatRisk: false,        // NWS/WPC HeatRisk toggle; every new product flag defaults to false
+    // D-01/D-02: a DISPLAY FLOOR, not a fetch gate — the first frontend-only flag in this
+    // file. Default false renders category 2 (Moderate) and above; true drops the floor to
+    // 1 (Minor). NWS defines Level 1 as affecting "primarily those individuals extremely
+    // sensitive to heat," which at CONUS latitudes is close to a summer-long constant — the
+    // same noise problem 16 D-10's showDrought gate answered, and the same shape as WSSI's
+    // WINTER WEATHER AREA floor. Unlike showDrought, which must reach the backend because it
+    // gates labels inside an already-fetched product, showMinorHeat filters a payload the
+    // backend has already fully emitted: it does NOT go into buildRequestPayload's products
+    // object and does NOT go into node_helper.js's SUB_TOGGLES. The backend still emits
+    // filtered-out days because Phase 18's MERGE-03 must distinguish "HeatRisk said Minor"
+    // from "HeatRisk had no reading" — if a Level-1 day never reached the payload, MERGE-03
+    // would either leak WPC's coarse binary Hazardous Heat flag through or suppress it on no
+    // evidence.
+    showMinorHeat: false
   },
 
   // WR-05: config comes from the user's MagicMirror config.js and is never validated by
@@ -54,7 +69,8 @@
         showMPD: this.config.showMPD,
         showSPCMD: this.config.showSPCMD,
         showHazardsOutlook: this.config.showHazardsOutlook,
-        showDrought: this.config.showDrought
+        showDrought: this.config.showDrought,
+        showHeatRisk: this.config.showHeatRisk
       }
     };
   },
@@ -321,6 +337,45 @@
     // True when the block carries at least one RENDERABLE window entry. Same missing/
     // non-object tolerance as hazardsOutlookHasAnyDay.
     const hazardsOutlookHasWindowEntries = (block) => renderableWindowEntries(block).length > 0;
+    // D-03: the SOLE source of both the getDom() no-risk gate term and the HeatRisk render
+    // loop for this poll's heatRisk block. This is the third phase running that a new
+    // product must join the no-risk short-circuit, and the second in which the gate and the
+    // render loop could disagree — Phase 15 shipped a production defect of exactly this
+    // shape (a gate term that made every MPD invisible). Deriving both from one expression
+    // makes that disagreement unrepresentable rather than merely commented: a day whose
+    // category is below the display floor can never simultaneously fail to render here AND
+    // disqualify the all-clear above, because both callers read this same array.
+    //
+    // Tolerates a missing/non-object block (version skew from an older helper, or the
+    // toggle simply being off) the same way hazardsOutlookHasAnyDay does. The day span is
+    // derived from the block's own keys (WR-08's rule: no literal day count survives
+    // outside the registry) rather than a hardcoded 1..7 — this file cannot require
+    // productRegistry.js to read PRODUCT_REGISTRY.heatRisk.days, so the block's own keys are
+    // the only span the frontend can observe.
+    //
+    // `showMinorHeat` is read off `this.config` by the caller and passed in here — it never
+    // crosses the wire (D-02), so this predicate never reads `this.spcrisk` for the floor.
+    // Strict `=== true` on the floor selection, matching the backend's own CFG-01 default
+    // handling, so an absent or typo'd config value takes the stricter floor rather than a
+    // truthiness accident.
+    const heatRiskDaysToRender = (block, showMinorHeat) => {
+      if (!block || typeof block !== "object") return [];
+      const floor = showMinorHeat === true ? 1 : 2; // D-01
+      const dayKeys = Object.keys(block)
+        .filter((k) => /^day\d+$/.test(k))
+        .sort((a, b) => Number(a.slice(3)) - Number(b.slice(3)));
+      const days = [];
+      for (const key of dayKeys) {
+        const day = block[key];
+        // null fails this check (category 0 is affirmatively "no risk"; null is "no
+        // reading at all" — D-02/Phase 18 MERGE-03 depend on telling those apart, so
+        // neither may render here regardless of the floor).
+        if (day && typeof day.category === "number" && day.category >= floor) {
+          days.push({ d: Number(key.slice(3)), category: day.category });
+        }
+      }
+      return days;
+    };
     // WR-09: every other product row is gated on its own toggle (`this.config.showExcessiveRain
     // && ...`, `this.config.showWinterImpact && ...`); the advisory band was not, so it
     // rendered whatever arrived. That was safe only because _runKmlAdvisoryRow returns [] when
@@ -392,6 +447,13 @@
       // this defect, where the gate's missing advisory term made every MPD invisible.
       !(this.config.showHazardsOutlook && hazardsOutlookHasAnyDay(this.spcrisk.hazardsOutlook)) &&
       !(this.config.showHazardsOutlook && hazardsOutlookHasWindowEntries(this.spcrisk.hazardsOutlook)) &&
+      // HeatRisk extension of the no-risk gate (Phase 19 RPT-06 regression target). Calls
+      // the exact same expression the render loop below calls (D-03), so a day the user
+      // cannot see (below the showMinorHeat floor) can never suppress this all-clear while
+      // rendering nothing — the disagreement class Phase 15 shipped as a production defect
+      // (the gate term that made every MPD invisible). showMinorHeat is read off
+      // this.config, never this.spcrisk — it never crossed the wire (D-02).
+      !(this.config.showHeatRisk && heatRiskDaysToRender(this.spcrisk.heatRisk, this.config.showMinorHeat).length > 0) &&
       // Advisory extension of the no-risk gate (Phase 19 RPT-06 regression target). Before
       // Phase 15 this gate had no advisory term at all, so a location inside an active
       // discussion with no other risk rendered the literal "No Severe Weather Risk" and the
@@ -657,6 +719,27 @@
         // enforced in productRegistry.js, and recording it at both ends keeps the two
         // files' coupling visible.
         renderDayBlock("Winter Impact", this.spcrisk.winterImpact);
+      }
+      // Placement: immediately after Winter Impact and before Hazards Outlook. HeatRisk is
+      // a Days 1-7 product like ERO and WSSI, whereas Hazards Outlook covers Days 3-14, so
+      // this groups the near-term day grids together before the longer-range band. Gated
+      // on the same flag the no-risk gate term uses (WR-09 — gate and render must agree
+      // about what is displayable), and placed before the contentMarker comparison so a
+      // stale payload carrying real heat risk renders its content and not a bare ⚠ badge
+      // (D-16, CR-01).
+      if (this.config.showHeatRisk) {
+        for (const { d } of heatRiskDaysToRender(this.spcrisk.heatRisk, this.config.showMinorHeat)) {
+          const day = this.spcrisk.heatRisk["day" + d];
+          // A day that cleared the floor must never render as a blank row — fall back to
+          // the numeric category if text is missing/empty. escapeHtml/validHazardColor on
+          // every rendered field mirror renderHazardsDays exactly: these values are
+          // module-authored today, but the payload is remote-derived data structurally,
+          // and this also guarantees the raw "NoData" sentinel can never reach the DOM as
+          // a label — it is never mapped to `text`, and would be escaped if it somehow were.
+          const text = day.text ? escapeHtml(day.text) : escapeHtml(String(day.category));
+          wrapper.innerHTML += "Heat Risk (Day " + d + "): <span style=\"color:#" +
+            validHazardColor(day.color) + "\">" + text + "</span><br/>";
+        }
       }
       // Gated on the same flag the no-risk gate terms use (WR-09 — gate and render must
       // agree about what is displayable). Placed before the contentMarker comparison so
