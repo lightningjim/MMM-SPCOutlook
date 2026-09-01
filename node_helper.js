@@ -230,6 +230,15 @@ module.exports = NodeHelper.create({
     // otherwise a log assertion in one scenario could be satisfied by a previous
     // scenario's entry.
     this._loggedUnmappedHazardLabels = new Set();
+    // D-04/D-05/D-06/D-07: HeatRisk's four once-per-process log guards. A FIXED
+    // cardinality of four booleans, deliberately not a keyed ledger — 16-REVIEW WR-06's
+    // unbounded-growth class (a remote-controlled key set that grows forever) is
+    // unrepresentable here rather than bounded after the fact, because none of these four
+    // conditions is keyed by anything upstream-controlled.
+    this._loggedHeatRiskValuesMismatch = false;
+    this._loggedHeatRiskAllNoData = false;
+    this._loggedHeatRiskSequenceGap = false;
+    this._loggedHeatRiskDataAge = false;
     this._products = this._productToggles();
   },
 
@@ -860,6 +869,203 @@ module.exports = NodeHelper.create({
     // hazard does not blank the display — rows are never suppressed when `anyStale` is
     // true.
     return { payload: block, anyStale };
+  },
+
+  /**
+   * Fetch, reproject, zip/sort/dedupe/bucket and freshness-check the `arcgis-identify-point`
+   * registry row (HeatRisk), returning the `{ payload, anyStale }` shape every runner in
+   * this file shares. Unlike `_runArcGisDayProduct`'s per-day URL loop, this is ONE HTTP
+   * round-trip covering all seven days — every day attribution comes from sorting each
+   * catalog item's `idp_validtime`, never from array order or the response's top-level
+   * `value` (live capture shows that scalar tracking whichever tile ArcGIS considers
+   * visible, not "today").
+   * @param row - PRODUCT_REGISTRY.heatRisk
+   * @param loc - a turf Point Feature (built once via turf.point([lon, lat])); reprojected
+   *   to Web Mercator here, immediately before the URL is built
+   * @param productToggles - this request's own toggle snapshot (WR-13)
+   * @returns { payload, anyStale } — payload always carries the full day1..dayN block
+   *   (row.days), regardless of the toggle (Phase 14 D-05/D-02); anyStale is never raised
+   *   by the toggle-off path, only by a genuine fetch/data problem
+   */
+  async _runHeatRiskProduct(row, loc, productToggles) {
+    // Phase 14 D-05/D-02: seed the full block BEFORE anything else, so a toggle-off poll
+    // or a mid-pipeline throw still emits a complete, well-shaped block. WR-16: driven by
+    // row.days, never a literal 7 — the registry row is the sole declaration of this
+    // product's span.
+    const payload = {};
+    for (let d = 1; d <= row.days; d++) {
+      payload["day" + d] = { category: null, text: "", color: "" };
+    }
+
+    // D-02: this all-null block is a "no reading taken" state, NOT the D-04
+    // all-NoData failure state — the toggle being off must never raise anyStale.
+    if (productToggles[row.configFlag] !== true) {
+      return { payload, anyStale: false };
+    }
+
+    let anyStale = false;
+
+    // CR-01: "a contained throw is a degrade, not a clean read." The whole pipeline below
+    // is wrapped so a throw at ANY point — reprojection, fetch, parse, bucket, freshness —
+    // degrades this product alone rather than escaping to getSpcOutlook's shared catch.
+    // Independent of the `fetchResult.stale || fetchResult.failed` check a few lines down,
+    // because a throw can happen before that line ever runs.
+    try {
+      // HEAT-03: `loc` is ALREADY a turf Point Feature (built once at this product's call
+      // site as `turf.point([lon, lat])`) — it has no `.lat`/`.lon` properties, so it is
+      // reprojected directly rather than rebuilt from fields it lacks. The projected x/y
+      // and the URL's declared `spatialReference.wkid: 102100` (inside row.buildUrl)
+      // originate from this ONE reprojection. Live testing isolated `NoData`'s actual cause
+      // as a coordinate/spatialReference UNIT MISMATCH — degree-scale numbers declared
+      // under a Mercator spatial reference, not the choice of geographic reference system
+      // itself; this reprojection keeps the declared coordinates and the declared
+      // spatialReference in agreement.
+      const projected = turf.toMercator(loc);
+      const [mercatorX, mercatorY] = projected.geometry.coordinates;
+      const url = row.buildUrl(mercatorX, mercatorY);
+
+      const fetchResult = await this.fetchGeoJsonCached(url, (body) => this._isHeatRiskIdentifyResponse(body));
+      if (fetchResult.stale || fetchResult.failed) anyStale = true;
+
+      // Obtain tuples by one of two paths, converging on ONE downstream shape —
+      // { idpValidtime, category, idpFiledate } — so a cache hit and a fresh fetch produce
+      // byte-identical output from here on (the "convert exactly once" discipline
+      // `_runArcGisDayProduct` established).
+      let tuples;
+      if (fetchResult.data === null && fetchResult.cachedResult !== null) {
+        tuples = this._heatRiskTuplesFromCache(fetchResult.cachedResult);
+      } else if (fetchResult.data !== null) {
+        const raw = this._zipHeatRiskCatalog(fetchResult.data);
+        if (raw === null) {
+          // D-06: a Values/features length mismatch abandons HeatRisk for this poll — the
+          // seeded all-null block is left untouched, never partially filled.
+          const body = fetchResult.data;
+          const featuresLen = body && body.catalogItems && Array.isArray(body.catalogItems.features)
+            ? body.catalogItems.features.length : "unknown";
+          const valuesLen = body && body.properties && Array.isArray(body.properties.Values)
+            ? body.properties.Values.length : "unknown";
+          anyStale = true;
+          if (!this._loggedHeatRiskValuesMismatch) {
+            this._loggedHeatRiskValuesMismatch = true;
+            Log.error(
+              "MMM-SPCOutlook _runHeatRiskProduct: Values/features length mismatch " +
+              "(features=" + featuresLen + ", Values=" + valuesLen + "); abandoning HeatRisk for this poll"
+            );
+          }
+          return { payload, anyStale };
+        }
+        const deduped = this._dedupeHeatRiskByValidTime(raw);
+        // _cacheHeatRiskTuples both writes the clock-independent cache entry AND returns
+        // the exact whitelisted array it wrote, so this branch and the cache-hit branch
+        // above converge on the identical shape without a second parsing pass.
+        tuples = this._cacheHeatRiskTuples(url, fetchResult, deduped);
+      } else {
+        tuples = [];
+      }
+
+      // HEAT-01/HEAT-02: bucket by idp_validtime, sorted ascending first so the mapping is
+      // deterministic and reviewable — the day key itself comes from the offset
+      // arithmetic, never from array position. Under no circumstance is the response's
+      // top-level scalar reading, the first element of its per-day array, or its
+      // tile-visibility flags read here to identify a day.
+      const todayUtcMs = this._todayUtcMs();
+      const sorted = tuples.slice().sort((a, b) => a.idpValidtime - b.idpValidtime);
+      const presentDays = new Set();
+      const resolvedDays = new Set();
+      for (const t of sorted) {
+        const d = this._heatRiskDayOffset(t.idpValidtime, todayUtcMs);
+        if (d < 1 || d > row.days) continue; // outside this product's declared span
+        presentDays.add(d);
+        if (typeof t.category === "number") {
+          resolvedDays.add(d);
+          payload["day" + d] = {
+            category: t.category,
+            text: row.valueToText[t.category],
+            color: row.valueToColor[t.category]
+          };
+        }
+        // A tuple with category: null leaves that day's seeded all-null entry in place —
+        // D-04's "a NoData day is silence" applies automatically here, no extra branch.
+      }
+
+      // D-04/D-05: `resolvedDays.size === 0` covers BOTH "presentDays is empty" (no tile at
+      // all resolved to a valid day — a total absence) and "presentDays is non-empty but
+      // every present day is NoData" — D-05 explicitly folds the total-absence case into
+      // this same D-04 branch and log guard, firing no separate gap log for it. If any day
+      // resolved to a real 0-4, the identify call and the Mercator reprojection are
+      // demonstrably working, so a NoData elsewhere is genuine data absence (15 D-04); if
+      // NO day resolved, the module cannot distinguish an out-of-coverage location from a
+      // systemic break — precisely HEAT-03's failure mode reading as "no heat risk
+      // anywhere, forever" — and both warrant a signal. Accepted cost: a permanent warning
+      // badge for a genuinely out-of-coverage deployment, the same trade 16 D-14 took.
+      if (resolvedDays.size === 0) {
+        anyStale = true;
+        if (!this._loggedHeatRiskAllNoData) {
+          this._loggedHeatRiskAllNoData = true;
+          Log.warn(
+            "MMM-SPCOutlook _runHeatRiskProduct: no day in this poll resolved a real category " +
+            "(every present day was NoData, or no tile resolved to a valid day at all)"
+          );
+        }
+      } else {
+        // D-05: gapDays are days 1..row.days that received no tuple at all (distinct from a
+        // day that received a NoData tuple, which is D-04's silence above — a tile existing
+        // with a NoData pixel and no tile existing at all are DIFFERENT causes, deliberately
+        // not collapsed). A gap past the highest present day is a TAIL gap — silence, no
+        // badge, consistent with routine mosaic rotation where the newest tile has not
+        // landed yet. A gap before the highest present day (including Day 1) is an INTERIOR
+        // gap — the sequence itself is broken, and a day is being attributed by a rule that
+        // has just demonstrated it is unreliable; a missing Day 1 during a heat wave
+        // rendering identically to a Day 1 with no heat risk violates this project's core
+        // value statement ("no false negatives") directly.
+        const maxPresent = Math.max(...presentDays);
+        const interiorGaps = [];
+        for (let d = 1; d < maxPresent; d++) {
+          if (!presentDays.has(d)) interiorGaps.push(d);
+        }
+        if (interiorGaps.length > 0) {
+          anyStale = true;
+          if (!this._loggedHeatRiskSequenceGap) {
+            this._loggedHeatRiskSequenceGap = true;
+            Log.warn(
+              "MMM-SPCOutlook _runHeatRiskProduct: interior or Day-1 gap in the day sequence " +
+              "at day(s) " + interiorGaps.join(",") + " (a tail gap past the last present day is not flagged)"
+            );
+          }
+        }
+      }
+
+      // D-07: maxDataAgeHours applied PER surviving deduped item, never off a single
+      // idp_filedate read from the first item — live capture shows a ~15-minute spread
+      // across the seven items in one poll, unlike the Hazards Outlook where idp_filedate
+      // is uniform within a layer.
+      for (const t of sorted) {
+        if (typeof t.idpFiledate === "number" && Number.isFinite(t.idpFiledate) &&
+            (this._nowMs() - t.idpFiledate) > row.maxDataAgeHours * 60 * 60 * 1000) {
+          anyStale = true;
+          if (!this._loggedHeatRiskDataAge) {
+            this._loggedHeatRiskDataAge = true;
+            // 16 D-15's asymmetry, carried forward verbatim: this raises anyStale but is
+            // deliberately EXCLUDED from _staleAsOf (never routed through the oldest-stale-entry tracker)
+            // — _staleAsOf describes fetch age, not data age, and an hours-old WPC file
+            // must not make the badge speak for SPC data fetched minutes ago.
+            Log.warn(
+              "MMM-SPCOutlook _runHeatRiskProduct: a surviving item exceeded maxDataAgeHours=" +
+              row.maxDataAgeHours + "h; _staleAsOf intentionally not updated (fetch age, not data age)"
+            );
+          }
+        }
+      }
+
+      return { payload, anyStale };
+    } catch (err) {
+      anyStale = true;
+      Log.error(
+        "MMM-SPCOutlook _runHeatRiskProduct: fetch/parse/evaluate failed, leaving the day block at no reading",
+        err
+      );
+      return { payload, anyStale };
+    }
   },
 
   /**

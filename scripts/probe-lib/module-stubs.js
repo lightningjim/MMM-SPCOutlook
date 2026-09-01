@@ -85,7 +85,26 @@ const turfStub = {
   polygonToLine: (_poly) => ({ type: "Feature", __stubLine: true }),
   // 999 km is far outside the 40 km proximity cutoff, so proximity math
   // never perturbs a scenario's expected values.
-  pointToLineDistance: (_pt, _line, _opts) => 999
+  pointToLineDistance: (_pt, _line, _opts) => 999,
+  // HEAT-03: the real spherical Web Mercator (EPSG:3857) formula, not a placeholder —
+  // needed so a HeatRisk scenario can assert on Mercator-MAGNITUDE x/y (the load-bearing
+  // proof that a degree-scale coordinate never reaches the URL under a Mercator
+  // spatialReference declaration) rather than on an arbitrary stub value. Accepts either
+  // this stub's own bare `{ type: "Point", coordinates }` (turfStub.point's own shape) or
+  // a proper Point Feature, and always returns a Feature with `.geometry.coordinates` —
+  // the shape `_runHeatRiskProduct` reads off the real `turf.toMercator`'s return value.
+  toMercator: (point) => {
+    const coords = (point && point.geometry && point.geometry.coordinates) ||
+                   (point && point.coordinates);
+    if (!Array.isArray(coords) || coords.length < 2) {
+      throw new Error("toMercator stub: expected a Point or Point Feature with coordinates");
+    }
+    const [lon, lat] = coords;
+    const EARTH_RADIUS_M = 6378137;
+    const x = ((lon * Math.PI) / 180) * EARTH_RADIUS_M;
+    const y = Math.log(Math.tan(Math.PI / 4 + (lat * Math.PI) / 360)) * EARTH_RADIUS_M;
+    return { type: "Feature", properties: {}, geometry: { type: "Point", coordinates: [x, y] } };
+  }
 };
 
 function inertThrow(specifier) {
