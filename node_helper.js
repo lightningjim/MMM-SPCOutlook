@@ -991,9 +991,19 @@ module.exports = NodeHelper.create({
       const sorted = tuples.slice().sort((a, b) => a.idpValidtime - b.idpValidtime);
       const presentDays = new Set();
       const resolvedDays = new Set();
+      // WR-01: the tuples that actually landed inside this product's declared 1..row.days
+      // span, collected here so the D-07 freshness check below can iterate THEM rather
+      // than every deduped tuple. A leftover catalog item — yesterday's tile, day offset
+      // 0, not yet rotated out of the mosaic — contributes nothing to the payload, so its
+      // idp_filedate must not raise a badge about data the user is never shown. At an
+      // hourly cadence and a 12h tolerance one un-rotated tile would otherwise light the
+      // warning on every poll, permanently, which teaches the operator to ignore the one
+      // indicator that is supposed to mean something.
+      const inSpan = [];
       for (const t of sorted) {
         const d = this._heatRiskDayOffset(t.idpValidtime, todayUtcMs);
         if (d < 1 || d > row.days) continue; // outside this product's declared span
+        inSpan.push(t);
         presentDays.add(d);
         if (typeof t.category === "number") {
           resolvedDays.add(d);
@@ -1057,8 +1067,9 @@ module.exports = NodeHelper.create({
       // D-07: maxDataAgeHours applied PER surviving deduped item, never off a single
       // idp_filedate read from the first item — live capture shows a ~15-minute spread
       // across the seven items in one poll, unlike the Hazards Outlook where idp_filedate
-      // is uniform within a layer.
-      for (const t of sorted) {
+      // is uniform within a layer. WR-01: over `inSpan`, not `sorted` — see the comment on
+      // inSpan's declaration above.
+      for (const t of inSpan) {
         if (typeof t.idpFiledate === "number" && Number.isFinite(t.idpFiledate) &&
             (this._nowMs() - t.idpFiledate) > row.maxDataAgeHours * 60 * 60 * 1000) {
           anyStale = true;

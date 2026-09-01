@@ -5970,6 +5970,128 @@ const scenarios = [
     }
   },
   {
+    // WR-01 (17-REVIEW): D-07's maxDataAgeHours check must describe the data the user is
+    // actually shown. The bucket loop discards any tuple whose computed day offset falls
+    // outside 1..row.days, but the age loop used to iterate every deduped tuple — so a
+    // leftover catalog item (yesterday's tile, offset 0) carrying an old idp_filedate
+    // raised the badge for data that never reaches the payload. At HeatRisk's hourly
+    // cadence and 12h tolerance, one un-rotated tile lights the ⚠ badge on every poll
+    // forever, which trains the operator to ignore the one indicator that is supposed to
+    // mean something.
+    // Mutation to prove RED: iterate `sorted` instead of `inSpan` in the maxDataAgeHours
+    // loop in _runHeatRiskProduct.
+    name: "heatrisk-out-of-span-tile-does-not-age-the-badge",
+    run: async (helper) => {
+      resetHelper(helper);
+      resetLogs();
+      helper._nowMs = () => HEATRISK_NOW_MS;
+      helper._products = { showHeatRisk: true };
+
+      const HOUR = 60 * 60 * 1000;
+      const maxAgeHours = PRODUCT_REGISTRY.heatRisk.maxDataAgeHours;
+      const freshFiledate = HEATRISK_NOW_MS - 1 * HOUR;
+      const agedFiledate = HEATRISK_NOW_MS - (maxAgeHours + 28) * HOUR;
+
+      // Seven healthy, in-span, FRESH tiles...
+      const items = [];
+      for (let d = 1; d <= 7; d++) {
+        items.push(heatRiskCatalogItem({
+          name: `HeatRisk_${d}_Mercator`, validtime: heatRiskValidtimeForDay(d), filedate: freshFiledate
+        }));
+      }
+      // ...plus one leftover tile at day offset 0 (yesterday's, not rotated out of the
+      // mosaic catalog yet) carrying a filedate well past the tolerance.
+      const leftover = heatRiskCatalogItem({
+        name: "HeatRisk_0_Mercator_leftover", validtime: heatRiskValidtimeForDay(0), filedate: agedFiledate
+      });
+      items.push(leftover);
+      const values = [...items.slice(0, 7).map((_, i) => String((i + 1) % 5)), "3"];
+
+      // Precondition guard: the leftover really does compute to day offset 0 (out of the
+      // 1..7 span), the seven others really do compute to 1..7, and the leftover's
+      // filedate really does exceed the tolerance. Without all three this scenario would
+      // pass for reasons unrelated to its subject.
+      const todayUtcMsForGuard = Date.UTC(2026, 7, 31);
+      const offsets = items.map((it) => Math.round((it.attributes.idp_validtime - todayUtcMsForGuard) / 86400000));
+      if (JSON.stringify(offsets) !== JSON.stringify([1, 2, 3, 4, 5, 6, 7, 0])) {
+        throw new Error(`precondition failed: expected day offsets [1..7, 0], computed ${JSON.stringify(offsets)}`);
+      }
+      if ((HEATRISK_NOW_MS - agedFiledate) <= maxAgeHours * HOUR) {
+        throw new Error(`precondition failed: the leftover tile's filedate is not actually past maxDataAgeHours=${maxAgeHours}h`);
+      }
+      if ((HEATRISK_NOW_MS - freshFiledate) > maxAgeHours * HOUR) {
+        throw new Error("precondition failed: the seven in-span tiles are not actually fresh");
+      }
+
+      installHttp(helper, heatRiskRoutes({
+        heatRisk: () => httpResponse({
+          body: heatRiskIdentifyResponse({ items, values }),
+          etag: "heatrisk-out-of-span-age-v1"
+        })
+      }));
+      const out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showHeatRisk: true });
+      assertPayloadIntact(out);
+      assertHeatRiskBlockIntact(out);
+
+      if (out._stale) {
+        throw new Error(
+          `WR-01: an out-of-span (day offset 0) tile with a ${maxAgeHours + 28}h-old idp_filedate raised ` +
+          `_stale=${out._stale}, but nothing from that tile reaches the payload — the freshness badge must ` +
+          "describe the data the user is shown, not tuples the bucket loop discarded"
+        );
+      }
+      const ageLogs = logCalls.filter((line) => line.includes("exceeded maxDataAgeHours"));
+      if (ageLogs.length !== 0) {
+        throw new Error(
+          `WR-01: an out-of-span tile fired the data-age log ${ageLogs.length} time(s): ${JSON.stringify(ageLogs)}`
+        );
+      }
+      // The seven in-span days must all still be rendered — the leftover must be ignored,
+      // not allowed to abandon the poll.
+      for (let d = 1; d <= 7; d++) {
+        const expected = Number(values[d - 1]);
+        if (out.heatRisk["day" + d].category !== expected) {
+          throw new Error(`expected day${d} category ${expected}, got ${out.heatRisk["day" + d].category}`);
+        }
+      }
+
+      // Control: move that same aged filedate onto an IN-SPAN tile (day 3) and the badge
+      // MUST fire. Without this, "no badge" above could be a freshness check that has
+      // simply stopped working.
+      resetHelper(helper);
+      resetLogs();
+      helper._nowMs = () => HEATRISK_NOW_MS;
+      helper._products = { showHeatRisk: true };
+      const controlItems = [];
+      for (let d = 1; d <= 7; d++) {
+        controlItems.push(heatRiskCatalogItem({
+          name: `HeatRisk_${d}_Mercator`,
+          validtime: heatRiskValidtimeForDay(d),
+          filedate: d === 3 ? agedFiledate : freshFiledate
+        }));
+      }
+      controlItems.push(heatRiskCatalogItem({
+        name: "HeatRisk_0_Mercator_leftover", validtime: heatRiskValidtimeForDay(0), filedate: freshFiledate
+      }));
+      installHttp(helper, heatRiskRoutes({
+        heatRisk: () => httpResponse({
+          body: heatRiskIdentifyResponse({ items: controlItems, values }),
+          etag: "heatrisk-out-of-span-age-control-v1"
+        })
+      }));
+      const controlOut = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showHeatRisk: true });
+      assertPayloadIntact(controlOut);
+      assertHeatRiskBlockIntact(controlOut);
+      if (controlOut._stale !== true) {
+        throw new Error(
+          `control: an IN-SPAN tile ${maxAgeHours + 28}h past maxDataAgeHours=${maxAgeHours}h left ` +
+          `_stale=${controlOut._stale} — the age check itself has stopped working, making the primary ` +
+          "assertion above vacuous"
+        );
+      }
+    }
+  },
+  {
     // D-05: a gap at the TAIL of the 1-7 grid (nothing resolved beyond the highest
     // present day) is silence with no badge — consistent with routine mosaic rotation,
     // where the newest tile has not yet landed. Live capture shows 7 catalog items
