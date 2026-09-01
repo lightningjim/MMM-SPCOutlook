@@ -208,7 +208,7 @@ Plans:
   4. With all six new product toggles enabled, backend timing/logs show the new product fetches issued concurrently via `Promise.all` rather than sequentially (PERF-01).
   5. A spot check across all six new products confirms no label-to-value mapping is reused between products (e.g. ERO's `dn` is never fed through the fire weather `DN` table) (DATA-03).
 
-**Plans:** 3/9 plans executed
+**Plans:** 4/9 plans executed
 
 Plans:
 **Wave 1**
@@ -222,7 +222,7 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2)*
 
-- [ ] 17-04-PLAN.md — `_runHeatRiskProduct`: reproject, fetch, bucket, the four staleness branches, clock-independent cache (wave 3)
+- [x] 17-04-PLAN.md — `_runHeatRiskProduct`: reproject, fetch, bucket, the four staleness branches, clock-independent cache (wave 3)
 
 **Wave 4** *(blocked on Wave 3)*
 
@@ -300,7 +300,7 @@ Phases execute in numeric order: 14 → 15 → 16 → 17 → 18 → 19
 | 14. Foundation & WPC Excessive Rainfall Outlook | v2.0 | 7/7 | Complete | 2026-08-23 |
 | 15. WPC Winter Storm Severity & Mesoscale Precipitation Discussion | v2.0 | 6/9 | In Progress|  |
 | 16. WPC Day 3–7 / CPC Day 8–14 Hazards Outlook | v2.0 | 8/8 | Complete    | 2026-08-27 |
-| 17. NWS/WPC HeatRisk & Parallelized Fetching | v2.0 | 3/9 | In Progress|  |
+| 17. NWS/WPC HeatRisk & Parallelized Fetching | v2.0 | 4/9 | In Progress|  |
 | 18. Merge, Precedence & Unified Payload Schema | v2.0 | 0/? | Not started | - |
 | 19. Unified Day Report — getDom() Rewrite | v2.0 | 0/? | Not started | - |
 
