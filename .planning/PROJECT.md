@@ -48,12 +48,12 @@ Accurately and efficiently tell the user if they're in a weather risk zone right
 **Target features:**
 
 *New data sources:*
-- [ ] WPC Day 3–7 US Hazards Outlook
-- [ ] CPC Day 8–14 US Hazards Outlook
-- [ ] WPC Excessive Rainfall Outlook (Days 1–3)
-- [ ] WPC Winter Weather Outlook (Days 1–3)
-- [ ] WPC Mesoscale Precipitation Discussion (analog to existing SPC MD handling)
-- [ ] NWS/WPC HeatRisk (approach determined by research — raster product, needs point-queryable endpoint)
+- [x] WPC Day 3–7 US Hazards Outlook — validated in Phase 16
+- [x] CPC Day 8–14 US Hazards Outlook — validated in Phase 16
+- [x] WPC Excessive Rainfall Outlook (Days 1–3) — validated in Phase 14
+- [x] WPC Winter Weather Outlook (Days 1–3) — validated in Phase 15
+- [x] WPC Mesoscale Precipitation Discussion (analog to existing SPC MD handling) — validated in Phase 15
+- [x] NWS/WPC HeatRisk — validated in Phase 17 (ArcGIS ImageServer `identify`, point-queryable via Web Mercator reprojection)
 
 *Display restructure:*
 - [ ] Unified day report replacing per-product sections — one block per day merging severe, fire, rainfall, winter, and extended hazards
@@ -146,4 +146,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-08-15 — v2.0 WPC & CPC Integration + Unified Day Report started*
+*Last updated: 2026-09-01 — Phase 17 complete: all six v2.0 data sources shipped; display restructure (Phase 18) remains*
