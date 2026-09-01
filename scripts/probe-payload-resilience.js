@@ -6191,6 +6191,134 @@ const scenarios = [
     }
   },
   {
+    // WR-03 (17-REVIEW): HEAT-04's dedupe collapses items sharing an EXACT idp_validtime
+    // with a documented idp_filedate tiebreak. Two DISTINCT validtimes that round to the
+    // same day key survive that dedupe and then collide in the bucket loop, where
+    // last-write-wins by ascending validtime silently overwrote the earlier reading — no
+    // tiebreak, no log, no badge. _heatRiskDayOffset's own docstring names this exact
+    // dependency ("if a future response ever carries a midnight-aligned idp_validtime,
+    // this assumption breaks"), but the break was silent, and it lost the HIGHER severity:
+    // an Extreme (4) at 12:00Z replaced by a Little to No Risk (0) at 18:00Z, rendered as
+    // an affirmative all-clear.
+    //
+    // Two independent guarantees are asserted. (1) The surviving category is the MAXIMUM,
+    // not the last — this project does not trade a false negative for arrival order.
+    // (2) The collision itself raises the badge and logs once, because the day-attribution
+    // rule has just demonstrated it is unreliable and every day in the block is now
+    // attributed by it.
+    // Mutation to prove RED: restore last-write-wins in the bucket loop (drop the max and
+    // the collision detection).
+    name: "heatrisk-same-day-key-collision-keeps-max-and-signals",
+    run: async (helper) => {
+      resetHelper(helper);
+      resetLogs();
+      helper._nowMs = () => HEATRISK_NOW_MS;
+      helper._products = { showHeatRisk: true };
+
+      // Day 1's tile at the live-observed 12:00Z alignment, carrying Extreme...
+      const day1Extreme = heatRiskCatalogItem({
+        name: "HeatRisk_1_Mercator_12Z", validtime: heatRiskValidtimeForDay(1)
+      });
+      // ...and a second, DIFFERENT validtime six hours later that rounds to the same day
+      // key, carrying Little to No Risk. Ascending-validtime order puts this one last.
+      const day1Late = heatRiskCatalogItem({
+        name: "HeatRisk_1_Mercator_18Z", validtime: heatRiskValidtimeForDay(1) + 6 * 60 * 60 * 1000
+      });
+      const otherDays = [2, 3, 4, 5, 6, 7].map((d) =>
+        heatRiskCatalogItem({ name: `HeatRisk_${d}_Mercator`, validtime: heatRiskValidtimeForDay(d) })
+      );
+      const items = [day1Extreme, day1Late, ...otherDays];
+      const values = ["4", "0", "1", "1", "2", "2", "1", "1"];
+
+      // Precondition guard: the two day-1 items must have DIFFERENT idp_validtime values
+      // (so HEAT-04's exact-match dedupe cannot collapse them) that nonetheless round to
+      // the SAME day key. Without both halves this scenario tests the dedupe, not the
+      // collision.
+      const todayUtcMsForGuard = Date.UTC(2026, 7, 31);
+      const offsetOf = (it) => Math.round((it.attributes.idp_validtime - todayUtcMsForGuard) / 86400000);
+      if (day1Extreme.attributes.idp_validtime === day1Late.attributes.idp_validtime) {
+        throw new Error("precondition failed: the two day-1 items share an exact idp_validtime, so HEAT-04's dedupe would collapse them before the bucket loop ever sees a collision");
+      }
+      if (offsetOf(day1Extreme) !== 1 || offsetOf(day1Late) !== 1) {
+        throw new Error(
+          `precondition failed: the two day-1 items do not both round to day key 1, computed ` +
+          `${offsetOf(day1Extreme)} and ${offsetOf(day1Late)}`
+        );
+      }
+
+      installHttp(helper, heatRiskRoutes({
+        heatRisk: () => httpResponse({
+          body: heatRiskIdentifyResponse({ items, values }),
+          etag: "heatrisk-day-collision-v1"
+        })
+      }));
+      const out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showHeatRisk: true });
+      assertPayloadIntact(out);
+      assertHeatRiskBlockIntact(out);
+
+      if (out.heatRisk.day1.category !== 4) {
+        throw new Error(
+          `WR-03: two distinct idp_validtime values rounded to day key 1 and the LATER, LOWER reading won — ` +
+          `day1.category=${out.heatRisk.day1.category} ("${out.heatRisk.day1.text}"), expected 4 (Extreme). ` +
+          "A silent overwrite by arrival order must never downgrade a severity."
+        );
+      }
+      if (out.heatRisk.day1.text !== PRODUCT_REGISTRY.heatRisk.valueToText[4] ||
+          out.heatRisk.day1.color !== PRODUCT_REGISTRY.heatRisk.valueToColor[4]) {
+        throw new Error(
+          `WR-03: day1 kept category 4 but its text/colour describe something else — ` +
+          `text=${JSON.stringify(out.heatRisk.day1.text)}, color=${JSON.stringify(out.heatRisk.day1.color)}`
+        );
+      }
+      if (out._stale !== true) {
+        throw new Error(
+          `WR-03: a same-day-key collision left _stale=${out._stale} — the 12:00Z alignment every day key in ` +
+          "this block depends on has just been shown not to hold, and the whole block is attributed by it"
+        );
+      }
+      const collisionLogs = logCalls.filter((line) => line.includes("resolved to day"));
+      if (collisionLogs.length !== 1) {
+        throw new Error(
+          `WR-03: expected exactly one day-collision log, got ${collisionLogs.length}: ${JSON.stringify(logCalls)}`
+        );
+      }
+
+      // Control 1: the collision log is one-shot across polls, like its three siblings.
+      installHttp(helper, heatRiskRoutes({
+        heatRisk: () => httpResponse({
+          body: heatRiskIdentifyResponse({ items, values }),
+          etag: "heatrisk-day-collision-v1"
+        })
+      }));
+      await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showHeatRisk: true });
+      const afterSecond = logCalls.filter((line) => line.includes("resolved to day"));
+      if (afterSecond.length !== 1) {
+        throw new Error(
+          `control 1: the day-collision log fired ${afterSecond.length} times across two polls, expected 1`
+        );
+      }
+
+      // Control 2: the ordinary, live-observed one-tile-per-day response must NOT trip any
+      // of this — no badge, no collision log — proving the detection keys on a genuine
+      // second validtime and not merely on a day being written.
+      resetHelper(helper);
+      resetLogs();
+      helper._nowMs = () => HEATRISK_NOW_MS;
+      helper._products = { showHeatRisk: true };
+      installHttp(helper, heatRiskRoutes());
+      const controlOut = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showHeatRisk: true });
+      assertPayloadIntact(controlOut);
+      assertHeatRiskBlockIntact(controlOut);
+      if (controlOut._stale) {
+        throw new Error(`control 2: a healthy one-tile-per-day response was flagged stale (${controlOut._stale})`);
+      }
+      const controlLogs = logCalls.filter((line) => line.includes("resolved to day"));
+      if (controlLogs.length !== 0) {
+        throw new Error(`control 2: a healthy response fired the collision log: ${JSON.stringify(controlLogs)}`);
+      }
+    }
+  },
+  {
     // D-05: a gap at the TAIL of the 1-7 grid (nothing resolved beyond the highest
     // present day) is silence with no badge — consistent with routine mosaic rotation,
     // where the newest tile has not yet landed. Live capture shows 7 catalog items

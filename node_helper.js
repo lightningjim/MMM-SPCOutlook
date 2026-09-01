@@ -239,6 +239,11 @@ module.exports = NodeHelper.create({
     this._loggedHeatRiskAllNoData = false;
     this._loggedHeatRiskSequenceGap = false;
     this._loggedHeatRiskDataAge = false;
+    // WR-03: the fifth. The comment above says "a FIXED cardinality of four booleans" —
+    // it is five now, and the property that matters is unchanged: none of these is keyed
+    // by anything upstream-controlled, so 16-REVIEW WR-06's unbounded-growth class stays
+    // unrepresentable rather than merely bounded.
+    this._loggedHeatRiskDayCollision = false;
     this._products = this._productToggles();
   },
 
@@ -1011,17 +1016,53 @@ module.exports = NodeHelper.create({
       // warning on every poll, permanently, which teaches the operator to ignore the one
       // indicator that is supposed to mean something.
       const inSpan = [];
+      // WR-03: the idp_validtime already bucketed into each day key, so a SECOND, DIFFERENT
+      // validtime landing on the same day is detectable. HEAT-04's dedupe only collapses
+      // items sharing an EXACT idp_validtime; two distinct validtimes that round to one day
+      // key (a 12:00Z tile and an 18:00Z tile, say) survive it and used to collide here
+      // under last-write-wins by ascending validtime — silently replacing an Extreme with a
+      // Little to No Risk. `_heatRiskDayOffset`'s own docstring names the 12:00Z alignment
+      // this depends on and warns that a midnight-aligned validtime breaks it; the break is
+      // no longer silent.
+      const validtimeByDay = new Map();
       for (const t of sorted) {
         const d = this._heatRiskDayOffset(t.idpValidtime, todayUtcMs);
         if (d < 1 || d > row.days) continue; // outside this product's declared span
         inSpan.push(t);
         presentDays.add(d);
+
+        const priorValidtime = validtimeByDay.get(d);
+        if (priorValidtime === undefined) {
+          validtimeByDay.set(d, t.idpValidtime);
+        } else if (priorValidtime !== t.idpValidtime) {
+          // The alignment assumption that produced EVERY day key in this block has just
+          // been shown not to hold, so the badge is about the whole block's attribution,
+          // not only about this day. Flagged even when the two readings agree: the rule is
+          // unreliable either way, and the next collision may not be so harmless.
+          anyStale = true;
+          if (!this._loggedHeatRiskDayCollision) {
+            this._loggedHeatRiskDayCollision = true;
+            Log.warn(
+              "MMM-SPCOutlook _runHeatRiskProduct: two catalog items with different " +
+              "idp_validtime values resolved to day " + d + " — the 12:00Z alignment " +
+              "_heatRiskDayOffset depends on no longer holds; keeping the higher category"
+            );
+          }
+        }
+
         if (typeof t.category === "number") {
           resolvedDays.add(d);
+          // On a collision keep the MAXIMUM category, never the last written. Arrival
+          // order is not evidence, and this project does not downgrade a severity on
+          // its say-so: a false negative on a heat-safety product is the one outcome
+          // the value statement forbids outright. Absent a collision `existing` is
+          // always null and this is a plain assignment.
+          const existing = payload["day" + d].category;
+          const kept = (typeof existing === "number" && existing > t.category) ? existing : t.category;
           payload["day" + d] = {
-            category: t.category,
-            text: row.valueToText[t.category],
-            color: row.valueToColor[t.category]
+            category: kept,
+            text: row.valueToText[kept],
+            color: row.valueToColor[kept]
           };
         }
         // A tuple with category: null leaves that day's seeded all-null entry in place —
