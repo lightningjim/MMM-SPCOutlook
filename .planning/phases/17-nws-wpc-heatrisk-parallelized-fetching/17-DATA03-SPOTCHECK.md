@@ -154,13 +154,22 @@ by their presence in `MAP_FIELDS` (Section 4) and by the clean identity-assertio
 
 ## 4. `MAP_FIELDS` — every map-shaped registry field is covered, diff empty
 
-`MAP_FIELDS` as declared at `productRegistry.js:537-539` (11 names):
+`MAP_FIELDS` as declared at `productRegistry.js:546-549` (13 names):
 
 ```
 valueToTier, tierToText, tierToColor, displayColor,
 excludedLabels, droughtLabels, excludedLabelKeys, droughtLabelKeys,
-toValue, valueToText, valueToColor
+toValue, valueToText, valueToColor,
+dayLayers, layers
 ```
+
+> **Superseded by 17-REVIEW WR-07 (commit `2219e22`).** This section originally recorded 11
+> names and argued `dayLayers`/`layers` were deliberately excluded as structural config. That
+> reasoning was wrong and the code review disproved it with a concrete failure: `excessiveRain`
+> and `winterImpact` both carry `dayLayers`, so two rows sharing one object by reference would
+> send WSSI's Day-2 request to the ERO's layer id — a well-formed 200, a plausible payload, no
+> error anywhere. That is DATA-03's failure shape, not an exemption from it. Both fields are
+> now covered.
 
 **Per-row map-shaped field inventory, re-derived from the current 6-row registry:**
 
@@ -173,18 +182,21 @@ toValue, valueToText, valueToColor
 | hazardsOutlook | `excludedLabels`, `droughtLabels`, `excludedLabelKeys`, `droughtLabelKeys`, `displayColor`, `toValue` |
 | heatRisk | `valueToText`, `valueToColor` |
 
-**Union of all rows' map-shaped fields** (11 names): `valueToTier, tierToText, tierToColor,
+**Union of all rows' value-mapping fields** (11 names): `valueToTier, tierToText, tierToColor,
 excludedLabels, droughtLabels, excludedLabelKeys, droughtLabelKeys, displayColor, toValue,
 valueToText, valueToColor`.
 
-**Diff against `MAP_FIELDS`: empty.** Both sets are the identical 11 names. Fields deliberately
-excluded from `MAP_FIELDS` as out-of-scope structural/dispatch config, not value/tier/text/colour
-maps (re-confirmed by reading every registry row this session): `dayLayers` (day→layerId
-scheduling, per-row distinct, never a shareable ladder), `layers`/`dayRangeTotal`
-(hazardsOutlook's own layer/span config), `order` (display sort priority, not a value translation),
-`includesFeat`/`buildUrl`/`toEntry` (dispatch/predicate functions, not label-to-value tables),
+**Plus 2 cross-row-shareable structural fields** now covered per WR-07: `dayLayers`
+(`excessiveRain`, `winterImpact`) and `layers` (`hazardsOutlook`).
+
+**Diff against `MAP_FIELDS`: empty in the covering direction.** `MAP_FIELDS` (13) is a
+deliberate superset of the value-mapping union (11) — the criterion is "cross-row-shareable
+object whose accidental reuse silently mis-renders another product", not "is a colour ladder".
+Fields still excluded, as dispatch/scalar config that is not a shareable per-row object:
+`dayRangeTotal` (hazardsOutlook's span scalar), `order` (display sort priority),
+`includesFeat`/`buildUrl`/`toEntry` (dispatch/predicate functions),
 `baseUrl`/`configFlag`/`id`/`kind`/`days`/`maxDataAgeHours`/`validTimeField`/`paletteSource`
-(scalar/string configuration, not maps of any kind).
+(scalar/string configuration).
 
 This confirms every actual map-shaped field on every one of the six `PRODUCT_REGISTRY` rows is
 named in `MAP_FIELDS` and therefore reachable by `assertNoSharedRegistryMaps` — no map-shaped
