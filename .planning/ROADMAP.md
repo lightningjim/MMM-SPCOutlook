@@ -258,7 +258,18 @@ Plans:
   5. The backend emits a single `days`/`summary`/`sources`/`advisories`-shaped payload; compact and detailed output can both be produced by reading that one payload, with no precedence logic left to be recomputed downstream (RPT-07).
   6. A cold-cache run on the target Raspberry Pi hardware, with every product toggle enabled, produces a measured startup latency figure recorded before the milestone closes (PERF-03).
 
-**Plans**: TBD
+**Plans**: 9 plans in 7 waves
+
+Plans:
+- [ ] 18-01-PLAN.md — hazardTaxonomy.js: dimension roster, (source,label) map, precedence and no-risk floor tables (wave 1)
+- [ ] 18-02-PLAN.md — SPC grid anchor from VALID/EXPIRE, the fourteen grid-day windows, days skeleton in the payload (wave 1)
+- [ ] 18-03-PLAN.md — runner side-channels and SPC-grid re-bucketing for wpc-hazards and heatrisk (wave 2)
+- [ ] 18-04-PLAN.md — straight-through grid entries for spc-convective, spc-fire, wpc-ero, wpc-wssi, plus per-source stale attribution (wave 3)
+- [ ] 18-05-PLAN.md — per-day precedence resolver, summary rollup, per-source health, JSDoc contract (wave 4)
+- [ ] 18-06-PLAN.md — PERF-03 timing instrument: backend interval, per-product breakdown, cold-start and wall-clock logs (wave 5)
+- [ ] 18-07-PLAN.md — MERGE-01 probe scenarios plus their mutation proofs (wave 5)
+- [ ] 18-08-PLAN.md — MERGE-02/03/04, D-07, summary-verdict and legacy-parity probe scenarios plus mutation proofs (wave 6)
+- [ ] 18-09-PLAN.md — live payload capture, per-criterion validation, local PERF-03 figures, human checkpoint (wave 7)
 
 ### Phase 19: Unified Day Report — getDom() Rewrite
 
