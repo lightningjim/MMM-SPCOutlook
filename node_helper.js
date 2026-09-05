@@ -25,8 +25,10 @@ const select = xpath.useNamespaces({
 });
 const { PRODUCT_REGISTRY, MPD_FILENAME_PATTERN, hazardLabelKey } = require("./productRegistry");
 // hazardTaxonomy.js's first and only consumer (D-06). Destructured to only what this file
-// actually reads: dimensionOf resolves a (source, label) pair to D-05's dimension roster.
-const { dimensionOf } = require("./hazardTaxonomy");
+// actually reads: dimensionOf resolves a (source, label) pair to D-05's dimension roster;
+// NO_RISK_FLOOR is read directly by the HeatRisk grid-entry builder to decide whether a
+// category is an active claim or a quiet reading.
+const { dimensionOf, NO_RISK_FLOOR } = require("./hazardTaxonomy");
 // WR-16 / D-10: `showDrought` is NOT a product flag in the `configFlag` sense — it does
 // not gate a fetch, it gates which labels within an already-fetched product (Hazards
 // Outlook) are displayable — so it cannot be derived from `PRODUCT_REGISTRY` and needs
@@ -2894,6 +2896,125 @@ module.exports = NodeHelper.create({
   },
 
   /**
+   * Re-bucket the HeatRisk `gridTuples` side-channel (Task 1) onto the Phase 18 SPC 12Z
+   * grid and append the resulting hazard entries to `gridDays[N].hazards` in place.
+   * MERGE-01/D-10/D-13.
+   *
+   * HeatRisk's `idp_validtime` is a point sample observed at exactly 12:00:00Z on every
+   * sample to date, so mapping it onto the grid is a near-identity — the raw timestamp
+   * already sits on a grid boundary. This function therefore needs NO interval-overlap
+   * logic, unlike `_addHazardsOutlookGridEntries`'s span-clamped loop; do not "fix" this
+   * into matching that one (hazardTaxonomy.js's own maintainer note makes the same point).
+   *
+   * @param gridDays - the fourteen-key `days` skeleton from `_buildGridDays`, mutated in place
+   * @param gridTuples - the raw `{ idpValidtime, category, idpFiledate }` array from
+   *   `_runHeatRiskProduct`'s Task 1 side-channel — every deduped catalog tuple this poll
+   *   saw, UNFILTERED by that runner's own `_todayUtcMs`-relative span (D-01)
+   * @param anchorInfo - the object `_spcGridAnchor` returns
+   * @param notes - `{ noteReported, noteActive, noteUnmapped }`, declared by 18-02 in
+   *   `getSpcOutlook`'s scope and passed in explicitly so this method stays pure over its
+   *   arguments rather than reaching for `this`
+   */
+  _addHeatRiskGridEntries(gridDays, gridTuples, anchorInfo, notes) {
+    const row = PRODUCT_REGISTRY.heatRisk;
+    const hazardsRow = PRODUCT_REGISTRY.hazardsOutlook;
+    const floor = NO_RISK_FLOOR.heatrisk;
+
+    for (const tuple of gridTuples) {
+      // Contain a malformed tuple here so its siblings still land (CR-02 lesson).
+      if (!tuple || typeof tuple.idpValidtime !== "number" || !Number.isFinite(tuple.idpValidtime)) {
+        continue;
+      }
+
+      const gridDay = this._gridDayOf(tuple.idpValidtime, anchorInfo.nominalStartMs);
+      // WR-16: the span bound is read from the registry row, never a literal, so this
+      // product's declared span has exactly one declaration.
+      if (gridDay < 1 || gridDay > GRID_DAY_COUNT || gridDay > row.days) continue;
+
+      const dayEntry = gridDays[String(gridDay)];
+      if (!dayEntry) continue; // defensive; unreachable given the range check above
+
+      // D-04/D-16: recorded for EVERY tuple that survives the range checks above, before
+      // any category test — including a tuple whose category is `null` or `0`. This is
+      // the load-bearing call: `reportedDays` means "this source produced a reading for
+      // that grid day", which is what keeps "HeatRisk said Little to No Risk"
+      // distinguishable from "HeatRisk had nothing for that day" in a captured payload.
+      // HeatRisk is rank 1 for the `heat` dimension, so this is the one non-SPC dimension
+      // where the absent-versus-below-floor distinction actually decides a suppression
+      // outcome. Omitting this call also leaves `sources['heatrisk'].reporting`
+      // permanently `false` and silently undercounts `summary.reportingSourceCount`.
+      notes.noteReported("heatrisk", gridDay);
+
+      // D-13: `category: null` means "no reading" — a non-reading must leave lower-ranked
+      // sources visible rather than create an entry that could suppress them. 17 D-02's
+      // raw-category preservation still stands and is exactly what the floor predicate
+      // below reads; D-13 revises 17 D-02's stated rationale (the null-vs-0 split is not
+      // what makes MERGE-03 decidable — the floor test is) without retiring the
+      // distinction itself.
+      if (typeof tuple.category !== "number") continue;
+
+      // On a collision (two tuples resolving to the same grid day) keep the MAXIMUM
+      // category, mirroring `_runHeatRiskProduct`'s own rule: arrival order is not
+      // evidence, and this project does not downgrade a severity on its say-so.
+      const existing = dayEntry.hazards.find((h) => h.source === "heatrisk");
+      if (existing && typeof existing.value === "number" && existing.value >= tuple.category) {
+        continue; // an equal-or-higher heatrisk entry already won this day
+      }
+
+      // D-13: a below-floor reading (category 0) is not an active hazard and must not
+      // become a renderable entry — plan 18-05 records that the source nonetheless
+      // REPORTED for that day (via noteReported above), which is how "HeatRisk said
+      // Little to No Risk" stays distinguishable from "HeatRisk had nothing" in a
+      // captured payload. `existing` is never above-floor-then-erased here: an entry only
+      // ever exists once it has already passed this same floor test (below), and the
+      // collision check above already retired any candidate that could not beat it.
+      if (!floor(tuple.category)) continue;
+
+      notes.noteActive("heatrisk", gridDay);
+
+      const category = tuple.category;
+      const hasText = Object.prototype.hasOwnProperty.call(row.valueToText, category);
+      const hasColor = Object.prototype.hasOwnProperty.call(row.valueToColor, category);
+      const dimension = dimensionOf("heatrisk", category);
+
+      const entry = hasText && hasColor
+        ? {
+            dimension,
+            source: "heatrisk",
+            label: String(category),
+            text: row.valueToText[category],
+            value: category,
+            color: row.valueToColor[category],
+            suppressedBy: null
+          }
+        : {
+            // D-07: a category outside 0-4 is exactly the upstream schema change this
+            // pass-through path exists to keep visible.
+            dimension: null,
+            source: "heatrisk",
+            label: String(category),
+            text: "HeatRisk " + category,
+            value: category,
+            color: hazardsRow.defaultColor,
+            suppressedBy: null
+          };
+
+      if (!hasText || !hasColor) {
+        notes.noteUnmapped("heatrisk", String(category));
+      }
+
+      if (existing) {
+        const idx = dayEntry.hazards.indexOf(existing);
+        dayEntry.hazards.splice(idx, 1, entry);
+      } else {
+        dayEntry.hazards.push(entry);
+      }
+    }
+    // Sorting is plan 18-05's job (D-15's taxonomy category order) — do not add a second
+    // sort here.
+  },
+
+  /**
    * Fetch a GeoJSON URL with ETag/hash caching, returning parsed data or cached result on hit/error.
    * @param url - GeoJSON endpoint URL to fetch
    * @param isValidBody - body-shape validator for the cache-miss branches; defaults to
@@ -4105,6 +4226,9 @@ module.exports = NodeHelper.create({
       // an empty array rather than throwing here too).
       this._addHazardsOutlookGridEntries(
         gridDays, results.hazardsOutlook.gridMatches || [], gridAnchorInfo, gridNotes
+      );
+      this._addHeatRiskGridEntries(
+        gridDays, results.heatRisk.gridTuples || [], gridAnchorInfo, gridNotes
       );
 
       return {
