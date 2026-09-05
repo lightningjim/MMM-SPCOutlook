@@ -24,6 +24,10 @@ const {
   loadNodeHelper, loadFrontendModule, renderDom, resetHelper, resetLogs, turfStub, logCalls,
   hasRealKmlDeps, missingKmlDeps, makeKmzBuffer
 } = require("./probe-lib/module-stubs.js");
+// Plan 18-08: read DIMENSION_ORDER off the real taxonomy artifact so the ordering
+// control in merge-distinct-hazards-on-one-day-both-survive never restates a value
+// hazardTaxonomy.js already owns.
+const { DIMENSION_ORDER } = require("../hazardTaxonomy.js");
 
 // ---------------------------------------------------------------------
 // Fixtures
@@ -1274,6 +1278,28 @@ function assertGoldenPinsSomething(name, goldenJson) {
       "nothing the product computed — give its fixture a label/value the product recognises"
     );
   }
+}
+
+// ---------------------------------------------------------------------
+// Phase 18 / MERGE-02, MERGE-03, MERGE-04, RPT-07 fixtures (plan 18-08)
+// ---------------------------------------------------------------------
+
+// The pinned "now" for every merge-precedence-*/merge-flash-flood-*/merge-distinct-*/
+// merge-unmapped-*/merge-summary-*/merge-sources-*/merge-parity-* scenario below:
+// 2026-09-05T13:00Z, inside the 00Z-12Z-past window so _spcGridAnchor's clock fallback
+// (no VALID_ISO/EXPIRE_ISO routed) resolves a nominal 12Z start of
+// 2026-09-05T12:00:00Z -- the SAME anchor arithmetic 18-07's merge-grid-* family already
+// exercises, reused here rather than re-derived.
+const MERGE_NOW_MS = Date.UTC(2026, 8, 5, 13, 0);
+const MERGE_NOMINAL_MS = Date.UTC(2026, 8, 5, 12, 0);
+
+// The epoch-ms [start, end) window a single-calendar-day wpc-hazards feature must carry
+// to land squarely on Phase 18 grid day `n` under MERGE_NOMINAL_MS, per _gridDayOf's
+// offset+1 rule (D-10/D-11). A single-day span never satisfies _isFullNominalWindow's
+// exact-alignment check against any layer's dayRange, so every fixture built from this
+// always reaches the day grid rather than the window band.
+function mergeGridWindow(n) {
+  return { start: MERGE_NOMINAL_MS + (n - 1) * 86400000, end: MERGE_NOMINAL_MS + n * 86400000 };
 }
 
 // ---------------------------------------------------------------------
@@ -8216,6 +8242,513 @@ const scenarios = [
         }
         if (controlOut.days["3"].hazards.some((h) => h.source === "spc-convective")) {
           throw new Error(`control: expected no spc-convective entry on grid day 3, got ${JSON.stringify(controlOut.days["3"].hazards)}`);
+        }
+      } finally {
+        turfStub.pointInPolygon = originalPointInPolygon;
+      }
+    }
+  },
+
+  // -----------------------------------------------------------------
+  // Phase 18 / MERGE-02, MERGE-03, MERGE-04, RPT-07 scenarios (plan 18-08).
+  // Each entry below pins one of the merge/precedence/summary behaviors
+  // 18-05 built, individually mutation-proven per 15 D-10.
+  // -----------------------------------------------------------------
+
+  {
+    // MERGE-02/D-13: SPC above-floor SLGT suppresses WPC's "Severe Weather" on the SAME
+    // grid day, keyed by dimension (convective), never a label match.
+    // Mutation to prove RED: reverse PRECEDENCE.convective.
+    name: "merge-precedence-spc-suppresses-wpc-severe-weather",
+    run: async (helper) => {
+      const { start, end } = mergeGridWindow(1);
+      const originalPointInPolygon = turfStub.pointInPolygon;
+      const runWithFeature = async (includeWpc) => {
+        resetHelper(helper);
+        resetLogs();
+        turfStub.pointInPolygon = () => true;
+        helper._nowMs = () => MERGE_NOW_MS;
+        const toggles = { showHazardsOutlook: true };
+        helper._products = toggles;
+        const layer4 = includeWpc
+          ? () => httpResponse({
+              body: hazardsCollection([hazardsFeature({ label: "Severe Weather", startDate: start, endDate: end })]),
+              etag: "merge-precedence-spc-wpc-v1"
+            })
+          : undefined;
+        installHttp(helper, [
+          ["day1otlk_cat.lyr.geojson", () => httpResponse({ body: SPC_SLGT_BODY, etag: "merge-precedence-spc-day1-v1" })],
+          ...hazardsRoutes(layer4 ? { 4: layer4 } : {})
+        ]);
+        const out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, toggles);
+        assertPayloadIntact(out);
+        assertHazardsBlockIntact(out);
+        return out;
+      };
+
+      try {
+        const out = await runWithFeature(true);
+
+        // Precondition guard: a suppression cannot be claimed proven if the WPC entry
+        // never reached the day at all -- both competing entries must be present first.
+        const spc = out.days["1"].hazards.find((h) => h.source === "spc-convective");
+        const wpc = out.days["1"].hazards.find((h) => h.source === "wpc-hazards" && h.label === "Severe Weather");
+        if (!spc || !wpc) {
+          throw new Error(`precondition failed: expected both spc-convective and wpc-hazards entries on day 1, got ${JSON.stringify(out.days["1"].hazards)}`);
+        }
+
+        if (spc.suppressedBy !== null) {
+          throw new Error(`MERGE-02: expected spc-convective entry suppressedBy null, got ${JSON.stringify(spc.suppressedBy)}`);
+        }
+        if (wpc.suppressedBy !== "spc-convective") {
+          throw new Error(`MERGE-02: expected wpc-hazards Severe Weather suppressedBy "spc-convective" (dimension-keyed, never a label match), got ${JSON.stringify(wpc.suppressedBy)}`);
+        }
+
+        // Control: with the WPC feature removed, SPC's entry is STILL suppressedBy
+        // null -- proving the field is not merely always-null-for-SPC.
+        const controlOut = await runWithFeature(false);
+        const controlSpc = controlOut.days["1"].hazards.find((h) => h.source === "spc-convective");
+        if (!controlSpc || controlSpc.suppressedBy !== null) {
+          throw new Error(`control: expected spc-convective suppressedBy null with no competitor, got ${JSON.stringify(controlSpc)}`);
+        }
+      } finally {
+        turfStub.pointInPolygon = originalPointInPolygon;
+      }
+    }
+  },
+  {
+    // MERGE-02/D-13/D-14: SPC's real "reported below floor" reading (TSTM) must NOT
+    // suppress WPC's Severe Weather -- a quiet source never erases another source's
+    // warning.
+    // Mutation to prove RED: change NO_RISK_FLOOR['spc-convective'].categorical to
+    // `value > 0`, so TSTM becomes active.
+    name: "merge-precedence-spc-below-floor-does-not-suppress-wpc",
+    run: async (helper) => {
+      resetHelper(helper);
+      resetLogs();
+      const originalPointInPolygon = turfStub.pointInPolygon;
+      turfStub.pointInPolygon = () => true;
+      try {
+        helper._nowMs = () => MERGE_NOW_MS;
+        const toggles = { showHazardsOutlook: true };
+        helper._products = toggles;
+        const { start, end } = mergeGridWindow(1);
+        const SPC_TSTM_BODY = {
+          type: "FeatureCollection",
+          features: [{ type: "Feature", properties: { LABEL: "TSTM" }, geometry: { type: "Polygon", coordinates: [SAMPLE_RING] } }]
+        };
+        installHttp(helper, [
+          ["day1otlk_cat.lyr.geojson", () => httpResponse({ body: SPC_TSTM_BODY, etag: "merge-precedence-spc-tstm-v1" })],
+          ...hazardsRoutes({ 4: () => httpResponse({
+            body: hazardsCollection([hazardsFeature({ label: "Severe Weather", startDate: start, endDate: end })]),
+            etag: "merge-precedence-tstm-wpc-v1"
+          }) })
+        ]);
+        const out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, toggles);
+        assertPayloadIntact(out);
+        assertHazardsBlockIntact(out);
+
+        // Precondition guard: SPC genuinely reported for day 1 -- this is the
+        // below-floor path, not the absent path.
+        if (!out.sources["spc-convective"].reportedDays.includes(1)) {
+          throw new Error(`precondition failed: sources['spc-convective'].reportedDays does not include day 1: ${JSON.stringify(out.sources["spc-convective"].reportedDays)}`);
+        }
+        if (out.day1.risk !== "TSTM") {
+          throw new Error(`precondition failed: day1.risk is ${JSON.stringify(out.day1.risk)}, expected TSTM`);
+        }
+
+        const spc = out.days["1"].hazards.find((h) => h.source === "spc-convective");
+        if (spc) {
+          throw new Error(`D-13: expected NO spc-convective entry on day 1 (TSTM is below floor), got ${JSON.stringify(spc)}`);
+        }
+        const wpc = out.days["1"].hazards.find((h) => h.source === "wpc-hazards" && h.label === "Severe Weather");
+        if (!wpc || wpc.suppressedBy !== null) {
+          throw new Error(`D-13: expected wpc-hazards Severe Weather to survive with suppressedBy null via the reported-below-floor path, got ${JSON.stringify(wpc)}`);
+        }
+
+        // Control: activeDays does NOT contain day 1, distinguishing "reported below
+        // floor" from "reported and won".
+        if (out.sources["spc-convective"].activeDays.includes(1)) {
+          throw new Error(`control: expected sources['spc-convective'].activeDays to NOT include day 1, got ${JSON.stringify(out.sources["spc-convective"].activeDays)}`);
+        }
+      } finally {
+        turfStub.pointInPolygon = originalPointInPolygon;
+      }
+    }
+  },
+  {
+    // MERGE-02/D-14: the ABSENT path (SPC never covers this grid day at all), kept as a
+    // separate scenario from the below-floor path above so a future conflation of the
+    // two turns the suite red.
+    // Mutation to prove RED: make _addSpcGridEntries record reportedDays for all
+    // fourteen grid days regardless of coverage.
+    name: "merge-precedence-spc-absent-day-is-not-the-floor-path",
+    run: async (helper) => {
+      resetHelper(helper);
+      resetLogs();
+      const originalPointInPolygon = turfStub.pointInPolygon;
+      turfStub.pointInPolygon = () => true;
+      try {
+        helper._nowMs = () => MERGE_NOW_MS;
+        const toggles = { showHazardsOutlook: true };
+        helper._products = toggles;
+        const { start, end } = mergeGridWindow(9);
+        installHttp(helper, hazardsRoutes({ 6: () => httpResponse({
+          body: hazardsCollection([hazardsFeature({ label: "Severe Weather", startDate: start, endDate: end })]),
+          etag: "merge-precedence-spc-absent-v1"
+        }) }));
+        const out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, toggles);
+        assertPayloadIntact(out);
+        assertHazardsBlockIntact(out);
+
+        // Precondition guard: SPC never reported for grid day 9 at all -- proving this
+        // is the absent path, not a below-floor reading.
+        if (out.sources["spc-convective"].reportedDays.includes(9)) {
+          throw new Error(`precondition failed: sources['spc-convective'].reportedDays includes day 9: ${JSON.stringify(out.sources["spc-convective"].reportedDays)}`);
+        }
+
+        const wpc = out.days["9"].hazards.find((h) => h.source === "wpc-hazards" && h.label === "Severe Weather");
+        if (!wpc || wpc.suppressedBy !== null) {
+          throw new Error(`D-14: expected wpc-hazards Severe Weather to survive with suppressedBy null via the absent path, got ${JSON.stringify(wpc)}`);
+        }
+
+        // Control: SPC reported normally on days 1-3 (always-fetched, unconditional of
+        // `extended`) in this SAME run, so day 9's absence is not a fetch that failed
+        // altogether -- quoting both arrays makes a future conflation of "SPC never
+        // answered anything" with "SPC never covers day 9" impossible to miss.
+        for (const d of [1, 2, 3]) {
+          if (!out.sources["spc-convective"].reportedDays.includes(d)) {
+            throw new Error(`control: expected sources['spc-convective'].reportedDays (${JSON.stringify(out.sources["spc-convective"].reportedDays)}) to include always-fetched day ${d}, distinct from day 9's absence`);
+          }
+        }
+      } finally {
+        turfStub.pointInPolygon = originalPointInPolygon;
+      }
+    }
+  },
+  {
+    // MERGE-03/D-13: HeatRisk category 2 (above floor) suppresses WPC's Hazardous Heat
+    // on the same grid day.
+    // Mutation to prove RED: reverse PRECEDENCE.heat.
+    name: "merge-precedence-heatrisk-suppresses-wpc-hazardous-heat",
+    run: async (helper) => {
+      const { start, end } = mergeGridWindow(3);
+      const originalPointInPolygon = turfStub.pointInPolygon;
+      const runWithFeature = async (includeWpc) => {
+        resetHelper(helper);
+        resetLogs();
+        turfStub.pointInPolygon = () => true;
+        helper._nowMs = () => MERGE_NOW_MS;
+        const toggles = { showHeatRisk: true, showHazardsOutlook: true };
+        helper._products = toggles;
+        const items = [heatRiskCatalogItem({ name: "HeatRisk_3_Mercator", validtime: MERGE_NOMINAL_MS + 2 * 86400000, filedate: MERGE_NOW_MS - 30 * 60 * 1000 })];
+        const heatRoute = () => httpResponse({ body: heatRiskIdentifyResponse({ items, values: ["2"] }), etag: "merge-precedence-heat-v1" });
+        const layer4 = includeWpc
+          ? () => httpResponse({ body: hazardsCollection([hazardsFeature({ label: "Hazardous Heat", startDate: start, endDate: end })]), etag: "merge-precedence-heat-wpc-v1" })
+          : undefined;
+        installHttp(helper, [
+          [HEATRISK_URL, heatRoute],
+          ...hazardsRoutes(layer4 ? { 4: layer4 } : {})
+        ]);
+        const out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, toggles);
+        assertPayloadIntact(out);
+        assertHazardsBlockIntact(out);
+        assertHeatRiskBlockIntact(out);
+        return out;
+      };
+
+      try {
+        const out = await runWithFeature(true);
+
+        // Precondition guard: both competing entries actually reached day 3.
+        const heat = out.days["3"].hazards.find((h) => h.source === "heatrisk");
+        const wpc = out.days["3"].hazards.find((h) => h.source === "wpc-hazards" && h.label === "Hazardous Heat");
+        if (!heat || !wpc) {
+          throw new Error(`precondition failed: expected both heatrisk and wpc-hazards entries on day 3, got ${JSON.stringify(out.days["3"].hazards)}`);
+        }
+
+        if (heat.suppressedBy !== null) {
+          throw new Error(`MERGE-03: expected heatrisk entry suppressedBy null, got ${JSON.stringify(heat.suppressedBy)}`);
+        }
+        if (wpc.suppressedBy !== "heatrisk") {
+          throw new Error(`MERGE-03: expected wpc-hazards Hazardous Heat suppressedBy "heatrisk", got ${JSON.stringify(wpc.suppressedBy)}`);
+        }
+
+        // Control: the same fixture with the WPC feature removed still yields
+        // suppressedBy null on the HeatRisk entry.
+        const controlOut = await runWithFeature(false);
+        const controlHeat = controlOut.days["3"].hazards.find((h) => h.source === "heatrisk");
+        if (!controlHeat || controlHeat.suppressedBy !== null) {
+          throw new Error(`control: expected heatrisk suppressedBy null with no competitor, got ${JSON.stringify(controlHeat)}`);
+        }
+      } finally {
+        turfStub.pointInPolygon = originalPointInPolygon;
+      }
+    }
+  },
+  {
+    // MERGE-03/D-13: HeatRisk category 0 (a real, explicit no-risk reading) fails the
+    // floor and must not suppress WPC's Hazardous Heat -- kept SEPARATE from the null
+    // scenario below, since D-13 makes them behave identically and a single scenario
+    // covering both could pass while one of the two paths is broken.
+    // Mutation to prove RED: change NO_RISK_FLOOR.heatrisk to `category !== null`.
+    name: "merge-precedence-heatrisk-zero-does-not-suppress-wpc-heat",
+    run: async (helper) => {
+      resetHelper(helper);
+      resetLogs();
+      const originalPointInPolygon = turfStub.pointInPolygon;
+      turfStub.pointInPolygon = () => true;
+      try {
+        helper._nowMs = () => MERGE_NOW_MS;
+        const toggles = { showHeatRisk: true, showHazardsOutlook: true };
+        helper._products = toggles;
+        const { start, end } = mergeGridWindow(3);
+        const items = [heatRiskCatalogItem({ name: "HeatRisk_3_Mercator", validtime: MERGE_NOMINAL_MS + 2 * 86400000, filedate: MERGE_NOW_MS - 30 * 60 * 1000 })];
+        installHttp(helper, [
+          [HEATRISK_URL, () => httpResponse({ body: heatRiskIdentifyResponse({ items, values: ["0"] }), etag: "merge-precedence-heat-zero-v1" })],
+          ...hazardsRoutes({ 4: () => httpResponse({ body: hazardsCollection([hazardsFeature({ label: "Hazardous Heat", startDate: start, endDate: end })]), etag: "merge-precedence-heat-zero-wpc-v1" }) })
+        ]);
+        const out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, toggles);
+        assertPayloadIntact(out);
+        assertHazardsBlockIntact(out);
+        assertHeatRiskBlockIntact(out);
+
+        // Precondition guard: the legacy block expressed the raw category 0, not null --
+        // 17 D-02 preserved this distinction precisely so this case is representable.
+        if (out.heatRisk.day3.category !== 0) {
+          throw new Error(`precondition failed: heatRisk.day3.category is ${JSON.stringify(out.heatRisk.day3.category)}, expected 0`);
+        }
+
+        const heat = out.days["3"].hazards.find((h) => h.source === "heatrisk");
+        if (heat) {
+          throw new Error(`D-13: expected NO heatrisk entry on day 3 (category 0 is below floor), got ${JSON.stringify(heat)}`);
+        }
+        const wpc = out.days["3"].hazards.find((h) => h.source === "wpc-hazards" && h.label === "Hazardous Heat");
+        if (!wpc || wpc.suppressedBy !== null) {
+          throw new Error(`D-13: expected wpc-hazards Hazardous Heat to survive with suppressedBy null, got ${JSON.stringify(wpc)}`);
+        }
+
+        // Control: the same fixture with the category raised to 1 suppresses -- proving
+        // the gate fires at the documented floor and is not simply never firing.
+        resetHelper(helper);
+        resetLogs();
+        turfStub.pointInPolygon = () => true;
+        helper._nowMs = () => MERGE_NOW_MS;
+        helper._products = toggles;
+        installHttp(helper, [
+          [HEATRISK_URL, () => httpResponse({ body: heatRiskIdentifyResponse({ items, values: ["1"] }), etag: "merge-precedence-heat-one-v1" })],
+          ...hazardsRoutes({ 4: () => httpResponse({ body: hazardsCollection([hazardsFeature({ label: "Hazardous Heat", startDate: start, endDate: end })]), etag: "merge-precedence-heat-one-wpc-v1" }) })
+        ]);
+        const controlOut = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, toggles);
+        assertPayloadIntact(controlOut);
+        const controlWpc = controlOut.days["3"].hazards.find((h) => h.source === "wpc-hazards" && h.label === "Hazardous Heat");
+        if (!controlWpc || controlWpc.suppressedBy !== "heatrisk") {
+          throw new Error(`control: expected wpc-hazards Hazardous Heat suppressedBy "heatrisk" once category is 1, got ${JSON.stringify(controlWpc)}`);
+        }
+      } finally {
+        turfStub.pointInPolygon = originalPointInPolygon;
+      }
+    }
+  },
+  {
+    // MERGE-03/D-13: HeatRisk category null (no reading) fails the floor exactly like
+    // category 0, kept SEPARATE from the zero scenario above.
+    // Mutation to prove RED: change NO_RISK_FLOOR.heatrisk to `category !== undefined`.
+    name: "merge-precedence-heatrisk-null-does-not-suppress-wpc-heat",
+    run: async (helper) => {
+      resetHelper(helper);
+      resetLogs();
+      const originalPointInPolygon = turfStub.pointInPolygon;
+      turfStub.pointInPolygon = () => true;
+      try {
+        helper._nowMs = () => MERGE_NOW_MS;
+        const toggles = { showHeatRisk: true, showHazardsOutlook: true };
+        helper._products = toggles;
+        const { start, end } = mergeGridWindow(3);
+        const items = [heatRiskCatalogItem({ name: "HeatRisk_3_Mercator", validtime: MERGE_NOMINAL_MS + 2 * 86400000, filedate: MERGE_NOW_MS - 30 * 60 * 1000 })];
+        installHttp(helper, [
+          [HEATRISK_URL, () => httpResponse({ body: heatRiskIdentifyResponse({ items, values: ["9"] }), etag: "merge-precedence-heat-null-v1" })],
+          ...hazardsRoutes({ 4: () => httpResponse({ body: hazardsCollection([hazardsFeature({ label: "Hazardous Heat", startDate: start, endDate: end })]), etag: "merge-precedence-heat-null-wpc-v1" }) })
+        ]);
+        const out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, toggles);
+        assertPayloadIntact(out);
+        assertHazardsBlockIntact(out);
+        assertHeatRiskBlockIntact(out);
+
+        // Precondition guard: the legacy block expressed null, not 0 -- the mirror of
+        // the zero scenario's own guard.
+        if (out.heatRisk.day3.category !== null) {
+          throw new Error(`precondition failed: heatRisk.day3.category is ${JSON.stringify(out.heatRisk.day3.category)}, expected null`);
+        }
+
+        const heat = out.days["3"].hazards.find((h) => h.source === "heatrisk");
+        if (heat) {
+          throw new Error(`D-13: expected NO heatrisk entry on day 3 (category null is below floor), got ${JSON.stringify(heat)}`);
+        }
+        const wpc = out.days["3"].hazards.find((h) => h.source === "wpc-hazards" && h.label === "Hazardous Heat");
+        if (!wpc || wpc.suppressedBy !== null) {
+          throw new Error(`D-13: expected wpc-hazards Hazardous Heat to survive with suppressedBy null, got ${JSON.stringify(wpc)}`);
+        }
+
+        // Control: the category-1 case suppresses, proving the null path is a real
+        // below-floor branch and not the only outcome this fixture can produce.
+        resetHelper(helper);
+        resetLogs();
+        turfStub.pointInPolygon = () => true;
+        helper._nowMs = () => MERGE_NOW_MS;
+        helper._products = toggles;
+        installHttp(helper, [
+          [HEATRISK_URL, () => httpResponse({ body: heatRiskIdentifyResponse({ items, values: ["1"] }), etag: "merge-precedence-heat-null-control-v1" })],
+          ...hazardsRoutes({ 4: () => httpResponse({ body: hazardsCollection([hazardsFeature({ label: "Hazardous Heat", startDate: start, endDate: end })]), etag: "merge-precedence-heat-null-control-wpc-v1" }) })
+        ]);
+        const controlOut = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, toggles);
+        assertPayloadIntact(controlOut);
+        const controlWpc = controlOut.days["3"].hazards.find((h) => h.source === "wpc-hazards" && h.label === "Hazardous Heat");
+        if (!controlWpc || controlWpc.suppressedBy !== "heatrisk") {
+          throw new Error(`control: expected wpc-hazards Hazardous Heat suppressedBy "heatrisk" once category is 1, got ${JSON.stringify(controlWpc)}`);
+        }
+      } finally {
+        turfStub.pointInPolygon = originalPointInPolygon;
+      }
+    }
+  },
+  {
+    // MERGE-04 (over-merge half)/Pitfall 10: flash-flood (ERO) and heavy-precip
+    // (wpc-hazards) never cross-suppress, even on the same grid day. The control adds a
+    // real convective pair on the SAME day to prove the suppression machinery itself is
+    // live in this fixture, not globally inert.
+    // Mutation to prove RED (the single highest-value mutation for MERGE-04): map
+    // "Heavy Rain" to "flash-flood" in hazardsOutlookDimensionByLabel.
+    name: "merge-flash-flood-and-heavy-precip-never-cross-suppress",
+    run: async (helper) => {
+      resetHelper(helper);
+      resetLogs();
+      const originalPointInPolygon = turfStub.pointInPolygon;
+      turfStub.pointInPolygon = () => true;
+      try {
+        helper._nowMs = () => MERGE_NOW_MS;
+        const toggles = { showExcessiveRain: true, showHazardsOutlook: true };
+        helper._products = toggles;
+        const { start, end } = mergeGridWindow(3);
+        installHttp(helper, [
+          [ERO_URLS[3], () => httpResponse({ body: ERO_SLGT_BODY, etag: "merge-flash-flood-ero-day3-v1" })],
+          ...hazardsRoutes({ 4: () => httpResponse({
+            body: hazardsCollection([hazardsFeature({ label: "Heavy Rain", startDate: start, endDate: end })]),
+            etag: "merge-flash-flood-wpc-v1"
+          }) })
+        ]);
+        const out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, toggles);
+        assertPayloadIntact(out);
+        assertHazardsBlockIntact(out);
+
+        const ero = out.days["3"].hazards.find((h) => h.source === "wpc-ero");
+        const wpcHeavy = out.days["3"].hazards.find((h) => h.source === "wpc-hazards" && h.label === "Heavy Rain");
+        // Precondition guard: if the taxonomy ever merged these dimensions, this guard
+        // fails first and names the merge, rather than the scenario silently proving
+        // nothing.
+        if (!ero || ero.dimension !== "flash-flood") {
+          throw new Error(`precondition failed: expected a wpc-ero entry with dimension flash-flood on day 3, got ${JSON.stringify(ero)}`);
+        }
+        if (!wpcHeavy || wpcHeavy.dimension !== "heavy-precip") {
+          throw new Error(`precondition failed: expected a wpc-hazards Heavy Rain entry with dimension heavy-precip on day 3, got ${JSON.stringify(wpcHeavy)}`);
+        }
+
+        if (ero.suppressedBy !== null) {
+          throw new Error(`MERGE-04: expected wpc-ero (flash-flood) suppressedBy null, got ${JSON.stringify(ero.suppressedBy)}`);
+        }
+        if (wpcHeavy.suppressedBy !== null) {
+          throw new Error(`MERGE-04: expected wpc-hazards Heavy Rain (heavy-precip) suppressedBy null, got ${JSON.stringify(wpcHeavy.suppressedBy)}`);
+        }
+
+        // Control: the SAME day also carries an above-floor SPC convective tier and a
+        // Severe Weather WPC feature -- proving the suppression machinery is live in
+        // this fixture and that flash-flood/heavy-precip survival is a real dimension
+        // separation, not suppression being globally inert.
+        resetHelper(helper);
+        resetLogs();
+        turfStub.pointInPolygon = () => true;
+        helper._nowMs = () => MERGE_NOW_MS;
+        helper._products = toggles;
+        installHttp(helper, [
+          [ERO_URLS[3], () => httpResponse({ body: ERO_SLGT_BODY, etag: "merge-flash-flood-ero-day3-v2" })],
+          ["day3otlk_cat.lyr.geojson", () => httpResponse({ body: SPC_SLGT_BODY, etag: "merge-flash-flood-spc-day3-v1" })],
+          ...hazardsRoutes({ 4: () => httpResponse({
+            body: hazardsCollection([
+              hazardsFeature({ label: "Heavy Rain", startDate: start, endDate: end }),
+              hazardsFeature({ label: "Severe Weather", startDate: start, endDate: end })
+            ]),
+            etag: "merge-flash-flood-wpc-control-v1"
+          }) })
+        ]);
+        const controlOut = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, toggles);
+        assertPayloadIntact(controlOut);
+        const controlEro = controlOut.days["3"].hazards.find((h) => h.source === "wpc-ero");
+        const controlHeavy = controlOut.days["3"].hazards.find((h) => h.source === "wpc-hazards" && h.label === "Heavy Rain");
+        const controlSevere = controlOut.days["3"].hazards.find((h) => h.source === "wpc-hazards" && h.label === "Severe Weather");
+        if (!controlEro || controlEro.suppressedBy !== null || !controlHeavy || controlHeavy.suppressedBy !== null) {
+          throw new Error(`control: flash-flood/heavy-precip must still survive alongside an active convective pair, got ero=${JSON.stringify(controlEro)} heavy=${JSON.stringify(controlHeavy)}`);
+        }
+        if (!controlSevere || controlSevere.suppressedBy !== "spc-convective") {
+          throw new Error(`control: expected wpc-hazards Severe Weather suppressedBy "spc-convective" on the same day, proving suppression is live, got ${JSON.stringify(controlSevere)}`);
+        }
+      } finally {
+        turfStub.pointInPolygon = originalPointInPolygon;
+      }
+    }
+  },
+  {
+    // MERGE-04 (under-merge half)/D-15: three genuinely distinct hazards on one grid
+    // day all survive, and the day's hazards array is ordered by the taxonomy's fixed
+    // DIMENSION_ORDER, read from hazardTaxonomy.js itself rather than a hardcoded list.
+    // Mutation to prove RED: make _resolveGridDayPrecedence suppress every entry after
+    // the first, ignoring dimension.
+    name: "merge-distinct-hazards-on-one-day-both-survive",
+    run: async (helper) => {
+      resetHelper(helper);
+      resetLogs();
+      const originalPointInPolygon = turfStub.pointInPolygon;
+      turfStub.pointInPolygon = () => true;
+      try {
+        helper._nowMs = () => MERGE_NOW_MS;
+        const toggles = { showExcessiveRain: true, showHazardsOutlook: true };
+        helper._products = toggles;
+        const { start, end } = mergeGridWindow(3);
+        installHttp(helper, [
+          ["day3otlk_cat.lyr.geojson", () => httpResponse({ body: SPC_SLGT_BODY, etag: "merge-distinct-spc-day3-v1" })],
+          [ERO_URLS[3], () => httpResponse({ body: ERO_SLGT_BODY, etag: "merge-distinct-ero-day3-v1" })],
+          ...hazardsRoutes({ 4: () => httpResponse({
+            body: hazardsCollection([hazardsFeature({ label: "High Winds", startDate: start, endDate: end })]),
+            etag: "merge-distinct-wpc-v1"
+          }) })
+        ]);
+        const out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, toggles);
+        assertPayloadIntact(out);
+        assertHazardsBlockIntact(out);
+
+        const spc = out.days["3"].hazards.find((h) => h.source === "spc-convective");
+        const ero = out.days["3"].hazards.find((h) => h.source === "wpc-ero");
+        const wpc = out.days["3"].hazards.find((h) => h.source === "wpc-hazards" && h.label === "High Winds");
+        if (!spc || !ero || !wpc) {
+          throw new Error(`precondition failed: expected all three entries present on day 3, got ${JSON.stringify(out.days["3"].hazards)}`);
+        }
+        if (spc.suppressedBy !== null || ero.suppressedBy !== null || wpc.suppressedBy !== null) {
+          throw new Error(`MERGE-04: expected all three distinct-dimension entries to survive, got ${JSON.stringify(out.days["3"].hazards)}`);
+        }
+        for (const dim of ["convective", "flash-flood", "wind"]) {
+          if (!out.summary.dimensions.includes(dim)) {
+            throw new Error(`MERGE-04: expected summary.dimensions to include "${dim}", got ${JSON.stringify(out.summary.dimensions)}`);
+          }
+        }
+        if (!out.summary.activeDays.includes(3)) {
+          throw new Error(`MERGE-04: expected summary.activeDays to include day 3, got ${JSON.stringify(out.summary.activeDays)}`);
+        }
+
+        // Control: the day's hazards array is ordered by hazardTaxonomy's own
+        // DIMENSION_ORDER, never a hardcoded list here.
+        const observedDimensions = out.days["3"].hazards.map((h) => h.dimension).filter((d) => d !== null);
+        const expectedOrder = DIMENSION_ORDER.filter((d) => observedDimensions.includes(d));
+        if (JSON.stringify(observedDimensions) !== JSON.stringify(expectedOrder)) {
+          throw new Error(`control: expected day 3's hazards ordered by DIMENSION_ORDER ${JSON.stringify(expectedOrder)}, got ${JSON.stringify(observedDimensions)}`);
         }
       } finally {
         turfStub.pointInPolygon = originalPointInPolygon;
