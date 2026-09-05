@@ -219,3 +219,12 @@ None - no external service configuration required.
 ---
 *Phase: 18-merge-precedence-unified-payload-schema*
 *Completed: 2026-09-05*
+
+## Self-Check: PASSED
+
+- FOUND: node_helper.js
+- FOUND: .planning/phases/18-merge-precedence-unified-payload-schema/18-03-SUMMARY.md
+- FOUND: f89183d (Task 1 feat commit)
+- FOUND: 585ccfb (Task 2 feat commit)
+- FOUND: cf17a98 (Task 3 feat commit)
+- FOUND: 34874eb (docs summary commit)

@@ -268,7 +268,7 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 18-03-PLAN.md — runner side-channels and SPC-grid re-bucketing for wpc-hazards and heatrisk (wave 2)
+- [x] 18-03-PLAN.md — runner side-channels and SPC-grid re-bucketing for wpc-hazards and heatrisk (wave 2)
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
@@ -332,7 +332,7 @@ Phases execute in numeric order: 14 → 15 → 16 → 17 → 18 → 19
 | 15. WPC Winter Storm Severity & Mesoscale Precipitation Discussion | v2.0 | 6/9 | In Progress|  |
 | 16. WPC Day 3–7 / CPC Day 8–14 Hazards Outlook | v2.0 | 8/8 | Complete    | 2026-08-27 |
 | 17. NWS/WPC HeatRisk & Parallelized Fetching | v2.0 | 9/9 | Complete    | 2026-09-01 |
-| 18. Merge, Precedence & Unified Payload Schema | v2.0 | 2/9 | In Progress|  |
+| 18. Merge, Precedence & Unified Payload Schema | v2.0 | 3/9 | In Progress|  |
 | 19. Unified Day Report — getDom() Rewrite | v2.0 | 0/? | Not started | - |
 
 ## Backlog
