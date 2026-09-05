@@ -7749,6 +7749,478 @@ const scenarios = [
       assertPayloadIntact(controlOut);
       assertHeatRiskBlockIntact(controlOut);
     }
+  },
+
+  // -----------------------------------------------------------------
+  // Phase 18 / MERGE-01: grid-anchor, day-window and precedence scenarios
+  // (plan 18-07). Each entry below pins one of 18-CONTEXT.md's D-09..D-14
+  // day-window normalization decisions as an executable, mutation-proven
+  // proof against the real `days`/`sources` merge output.
+  // -----------------------------------------------------------------
+
+  {
+    // D-12: the observed branch of _spcGridAnchor — SPC's own VALID_ISO/EXPIRE_ISO,
+    // read straight off the winning day-1 categorical polygon. This exact VALID_ISO/
+    // EXPIRE_ISO pair is 18-02's live-observed Case B, reused verbatim here and by
+    // merge-grid-hazards-00z-feature-forward-aligns-to-next-grid-day below.
+    // Mutation to prove RED: change _spcGridAnchor to derive nominalStartMs from the
+    // VALID parse instead of EXPIRE_ISO minus MS_PER_DAY.
+    name: "merge-grid-anchor-observed-reads-spc-valid-and-expire",
+    run: async (helper) => {
+      resetHelper(helper);
+      resetLogs();
+      const originalPointInPolygon = turfStub.pointInPolygon;
+      turfStub.pointInPolygon = () => true;
+      try {
+        helper._products = {};
+        installHttp(helper, [
+          ["day1otlk_cat.lyr.geojson", () => httpResponse({
+            body: {
+              type: "FeatureCollection",
+              features: [{
+                type: "Feature",
+                properties: {
+                  LABEL: "SLGT",
+                  VALID_ISO: "2026-09-05T13:00:00Z",
+                  EXPIRE_ISO: "2026-09-06T12:00:00Z"
+                },
+                geometry: { type: "Polygon", coordinates: [SAMPLE_RING] }
+              }]
+            },
+            etag: "merge-grid-anchor-observed-v1"
+          })],
+          ...hazardsRoutes()
+        ]);
+        const out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, {});
+        assertPayloadIntact(out);
+
+        // Precondition guard: the fixture actually produced a winning, non-"NONE" day1
+        // reading, so an anchor of null/"estimated" cannot be explained by the polygon
+        // never winning at all.
+        if (out.day1.risk === "NONE") {
+          throw new Error(
+            "precondition failed: day1.risk is NONE, so the fixture's polygon never won and this scenario proves nothing about the anchor"
+          );
+        }
+
+        if (out.sources["spc-convective"].gridAnchor !== "observed") {
+          throw new Error(`D-12: expected "observed" with a usable EXPIRE_ISO, got ${JSON.stringify(out.sources["spc-convective"].gridAnchor)}`);
+        }
+        if (out.days["1"].windowStart !== "2026-09-05T13:00:00.000Z") {
+          throw new Error(`day1.windowStart should carry the truncated VALID_ISO, got ${out.days["1"].windowStart}`);
+        }
+        if (out.days["1"].windowEnd !== "2026-09-06T12:00:00.000Z") {
+          throw new Error(`day1.windowEnd should equal EXPIRE_ISO, got ${out.days["1"].windowEnd}`);
+        }
+        if (out.days["1"].date !== "2026-09-05") {
+          throw new Error(`day1.date should stay on the NOMINAL start's calendar date, unshifted by the VALID_ISO truncation, got ${out.days["1"].date}`);
+        }
+
+        // Control: day 2's window uses the NOMINAL 12Z grid, proving day 1's truncation
+        // did not bleed into a second truncated read.
+        if (out.days["2"].windowStart !== "2026-09-06T12:00:00.000Z") {
+          throw new Error(`control: day2.windowStart should be the nominal 12Z boundary, got ${out.days["2"].windowStart}`);
+        }
+      } finally {
+        turfStub.pointInPolygon = originalPointInPolygon;
+      }
+    }
+  },
+  {
+    // T-18-02/D-12: the clock-fallback branch of _spcGridAnchor, exercised by a genuine
+    // hard fetch failure on the day-1 categorical layer with nothing cached.
+    // Mutation to prove RED: make _spcGridAnchor return anchor: "observed" unconditionally.
+    name: "merge-grid-anchor-estimated-on-spc-day1-hard-failure",
+    run: async (helper) => {
+      resetHelper(helper);
+      resetLogs();
+      helper._nowMs = () => Date.UTC(2026, 8, 5, 13, 0);
+      helper._products = {};
+      installHttp(helper, [
+        ["day1otlk_cat.lyr.geojson", () => httpResponse({ status: 503, text: "service unavailable" })],
+        ...hazardsRoutes()
+      ]);
+      const out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, {});
+      assertPayloadIntact(out);
+
+      // Precondition guard: the estimated anchor is attributable to the hard failure
+      // itself, not to a fixture that silently produced a below-floor answer.
+      if (out.day1.risk !== "NONE") {
+        throw new Error(`precondition failed: day1.risk is ${JSON.stringify(out.day1.risk)}, expected NONE on a hard fetch failure with nothing cached`);
+      }
+
+      if (out.sources["spc-convective"].gridAnchor !== "estimated") {
+        throw new Error(`D-12: expected the clock fallback ("estimated") on a hard day-1 fetch failure with nothing cached, got ${JSON.stringify(out.sources["spc-convective"].gridAnchor)}`);
+      }
+      const dayKeys = Object.keys(out.days);
+      if (dayKeys.length !== 14) {
+        throw new Error(`expected all fourteen grid days present under the clock fallback, got ${dayKeys.length}: ${JSON.stringify(dayKeys)}`);
+      }
+      for (let d = 1; d <= 14; d++) {
+        const entry = out.days[String(d)];
+        if (typeof entry.windowStart !== "string" || Number.isNaN(new Date(entry.windowStart).getTime())) {
+          throw new Error(`day ${d}: windowStart is not a well-formed ISO string: ${JSON.stringify(entry.windowStart)}`);
+        }
+        if (typeof entry.windowEnd !== "string" || Number.isNaN(new Date(entry.windowEnd).getTime())) {
+          throw new Error(`day ${d}: windowEnd is not a well-formed ISO string: ${JSON.stringify(entry.windowEnd)}`);
+        }
+      }
+
+      // control: merge-grid-anchor-observed-reads-spc-valid-and-expire proves the same
+      // _spcGridAnchor function can also resolve "observed" from a real VALID_ISO/
+      // EXPIRE_ISO pair, so this scenario's "estimated" is a genuine second path, not
+      // the only value the field can ever take under two names.
+    }
+  },
+  {
+    // T-18-02/T-18-03: _spcGridAnchor's Number.isFinite guard, exercised directly. A
+    // malformed (non-ISO) VALID_ISO/EXPIRE_ISO pair must degrade to the clock fallback
+    // rather than leak an Invalid Date into the grid, and the parse must never throw.
+    // Mutation to prove RED: remove the Number.isFinite(expireMs) guard in _spcGridAnchor.
+    name: "merge-grid-anchor-malformed-valid-iso-degrades-to-estimated",
+    run: async (helper) => {
+      resetHelper(helper);
+      resetLogs();
+      const originalPointInPolygon = turfStub.pointInPolygon;
+      turfStub.pointInPolygon = () => true;
+      try {
+        helper._nowMs = () => Date.UTC(2026, 8, 5, 13, 0);
+        helper._products = {};
+        installHttp(helper, [
+          ["day1otlk_cat.lyr.geojson", () => httpResponse({
+            body: {
+              type: "FeatureCollection",
+              features: [{
+                type: "Feature",
+                properties: { LABEL: "SLGT", VALID_ISO: "not-a-date", EXPIRE_ISO: "also-not-a-date" },
+                geometry: { type: "Polygon", coordinates: [SAMPLE_RING] }
+              }]
+            },
+            etag: "merge-grid-anchor-malformed-v1"
+          })],
+          ...hazardsRoutes()
+        ]);
+        const out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, {});
+        assertPayloadIntact(out);
+
+        // Precondition guard: the polygon still won — the malformed VALID_ISO/EXPIRE_ISO
+        // fields are the ONLY thing wrong with this feature — so this exercises the
+        // parse guard rather than a feature rejected upstream for an unrelated reason.
+        if (out.day1.risk !== "SLGT") {
+          throw new Error(`precondition failed: day1.risk is ${JSON.stringify(out.day1.risk)}, expected SLGT — the polygon must win for this to exercise the parse guard`);
+        }
+
+        if (out.sources["spc-convective"].gridAnchor !== "estimated") {
+          throw new Error(`T-18-02: a malformed VALID_ISO/EXPIRE_ISO pair should degrade to "estimated", got ${JSON.stringify(out.sources["spc-convective"].gridAnchor)}`);
+        }
+        for (let d = 1; d <= 14; d++) {
+          const entry = out.days[String(d)];
+          if (Number.isNaN(new Date(entry.windowStart).getTime()) || Number.isNaN(new Date(entry.windowEnd).getTime())) {
+            throw new Error(`day ${d}: a malformed anchor leaked an Invalid Date into the grid: ${JSON.stringify(entry)}`);
+          }
+        }
+
+        // control: this scenario's control is the companion observed-branch scenario
+        // above (merge-grid-anchor-observed-reads-spc-valid-and-expire), whose
+        // well-formed VALID_ISO/EXPIRE_ISO pair proves the SAME code path resolves
+        // "observed" cleanly — so this scenario's "estimated" is the parse guard
+        // rejecting bad input, not the only value the function can ever produce.
+      } finally {
+        turfStub.pointInPolygon = originalPointInPolygon;
+      }
+    }
+  },
+  {
+    // MERGE-01's near-boundary case (D-10): a 00Z-00Z wpc-hazards Precipitation feature
+    // forward-aligns onto the SPC 12Z grid day that STARTS at 12Z on its own calendar
+    // date, never the grid day before it. Reuses 18-02's live-observed VALID_ISO/
+    // EXPIRE_ISO anchor pair (Case B) so the anchor under test here is the SAME
+    // truncated-to-13:00Z anchor 18-02 measured, not a clean, non-representative one.
+    // Mutation to prove RED (the highest-value mutation in this phase): pass
+    // anchorInfo.day1StartMs instead of anchorInfo.nominalStartMs into the _gridDayOf
+    // call in _addHazardsOutlookGridEntries — this reproduces the exact divergence
+    // plan 18-02 Task 1 measured, so a green result here would mean MERGE-01 is
+    // unverified.
+    name: "merge-grid-hazards-00z-feature-forward-aligns-to-next-grid-day",
+    run: async (helper) => {
+      const day1Fixture = () => httpResponse({
+        body: {
+          type: "FeatureCollection",
+          features: [{
+            type: "Feature",
+            properties: {
+              LABEL: "SLGT",
+              VALID_ISO: "2026-09-05T13:00:00Z",
+              EXPIRE_ISO: "2026-09-06T12:00:00Z"
+            },
+            geometry: { type: "Polygon", coordinates: [SAMPLE_RING] }
+          }]
+        },
+        etag: "merge-grid-hazards-day1-v1"
+      });
+      // Fixed well before the Sep 5/6 source days under test, so both features' legacy
+      // offsets land inside the Hazards Outlook's own [3,14] day-grid span rather than
+      // being clamped out — the precondition guard below needs the label to actually
+      // reach the legacy block.
+      const NOW_MS = Date.UTC(2026, 8, 2, 13, 0);
+
+      const originalPointInPolygon = turfStub.pointInPolygon;
+      const runWithFeature = async (feature) => {
+        resetHelper(helper);
+        resetLogs();
+        turfStub.pointInPolygon = () => true;
+        helper._nowMs = () => NOW_MS;
+        helper._products = { showHazardsOutlook: true };
+        const layer4Fixture = () => httpResponse({
+          body: hazardsCollection([feature]),
+          etag: "merge-grid-hazards-layer4-v1"
+        });
+        installHttp(helper, [
+          ["day1otlk_cat.lyr.geojson", day1Fixture],
+          ...hazardsRoutes({ 4: layer4Fixture })
+        ]);
+        const out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showHazardsOutlook: true });
+        assertPayloadIntact(out);
+        assertHazardsBlockIntact(out);
+        return out;
+      };
+
+      try {
+        const testFeature = hazardsFeature({
+          label: "Heavy Rain", startDate: Date.UTC(2026, 8, 6), endDate: Date.UTC(2026, 8, 7)
+        });
+        const primaryOut = await runWithFeature(testFeature);
+
+        // Precondition guard: the label actually reached the legacy hazardsOutlook day
+        // grid, so a missing Phase 18 grid entry cannot be explained by the feature
+        // having been filtered out somewhere upstream of the grid-entry builder.
+        let reachedLegacy = false;
+        for (let d = 3; d <= 14; d++) {
+          if (primaryOut.hazardsOutlook[`day${d}`].hazards.some((h) => h.label === "Heavy Rain")) {
+            reachedLegacy = true;
+            break;
+          }
+        }
+        if (!reachedLegacy) {
+          throw new Error(
+            "precondition failed: \"Heavy Rain\" never reached the legacy hazardsOutlook day grid, so a missing Phase 18 grid entry cannot be attributed to D-10's forward-align rule"
+          );
+        }
+
+        const day2Entries = primaryOut.days["2"].hazards.filter((h) => h.source === "wpc-hazards" && h.label === "Heavy Rain");
+        if (day2Entries.length !== 1 || day2Entries[0].dimension !== "heavy-precip") {
+          throw new Error(`D-10: expected exactly one wpc-hazards "Heavy Rain" entry on grid day 2 with dimension heavy-precip, got ${JSON.stringify(primaryOut.days["2"].hazards)}`);
+        }
+        const day1TestEntries = primaryOut.days["1"].hazards.filter((h) => h.source === "wpc-hazards" && h.label === "Heavy Rain");
+        if (day1TestEntries.length !== 0) {
+          throw new Error(`D-10: a Sep 6 00Z-00Z feature forward-aligned onto grid day 1 instead of grid day 2 — got ${JSON.stringify(day1TestEntries)}`);
+        }
+
+        // Control: an adjacent source day (Sep 5 00Z-00Z) lands on grid day 1 and not
+        // grid day 2, proving the gate distinguishes the two adjacent source days
+        // rather than placing everything on one.
+        const controlFeature = hazardsFeature({
+          label: "Heavy Rain", startDate: Date.UTC(2026, 8, 5), endDate: Date.UTC(2026, 8, 6)
+        });
+        const controlOut = await runWithFeature(controlFeature);
+        const controlDay1 = controlOut.days["1"].hazards.filter((h) => h.source === "wpc-hazards" && h.label === "Heavy Rain");
+        const controlDay2 = controlOut.days["2"].hazards.filter((h) => h.source === "wpc-hazards" && h.label === "Heavy Rain");
+        if (controlDay1.length !== 1 || controlDay2.length !== 0) {
+          throw new Error(`control: expected the Sep 5 00Z-00Z feature on grid day 1 only, got day1=${JSON.stringify(controlDay1)} day2=${JSON.stringify(controlDay2)}`);
+        }
+      } finally {
+        turfStub.pointInPolygon = originalPointInPolygon;
+      }
+    }
+  },
+  {
+    // D-10/D-13: HeatRisk's idp_validtime point sample maps onto its OWN Phase 18 grid
+    // day — no interval-overlap or broadcast logic, matching _addHeatRiskGridEntries's
+    // own maintainer note that this function must never be "fixed" to match
+    // _addHazardsOutlookGridEntries's span-clamped loop.
+    // Mutation to prove RED: add 1 to the grid day computed in _addHeatRiskGridEntries.
+    name: "merge-grid-heatrisk-12z-sample-maps-to-its-own-grid-day",
+    run: async (helper) => {
+      resetHelper(helper);
+      resetLogs();
+      // SPC anchor nominal at 2026-09-05T12:00:00Z via the clock fallback (no SPC layer
+      // is routed with a real VALID_ISO/EXPIRE_ISO here — this scenario is about
+      // HeatRisk's own mapping, not the anchor source).
+      const NOW_MS = Date.UTC(2026, 8, 5, 13, 0);
+      helper._nowMs = () => NOW_MS;
+      helper._products = { showHeatRisk: true };
+      const items = [
+        heatRiskCatalogItem({ name: "HeatRisk_1_Mercator", validtime: Date.UTC(2026, 8, 5, 12), filedate: NOW_MS - 30 * 60 * 1000 }),
+        heatRiskCatalogItem({ name: "HeatRisk_2_Mercator", validtime: Date.UTC(2026, 8, 6, 12), filedate: NOW_MS - 30 * 60 * 1000 })
+      ];
+      const values = ["3", "1"];
+      installHttp(helper, heatRiskRoutes({
+        heatRisk: () => httpResponse({ body: heatRiskIdentifyResponse({ items, values }), etag: "merge-grid-heatrisk-day-v1" })
+      }));
+      const out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showHeatRisk: true });
+      assertPayloadIntact(out);
+      assertHeatRiskBlockIntact(out);
+
+      // Precondition guard: the legacy heatRisk block actually resolved non-null
+      // categories, so an empty Phase 18 grid cannot be blamed on the fetch itself.
+      if (out.heatRisk.day1.category !== 3 || out.heatRisk.day2.category !== 1) {
+        throw new Error(`precondition failed: legacy heatRisk day1/day2 categories are ${out.heatRisk.day1.category}/${out.heatRisk.day2.category}, expected 3/1`);
+      }
+      if (out.sources["spc-convective"].gridAnchor !== "estimated") {
+        throw new Error(`fixture check: expected the clock-fallback anchor at 2026-09-05T12:00:00Z, got gridAnchor=${JSON.stringify(out.sources["spc-convective"].gridAnchor)}`);
+      }
+
+      const day1Heat = out.days["1"].hazards.find((h) => h.source === "heatrisk");
+      if (!day1Heat || day1Heat.value !== 3) {
+        throw new Error(`D-10: expected a heatrisk entry with value 3 on grid day 1, got ${JSON.stringify(out.days["1"].hazards)}`);
+      }
+      const day2Heat = out.days["2"].hazards.find((h) => h.source === "heatrisk");
+      if (!day2Heat || day2Heat.value !== 1) {
+        throw new Error(`D-10: expected a heatrisk entry with value 1 on grid day 2, got ${JSON.stringify(out.days["2"].hazards)}`);
+      }
+
+      // Control: day 3 carries no heatrisk entry, proving the mapping is per-sample and
+      // not a broadcast across the window.
+      if (out.days["3"].hazards.some((h) => h.source === "heatrisk")) {
+        throw new Error(`control: expected no heatrisk entry on grid day 3, got ${JSON.stringify(out.days["3"].hazards)}`);
+      }
+    }
+  },
+  {
+    // D-10/18-03: the false-negative-on-a-heat-safety-product case. During the 00Z-12Z
+    // window the legacy _todayUtcMs-relative span filter discards HeatRisk's
+    // yesterday-noon tile as "day offset 0", but that exact tile is the one that covers
+    // Phase 18 grid day 1 (which started 12Z yesterday) — dropping it would leave grid
+    // day 1 with no HeatRisk reading for twelve hours out of every twenty-four.
+    // Mutation to prove RED: move the gridTuples.push(...) call in _runHeatRiskProduct
+    // to AFTER the `if (d < 1 || d > row.days) continue;` span filter.
+    name: "merge-grid-heatrisk-yesterday-noon-tile-still-covers-grid-day-1",
+    run: async (helper) => {
+      resetHelper(helper);
+      resetLogs();
+      // Inside the 00Z-12Z window: grid day 1 (clock fallback) started 12Z Sep 5,
+      // while _todayUtcMs is Sep 6's midnight.
+      const NOW_MS = Date.UTC(2026, 8, 6, 6, 0);
+      helper._nowMs = () => NOW_MS;
+      helper._products = { showHeatRisk: true };
+      const items = [
+        heatRiskCatalogItem({ name: "HeatRisk_1_Mercator", validtime: Date.UTC(2026, 8, 5, 12), filedate: NOW_MS - 30 * 60 * 1000 }),
+        heatRiskCatalogItem({ name: "HeatRisk_2_Mercator", validtime: Date.UTC(2026, 8, 6, 12), filedate: NOW_MS - 30 * 60 * 1000 })
+      ];
+      const values = ["3", "1"];
+      installHttp(helper, heatRiskRoutes({
+        heatRisk: () => httpResponse({ body: heatRiskIdentifyResponse({ items, values }), etag: "merge-grid-heatrisk-yesterday-v1" })
+      }));
+      const out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showHeatRisk: true });
+      assertPayloadIntact(out);
+      assertHeatRiskBlockIntact(out);
+
+      // Precondition guard: the legacy span filter really did discard the
+      // yesterday-noon tile — legacy day1 resolves to the Sep 6 12Z sample (category 1),
+      // not the Sep 5 12Z yesterday-noon tile (category 3) — proving this scenario tests
+      // the side-channel rather than a value the legacy block happened to expose anyway.
+      if (out.heatRisk.day1.category === 3) {
+        throw new Error(
+          "precondition failed: legacy heatRisk.day1.category is 3 (the yesterday-noon tile) — the legacy span filter did not discard it, so this scenario proves nothing about the side-channel"
+        );
+      }
+
+      const day1Heat = out.days["1"].hazards.find((h) => h.source === "heatrisk");
+      if (!day1Heat || day1Heat.value !== 3) {
+        throw new Error(`D-10/18-03: expected the yesterday-noon tile (value 3) to still cover Phase 18 grid day 1, got ${JSON.stringify(out.days["1"].hazards)}`);
+      }
+
+      // control: merge-grid-heatrisk-12z-sample-maps-to-its-own-grid-day proves the same
+      // fixture shape resolves cleanly when the clock sits inside the day rather than
+      // straddling the 00Z-12Z boundary, so this scenario's recovered day-1 entry is the
+      // side-channel doing real work, not a fixture that always lands on day 1 regardless.
+    }
+  },
+  {
+    // D-11: every 12Z-native product's native day index equals the grid index at every
+    // hour — SPC convective, wpc-ero and wpc-wssi all map straight through with no
+    // _gridDayOf call and no off-by-one, unlike the two 00Z-native sources above.
+    // Mutation to prove RED: in _addRegistryDayGridEntries, emit on grid day N + 1
+    // instead of N.
+    name: "merge-grid-12z-products-map-straight-through",
+    run: async (helper) => {
+      const originalPointInPolygon = turfStub.pointInPolygon;
+      const NOW_MS = Date.UTC(2026, 8, 5, 13, 0);
+      const quietEro = () => httpResponse({ body: EMPTY_FEATURE_COLLECTION, etag: "merge-grid-ero-empty-v1" });
+      const quietWssi = () => httpResponse({ body: EMPTY_FEATURE_COLLECTION, etag: "merge-grid-wssi-empty-v1" });
+      const quietSpc = () => httpResponse({ body: EMPTY_FEATURE_COLLECTION, etag: "merge-grid-spc-empty-v1" });
+
+      const buildRoutes = ({ day2Cat } = {}) => {
+        const routes = [
+          ["day1otlk_cat.lyr.geojson", () => httpResponse({ body: SPC_SLGT_BODY, etag: "merge-grid-spc-day1-v1" })],
+          [ERO_URLS[1], () => httpResponse({ body: ERO_SLGT_BODY, etag: "merge-grid-ero-day1-v1" })],
+          [ERO_URLS[2], quietEro], [ERO_URLS[3], quietEro], [ERO_URLS[4], quietEro], [ERO_URLS[5], quietEro],
+          [WSSI_URLS[1], () => httpResponse({ body: WSSI_MINOR_BODY, etag: "merge-grid-wssi-day1-v1" })],
+          [WSSI_URLS[2], quietWssi], [WSSI_URLS[3], quietWssi],
+          [".lyr.geojson", quietSpc]
+        ];
+        if (day2Cat) {
+          routes.unshift(["day2otlk_cat.lyr.geojson", () => httpResponse({ body: SPC_SLGT_BODY, etag: "merge-grid-spc-day2-v1" })]);
+        }
+        return routes;
+      };
+
+      const runWithRoutes = async (opts) => {
+        resetHelper(helper);
+        resetLogs();
+        turfStub.pointInPolygon = () => true;
+        helper._nowMs = () => NOW_MS;
+        helper._products = { showExcessiveRain: true, showWinterImpact: true };
+        installHttp(helper, buildRoutes(opts));
+        const result = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showExcessiveRain: true, showWinterImpact: true });
+        assertPayloadIntact(result);
+        return result;
+      };
+
+      try {
+        const out = await runWithRoutes();
+
+        // Precondition guard: all three legacy blocks carry their non-NONE values, so an
+        // absent Phase 18 grid entry cannot be explained by a fetch that produced nothing.
+        if (out.day1.risk !== "SLGT" || out.excessiveRain.day1Risk !== "SLGT" || out.winterImpact.day1Risk !== "MINOR") {
+          throw new Error(`precondition failed: expected SLGT/SLGT/MINOR on day 1, got ${out.day1.risk}/${out.excessiveRain.day1Risk}/${out.winterImpact.day1Risk}`);
+        }
+
+        const bySource = (day, sourceId) => out.days[day].hazards.find((h) => h.source === sourceId);
+        const spcDay1 = bySource("1", "spc-convective");
+        const eroDay1 = bySource("1", "wpc-ero");
+        const wssiDay1 = bySource("1", "wpc-wssi");
+        if (!spcDay1 || spcDay1.dimension !== "convective") {
+          throw new Error(`D-11: expected an spc-convective entry with dimension convective on grid day 1, got ${JSON.stringify(spcDay1)}`);
+        }
+        if (!eroDay1 || eroDay1.dimension !== "flash-flood") {
+          throw new Error(`D-11: expected a wpc-ero entry with dimension flash-flood on grid day 1, got ${JSON.stringify(eroDay1)}`);
+        }
+        if (!wssiDay1 || wssiDay1.dimension !== "winter") {
+          throw new Error(`D-11: expected a wpc-wssi entry with dimension winter on grid day 1, got ${JSON.stringify(wssiDay1)}`);
+        }
+        if (bySource("2", "spc-convective") || bySource("2", "wpc-ero") || bySource("2", "wpc-wssi")) {
+          throw new Error(`D-11: expected none of the three day-1 sources to also appear on grid day 2, got ${JSON.stringify(out.days["2"].hazards)}`);
+        }
+
+        // Control: the same fixture with the SPC day-2 categorical also set produces the
+        // SPC entry on grid day 2 and not grid day 3, proving day indexing tracks the
+        // source's own day number (D-11) rather than being pinned to day 1.
+        const controlOut = await runWithRoutes({ day2Cat: true });
+        if (controlOut.day2.risk !== "SLGT") {
+          throw new Error(`control precondition failed: expected day2.risk SLGT, got ${controlOut.day2.risk}`);
+        }
+        const spcControlDay2 = controlOut.days["2"].hazards.find((h) => h.source === "spc-convective");
+        if (!spcControlDay2) {
+          throw new Error(`control: expected an spc-convective entry on grid day 2 once the day-2 categorical also reports SLGT, got ${JSON.stringify(controlOut.days["2"].hazards)}`);
+        }
+        if (controlOut.days["3"].hazards.some((h) => h.source === "spc-convective")) {
+          throw new Error(`control: expected no spc-convective entry on grid day 3, got ${JSON.stringify(controlOut.days["3"].hazards)}`);
+        }
+      } finally {
+        turfStub.pointInPolygon = originalPointInPolygon;
+      }
+    }
   }
 ];
 
