@@ -29,7 +29,10 @@ const { PRODUCT_REGISTRY, MPD_FILENAME_PATTERN, hazardLabelKey } = require("./pr
 // NO_RISK_FLOOR is read directly by the HeatRisk and registry-day grid-entry builders to
 // decide whether a reading is an active claim or a quiet one; FLOOR_PREBAKED is the
 // sentinel _addRegistryDayGridEntries checks against rather than hardcoding the comparison.
-const { dimensionOf, NO_RISK_FLOOR, FLOOR_PREBAKED } = require("./hazardTaxonomy");
+const {
+  dimensionOf, NO_RISK_FLOOR, FLOOR_PREBAKED, PRECEDENCE, DIMENSION_ORDER,
+  SOURCE_IDS, ADVISORY_SOURCE_IDS
+} = require("./hazardTaxonomy");
 // WR-16 / D-10: `showDrought` is NOT a product flag in the `configFlag` sense — it does
 // not gate a fetch, it gates which labels within an already-fetched product (Hazards
 // Outlook) are displayable — so it cannot be derived from `PRODUCT_REGISTRY` and needs
@@ -3283,6 +3286,117 @@ module.exports = NodeHelper.create({
   },
 
   /**
+   * MERGE-02/MERGE-03/MERGE-04/D-13/D-14/D-15: resolve cross-source precedence for ONE
+   * grid day, in place, and order that day's `hazards` array. Pure — no I/O, no clock
+   * read, no second fetch or re-derivation of any raw source value.
+   *
+   * Per dimension present among this day's entries, the winner is the FIRST source id in
+   * `PRECEDENCE[dimension]` that has an entry on this day. Every entry that survives to
+   * `day.hazards` already passed its own source's no-risk floor at creation time
+   * (18-03/18-04's entry-creation-time floor test), so "has an entry" already means "made
+   * an active claim" — this method never re-consults `NO_RISK_FLOOR`. The winner's
+   * entries keep `suppressedBy: null`; every other entry on that dimension is marked
+   * `suppressedBy: <winner's source id>`. Read (and log, if a caller ever logs this) as
+   * "dimension X resolved to source Y for grid day N" — resolving a competing claim,
+   * never one source silencing another (D-13's specifics note).
+   *
+   * `dimension: null` entries (D-07 unmapped) never participate: they are excluded from
+   * resolution entirely and always keep the `suppressedBy: null` they were created with.
+   *
+   * @param day - one entry of `gridDays`, `{ date, windowStart, windowEnd, hazards }`,
+   *   mutated in place
+   * @param dayNumber - this day's 1-based grid day number
+   * @param reportedDays - `{ [sourceId]: Set<number> }`, lazily keyed; used ONLY to keep
+   *   "rank source absent for this grid day" and "rank source reported but fell below its
+   *   own floor" as two distinct, individually commented code paths below (D-14's
+   *   RESEARCH.md requirement) — it never changes which source wins, since a source with
+   *   no entry cannot win either way. The distinction itself is not written to the
+   *   payload; it stays inspectable via `sources[].reportedDays` vs `.activeDays` (Task 3).
+   */
+  _resolveGridDayPrecedence(day, dayNumber, reportedDays) {
+    const byDimension = {};
+    for (const entry of day.hazards) {
+      if (entry.dimension === null) continue; // D-07: never suppresses, never suppressed
+      if (!byDimension[entry.dimension]) byDimension[entry.dimension] = [];
+      byDimension[entry.dimension].push(entry);
+    }
+
+    for (const dimension of Object.keys(byDimension)) {
+      const rankOrder = PRECEDENCE[dimension];
+      if (!Array.isArray(rankOrder)) {
+        // assertTaxonomyIntegrity rejects an unresolvable dimension at module load time,
+        // so this branch is unreachable in practice (T-18-15 containment anyway): this
+        // one dimension's entries degrade to their creation-time `suppressedBy: null`
+        // rather than throwing past the rest of the day's hazards list.
+        continue;
+      }
+
+      const entriesBySource = {};
+      for (const entry of byDimension[dimension]) {
+        entriesBySource[entry.source] = entry;
+      }
+
+      let winnerSourceId = null;
+      for (const sourceId of rankOrder) {
+        if (entriesBySource[sourceId]) {
+          winnerSourceId = sourceId;
+          break;
+        }
+        // This rank position made no claim on this dimension for this day. Two distinct
+        // facts produce the identical visible outcome here (the walk simply continues to
+        // the next rank) but must never be conflated by a future reader:
+        const reportedForDay = !!(reportedDays[sourceId] && reportedDays[sourceId].has(dayNumber));
+        if (reportedForDay) {
+          // Path A — "reported below floor": this source produced a reading for this
+          // grid day (present in `reportedDays`) but it did not clear its own no-risk
+          // floor at entry-creation time, so no entry exists here to have won with. The
+          // floor was already consulted upstream (18-03/18-04); this method does not
+          // re-consult it.
+        } else {
+          // Path B — "absent": this source never produced a reading for this grid day at
+          // all (no `reportedDays` key, or no entry for this day number). The no-risk
+          // floor is never consulted for an absent source — there is nothing to test.
+        }
+      }
+      // Every entry in `entriesBySource` names a source that HAZARD_TAXONOMY maps to this
+      // dimension, and `assertTaxonomyIntegrity` guarantees every such source appears in
+      // `PRECEDENCE[dimension]` — so `winnerSourceId` is always resolved once this
+      // dimension has at least one entry.
+      for (const entry of byDimension[dimension]) {
+        entry.suppressedBy = entry.source === winnerSourceId ? null : winnerSourceId;
+      }
+    }
+
+    // D-15: fixed taxonomy category order, survivors before suppressed within one
+    // dimension, then `PRECEDENCE` rank, then label — a total, deterministic order so two
+    // polls over an unchanged forecast produce byte-identical arrays, the same reason
+    // `compareLabels` exists (node_helper.js:872-876). Unmapped (`dimension: null`)
+    // entries sort after every dimensioned entry, alphabetically by label, matching that
+    // same convention.
+    const dimensionIndex = (entry) => {
+      if (entry.dimension === null) return DIMENSION_ORDER.length;
+      const idx = DIMENSION_ORDER.indexOf(entry.dimension);
+      return idx === -1 ? DIMENSION_ORDER.length : idx;
+    };
+    const rankIndex = (entry) => {
+      if (entry.dimension === null) return 0;
+      const order = PRECEDENCE[entry.dimension];
+      if (!Array.isArray(order)) return 0;
+      const idx = order.indexOf(entry.source);
+      return idx === -1 ? order.length : idx;
+    };
+    day.hazards.sort((a, b) => {
+      const dimDiff = dimensionIndex(a) - dimensionIndex(b);
+      if (dimDiff !== 0) return dimDiff;
+      const survivorDiff = (a.suppressedBy === null ? 0 : 1) - (b.suppressedBy === null ? 0 : 1);
+      if (survivorDiff !== 0) return survivorDiff;
+      const rankDiff = rankIndex(a) - rankIndex(b);
+      if (rankDiff !== 0) return rankDiff;
+      return a.label.localeCompare(b.label);
+    });
+  },
+
+  /**
    * Fetch a GeoJSON URL with ETag/hash caching, returning parsed data or cached result on hit/error.
    * @param url - GeoJSON endpoint URL to fetch
    * @param isValidBody - body-shape validator for the cache-miss branches; defaults to
@@ -4587,6 +4701,14 @@ module.exports = NodeHelper.create({
       this._addRegistryDayGridEntries(
         gridDays, "wpc-wssi", wssiPayload, PRODUCT_REGISTRY.winterImpact, gridNotes
       );
+
+      // MERGE-02/MERGE-03/MERGE-04/D-14: resolve precedence per grid day, independently —
+      // AFTER all five entry-assembly calls above, so every source's entries for this day
+      // exist before any dimension is resolved, and BEFORE the return statement, so
+      // nothing downstream (including `_buildGridSummary`) ever needs a second pass.
+      for (let d = 1; d <= GRID_DAY_COUNT; d++) {
+        this._resolveGridDayPrecedence(gridDays[String(d)], d, reportedDays);
+      }
 
       return {
         // WR-04: the oldest cached reading that contributed to this payload, or null when
