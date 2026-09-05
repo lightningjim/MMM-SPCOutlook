@@ -3,7 +3,7 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: WPC & CPC Integration + Unified Day Report
 status: executing
-stopped_at: Completed 18-08-PLAN.md
+stopped_at: 18-09 paused at blocking checkpoint — MERGE-01 fail, gap fix pending
 last_updated: "2026-09-05T21:30:53.354Z"
 last_activity: 2026-09-05 -- Phase 18 execution started
 progress:
