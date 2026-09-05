@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: WPC & CPC Integration + Unified Day Report
 status: executing
-stopped_at: Completed 18-06-PLAN.md
-last_updated: "2026-09-05T18:40:46.933Z"
+stopped_at: Completed 18-07-PLAN.md
+last_updated: "2026-09-05T19:08:38.494Z"
 last_activity: 2026-09-05 -- Phase 18 execution started
 progress:
   total_phases: 7
   completed_phases: 4
   total_plans: 42
-  completed_plans: 39
+  completed_plans: 40
   percent: 57
 ---
 
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-08-15 after v2.0 scoping)
 ## Current Position
 
 Phase: 18 (merge-precedence-unified-payload-schema) — EXECUTING
-Plan: 7 of 9
+Plan: 8 of 9
 Status: Executing Phase 18
 Last activity: 2026-09-05 -- Phase 18 execution started
 
-Progress: [█████████░] 93%
+Progress: [██████████] 95%
 
 ## Performance Metrics
 
@@ -71,6 +71,8 @@ Decisions are logged in PROJECT.md Key Decisions table. Recent decisions affecti
 - [Phase ?]: [Phase 18-05]: _resolveGridDayPrecedence's reportedDays parameter never changes which source wins a dimension; it only keeps 'rank source absent' and 'rank source reported below floor' as two distinct, individually commented code branches per D-14's absent-vs-below-floor requirement.
 - [Phase ?]: [Phase 18-05]: sources[].reporting is gated on enabled for every source, not only the two advisory ones the plan's literal formula named -- a disabled wpc-ero/wpc-wssi must never claim reporting: true. The underlying reportedDays-array over-population is logged in deferred-items.md rather than fixed in 18-04's already-committed code.
 - [Phase 18-06]: SPC convective/fire-weather PERF-03 timing recorded as one spc-inline memberTimings entry, not two per-source entries — The code is genuinely interleaved (fire-weather runs between two convective code regions, not after them); a two-key split would need to sum disjoint code regions with no established idiom for it.
+- [Phase 18]: [Phase 18-07]: merge-grid-anchor-malformed-valid-iso-degrades-to-estimated's mutation (removing _spcGridAnchor's Number.isFinite(expireMs) guard) has a much wider blast radius than its own scenario (73/98 scenarios failed). — Accepted per the plan's own 'more than its own target may fail' rule since no narrower guard in the code matches the plan's generic Number.isFinite(d.getTime()) description.
+- [Phase 18]: [Phase 18-07]: two-phase run/control merge-grid-* scenarios route both runtime calls through one shared closure. — Keeps assertPayloadIntact's per-scenario textual occurrence at one, matching the plan's literal grep-count acceptance criterion of exactly 7.
 
 ### Pending Todos
 
@@ -116,9 +118,10 @@ Items acknowledged and carried forward from previous milestone close:
 | Phase 18 P04 | ~20min | 3 tasks | 1 files |
 | Phase 18 P05 | ~30min | 3 tasks | 1 files |
 | Phase 18 P06 | ~25min | 3 tasks | 2 files |
+| Phase 18 P07 | ~35min | 2 tasks | 1 files |
 
 ## Session Continuity
 
-Last session: 2026-09-05T18:40:46.924Z
-Stopped at: Completed 18-06-PLAN.md
+Last session: 2026-09-05T19:08:38.484Z
+Stopped at: Completed 18-07-PLAN.md
 Resume file: None
