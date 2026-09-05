@@ -2330,6 +2330,36 @@ module.exports = NodeHelper.create({
   },
 
   /**
+   * Phase 18 grid-anchor rule (resolves 18-RESEARCH.md Open Question 1): callers
+   * anchoring this function to the SPC 12Z-14Z grid MUST pass the NOMINAL grid-day-1
+   * start, derived as EXPIRE_ISO minus 24 hours — never the raw VALID_ISO. SPC
+   * truncates `VALID` to the re-issuance time when the nominal period is already in
+   * progress (live 2026-09-05: VALID 13:00Z, EXPIRE 12:00Z next day, ISSUE 12:54Z),
+   * while `EXPIRE` is never truncated. Feeding the truncated start into this rounding
+   * math can move a 00Z-aligned Hazards Outlook feature onto the wrong grid day.
+   * `_todayUtcMs` and the existing Hazards Outlook/HeatRisk callers are unaffected —
+   * they anchor to UTC midnight, not the SPC grid, and stay exactly as they are.
+   *
+   * Empirical check (script since deleted; see 18-02-SUMMARY.md for the full table):
+   * for a `wpc-hazards` feature with `start_date = 2026-09-06T00:00:00Z`, which D-10
+   * requires to land on grid day 2 (the grid day starting 12Z Sep 6):
+   *   - Case A, clean anchor `2026-09-05T12:00:00Z` (= nominal): offset 1 -> grid day 2. Correct.
+   *   - Case B, live-observed truncated anchor `2026-09-05T13:00:00Z` (raw VALID_ISO):
+   *     offset 0 -> grid day 1. WRONG — this is the exact failure this rule prevents.
+   *   - Case C, heavily truncated anchor `2026-09-05T01:00:00Z` (raw VALID_ISO):
+   *     offset 1 -> grid day 2. Coincidentally correct — refuting the assumption that
+   *     every truncated anchor fails the same way. The coincidence is not a reason to
+   *     skip the rule: only the nominal anchor is correct unconditionally, regardless
+   *     of how far VALID drifts from EXPIRE minus 24 hours.
+   * HeatRisk's two `idp_validtime` samples (Sep 5 12Z -> day 1, Sep 6 12Z -> day 2)
+   * landed correctly in all three cases, because they are already 12Z-aligned and the
+   * anchor shift never crosses their own half-day tie.
+   *
+   * Open Question 1 resolution: REUSE VERBATIM with the nominal anchor. No
+   * interval-overlap math is needed — the existing `Math.round` division is exactly
+   * right once it is handed EXPIRE_ISO minus 24 hours instead of raw VALID_ISO.
+   */
+  /**
    * The signed day offset of an epoch-ms value relative to today's UTC midnight. Every
    * `start_date`/`end_date` observed live on 2026-08-26 across 32 Hazards Outlook
    * features was exact UTC midnight, so this division is exact; `Math.round` is a
