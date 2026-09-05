@@ -3397,6 +3397,93 @@ module.exports = NodeHelper.create({
   },
 
   /**
+   * D-16/D-20/RPT-05: roll up the fourteen already-resolved grid days, the Hazards
+   * Outlook window band, and the two advisory arrays into the single `summary` object
+   * Phase 19 reads to decide the empty state in one read. This is a ROLLUP of
+   * already-resolved results, never a second precedence pass (D-14): it never calls
+   * `_resolveGridDayPrecedence`, never consults `PRECEDENCE` or `NO_RISK_FLOOR`, and
+   * never reads a raw source value. Whole-window resolution would let a source suppress
+   * entries on days it never covered — SPC winning days 1-8 must not erase `convective`
+   * on days 9-14, where SPC never reports — and a second pass over the raw sources is
+   * exactly what would let `summary` and `days` disagree about what is present.
+   *
+   * `anyHazard` is a UNION over three independent signals (day-scoped survivors, the
+   * window band, and both advisory arrays), not a day-scoped-only derivative. This union
+   * is D-16's own stated purpose — make RPT-05 decidable in one read — not an extension
+   * of it: a day-scoped-only `anyHazard` reproduces Phase 15's `getDom` no-risk gate that
+   * made an advisory-only MPD state read as an all-clear, and the still-unexercised
+   * Phase 16 case where a window-band entry with every other product NONE must not
+   * render "No Severe Weather Risk" either.
+   *
+   * @param gridDays - the resolved fourteen-key `days` object; every entry has already
+   *   passed through `_resolveGridDayPrecedence`
+   * @param windowBand - `hazardsPayload.windowBand`, the non-day-scoped Hazards Outlook band
+   * @param advisories - `{ spcMD: [...], mpd: [...] }`
+   * @param sourceHealth - the `sources` object `_buildSourceHealth` returns (Task 3);
+   *   this method only counts over it, never rebuilds it
+   * @param anchorInfo - accepted for the parameter contract Task 3's call site fills in;
+   *   unused here — `windowStart`/`windowEnd` are read from `gridDays` itself (D-12) so
+   *   `summary` and `days` can never disagree about a boundary the anchor would
+   *   otherwise have to re-derive
+   * @returns { anyHazard, dimensions, activeDays, windowStart, windowEnd,
+   *   enabledSourceCount, reportingSourceCount, bandDiagnostics: { windowBandCount,
+   *   advisoryCount } } — D-16's seven fields flat and exactly as locked, plus D-20's
+   *   nested `bandDiagnostics` extension
+   */
+  _buildGridSummary(gridDays, windowBand, advisories, sourceHealth, anchorInfo) {
+    void anchorInfo; // parameter-contract only; see JSDoc above
+
+    const dimensionsSeen = new Set();
+    const activeDaysList = [];
+    let anyDayHazard = false;
+
+    for (let d = 1; d <= GRID_DAY_COUNT; d++) {
+      const day = gridDays[String(d)];
+      let dayHasSurvivor = false;
+      for (const entry of day.hazards) {
+        if (entry.suppressedBy !== null) continue;
+        dayHasSurvivor = true;
+        // D-07: an unmapped survivor counts toward `anyHazard` without inventing a
+        // dimension string for `dimensions`.
+        if (entry.dimension !== null) dimensionsSeen.add(entry.dimension);
+      }
+      if (dayHasSurvivor) {
+        anyDayHazard = true;
+        activeDaysList.push(d);
+      }
+    }
+
+    const windowBandCount = Array.isArray(windowBand) ? windowBand.length : 0;
+    const advisoryCount =
+      (Array.isArray(advisories && advisories.spcMD) ? advisories.spcMD.length : 0) +
+      (Array.isArray(advisories && advisories.mpd) ? advisories.mpd.length : 0);
+
+    const anyHazard = anyDayHazard || windowBandCount > 0 || advisoryCount > 0;
+
+    // D-15's fixed taxonomy order, never Object.keys() of a Set (which is
+    // insertion-ordered, not taxonomy-ordered).
+    const dimensions = DIMENSION_ORDER.filter((dimension) => dimensionsSeen.has(dimension));
+
+    let enabledSourceCount = 0;
+    let reportingSourceCount = 0;
+    for (const sourceId of Object.keys(sourceHealth)) {
+      if (sourceHealth[sourceId].enabled) enabledSourceCount++;
+      if (sourceHealth[sourceId].reporting) reportingSourceCount++;
+    }
+
+    return {
+      anyHazard,
+      dimensions,
+      activeDays: activeDaysList,
+      windowStart: gridDays["1"].windowStart,
+      windowEnd: gridDays[String(GRID_DAY_COUNT)].windowEnd,
+      enabledSourceCount,
+      reportingSourceCount,
+      bandDiagnostics: { windowBandCount, advisoryCount }
+    };
+  },
+
+  /**
    * Fetch a GeoJSON URL with ETag/hash caching, returning parsed data or cached result on hit/error.
    * @param url - GeoJSON endpoint URL to fetch
    * @param isValidBody - body-shape validator for the cache-miss branches; defaults to
