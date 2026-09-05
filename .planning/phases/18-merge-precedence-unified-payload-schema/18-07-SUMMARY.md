@@ -151,3 +151,11 @@ None - no external service configuration required.
 ---
 *Phase: 18-merge-precedence-unified-payload-schema*
 *Completed: 2026-09-05*
+
+## Self-Check: PASSED
+
+- FOUND: scripts/probe-payload-resilience.js
+- FOUND: .planning/phases/18-merge-precedence-unified-payload-schema/18-07-SUMMARY.md
+- FOUND: 1975d78 (feat commit, Task 1)
+- FOUND: 6d8fa05 (docs commit, Task 2 mutation inventory)
+- Re-ran suite: PROBE RESULT: 98 passed, 0 failed, 0 skipped
