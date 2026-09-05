@@ -62,7 +62,7 @@
 - [ ] **CFG-02**: User's existing SPC and fire weather configuration continues to work, with the `extended` flag no longer gating the payload shape
 - [x] **PERF-01**: User's Pi issues the new product fetches concurrently rather than sequentially, bounding cold-cache startup latency
 - [x] **PERF-02**: User's ETag/SHA256 cache stays effective, via consistent ArcGIS query-string construction that does not multiply cache keys
-- [ ] **PERF-03**: User sees a measured cold-cache latency figure on target hardware before the milestone closes
+- [x] **PERF-03**: User sees a measured cold-cache latency figure on target hardware before the milestone closes
 
 ### Data Integrity
 
@@ -136,7 +136,7 @@ Deferred to v2.x. Tracked but not in this roadmap.
 | MERGE-03 | Phase 18 | Complete |
 | MERGE-04 | Phase 18 | Complete |
 | RPT-07 | Phase 18 | Complete |
-| PERF-03 | Phase 18 | Pending |
+| PERF-03 | Phase 18 | Complete |
 | RPT-01 | Phase 19 | Pending |
 | RPT-02 | Phase 19 | Pending |
 | RPT-03 | Phase 19 | Pending |
