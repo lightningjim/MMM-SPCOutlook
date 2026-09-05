@@ -261,14 +261,34 @@ Plans:
 **Plans**: 9 plans in 7 waves
 
 Plans:
+**Wave 1**
+
 - [ ] 18-01-PLAN.md — hazardTaxonomy.js: dimension roster, (source,label) map, precedence and no-risk floor tables (wave 1)
 - [ ] 18-02-PLAN.md — SPC grid anchor from VALID/EXPIRE, the fourteen grid-day windows, days skeleton in the payload (wave 1)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
 - [ ] 18-03-PLAN.md — runner side-channels and SPC-grid re-bucketing for wpc-hazards and heatrisk (wave 2)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
 - [ ] 18-04-PLAN.md — straight-through grid entries for spc-convective, spc-fire, wpc-ero, wpc-wssi, plus per-source stale attribution (wave 3)
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
 - [ ] 18-05-PLAN.md — per-day precedence resolver, summary rollup, per-source health, JSDoc contract (wave 4)
+
+**Wave 5** *(blocked on Wave 4 completion)*
+
 - [ ] 18-06-PLAN.md — PERF-03 timing instrument: backend interval, per-product breakdown, cold-start and wall-clock logs (wave 5)
 - [ ] 18-07-PLAN.md — MERGE-01 probe scenarios plus their mutation proofs (wave 5)
+
+**Wave 6** *(blocked on Wave 5 completion)*
+
 - [ ] 18-08-PLAN.md — MERGE-02/03/04, D-07, summary-verdict and legacy-parity probe scenarios plus mutation proofs (wave 6)
+
+**Wave 7** *(blocked on Wave 6 completion)*
+
 - [ ] 18-09-PLAN.md — live payload capture, per-criterion validation, local PERF-03 figures, human checkpoint (wave 7)
 
 ### Phase 19: Unified Day Report — getDom() Rewrite
@@ -333,19 +353,25 @@ Highest value first:
   `HAZARDS_NOW_MS` to `Date.UTC(2026,7,26,13,0)`, now more than a day behind the real clock, so
   a warm-cache-plus-failure hazards scenario would take a different branch today than when it
   was authored. It passes only because no hazards scenario reaches `_isWithinStaleWindow`.
+
 - **WR-02** — D-09's "hard exclusion with no config override" is exact-string `.includes()`, so
   `"Flooding Likely "` with a trailing space renders. `winterImpact.toValue` one row above
   already folds before lookup and calls this exact trap WSSI-02.
+
 - **WR-01** — `showDrought` is baked into the URL-keyed cache on the miss path only, with no
   toggle dimension and no frontend-side drought term. Reachable via the shared-`node_helper`
   multi-instance case this file documents at length.
+
 - **WR-03** — `_bucketHazardMatch` hardcodes the day span `3`/`14` while the payload loop reads
   `row.dayRangeTotal`; the bucketer isn't even passed `row`. This is the two-places-declare-one-span
   defect `daySpanOf`'s own 20-line comment condemns.
+
 - **WR-06** — remote-controlled unbounded growth in the unmapped-label ledger
   (`_loggedUnmappedHazardLabels`) and the window-band entry count. Runs on a Raspberry Pi.
+
 - **WR-07** — `fetchGeoJsonCached` reads an unbounded response body; Phase 16 added six new URLs
   to that path.
+
 - **IN-01** — the window-band dedupe key concatenates a remote-controlled label with `|`.
 
 Operator helper `scripts/hazards-at.js` (added during the Phase 16 UAT, not a production path):
@@ -353,7 +379,9 @@ Operator helper `scripts/hazards-at.js` (added during the Phase 16 UAT, not a pr
 - **WR-08** — reports "per-day grid" for Precipitation features that D-04 routes to the band.
 - **WR-09** — prints `fresh (no warning)` when `idp_filedate` is missing, because `NaN > 84` is
   `false`.
+
 - **IN-02** — diverges from the codebase's transport and naming conventions.
 
 Plans:
+
 - [ ] TBD (promote with /bm:review-backlog when ready)
