@@ -8754,6 +8754,731 @@ const scenarios = [
         turfStub.pointInPolygon = originalPointInPolygon;
       }
     }
+  },
+  {
+    // D-07: an unrecognized wpc-hazards label passes through with dimension: null,
+    // never suppresses and is never suppressed (a two-sided claim), and is recorded in
+    // sources['wpc-hazards'].unmappedLabels.
+    // Mutation to prove RED: make _addHazardsOutlookGridEntries drop entries whose
+    // dimension is null.
+    name: "merge-unmapped-label-passes-through-and-is-recorded",
+    run: async (helper) => {
+      resetHelper(helper);
+      resetLogs();
+      const originalPointInPolygon = turfStub.pointInPolygon;
+      turfStub.pointInPolygon = () => true;
+      try {
+        helper._nowMs = () => MERGE_NOW_MS;
+        const toggles = { showHazardsOutlook: true };
+        helper._products = toggles;
+        const { start, end } = mergeGridWindow(3);
+        installHttp(helper, hazardsRoutes({ 4: () => httpResponse({
+          body: hazardsCollection([hazardsFeature({ label: "Volcanic Ash", startDate: start, endDate: end })]),
+          etag: "merge-unmapped-v1"
+        }) }));
+        const out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, toggles);
+        assertPayloadIntact(out);
+        assertHazardsBlockIntact(out);
+
+        // Precondition guard: the label actually reached the legacy day grid, proving
+        // it was not filtered out somewhere upstream of the grid-entry builder.
+        if (!out.hazardsOutlook.day3.hazards.some((h) => h.label === "Volcanic Ash")) {
+          throw new Error(`precondition failed: "Volcanic Ash" never reached the legacy hazardsOutlook.day3 block: ${JSON.stringify(out.hazardsOutlook.day3.hazards)}`);
+        }
+
+        const unmapped = out.days["3"].hazards.find((h) => h.source === "wpc-hazards" && h.label === "Volcanic Ash");
+        if (!unmapped || unmapped.dimension !== null) {
+          throw new Error(`D-07: expected a "Volcanic Ash" entry with dimension null on day 3, got ${JSON.stringify(unmapped)}`);
+        }
+        if (unmapped.text !== "Volcanic Ash") {
+          throw new Error(`D-07: expected text to carry the verbatim label, got ${JSON.stringify(unmapped.text)}`);
+        }
+        if (unmapped.suppressedBy !== null) {
+          throw new Error(`D-07: expected the unmapped entry to never be suppressed, got suppressedBy ${JSON.stringify(unmapped.suppressedBy)}`);
+        }
+        if (!out.sources["wpc-hazards"].unmappedLabels.includes("Volcanic Ash")) {
+          throw new Error(`D-07: expected "Volcanic Ash" in sources['wpc-hazards'].unmappedLabels, got ${JSON.stringify(out.sources["wpc-hazards"].unmappedLabels)}`);
+        }
+
+        // Control: adding an above-floor SPC convective tier on the SAME day must not
+        // suppress the unmapped entry either -- D-07's "never suppresses and is never
+        // suppressed" is two-sided, and a one-sided assertion would half-prove it.
+        resetHelper(helper);
+        resetLogs();
+        turfStub.pointInPolygon = () => true;
+        helper._nowMs = () => MERGE_NOW_MS;
+        helper._products = toggles;
+        installHttp(helper, [
+          ["day3otlk_cat.lyr.geojson", () => httpResponse({ body: SPC_SLGT_BODY, etag: "merge-unmapped-spc-day3-v1" })],
+          ...hazardsRoutes({ 4: () => httpResponse({
+            body: hazardsCollection([hazardsFeature({ label: "Volcanic Ash", startDate: start, endDate: end })]),
+            etag: "merge-unmapped-control-v1"
+          }) })
+        ]);
+        const controlOut = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, toggles);
+        assertPayloadIntact(controlOut);
+        const controlUnmapped = controlOut.days["3"].hazards.find((h) => h.source === "wpc-hazards" && h.label === "Volcanic Ash");
+        if (!controlUnmapped || controlUnmapped.suppressedBy !== null) {
+          throw new Error(`control: expected the unmapped entry to still survive alongside an active convective tier, got ${JSON.stringify(controlUnmapped)}`);
+        }
+      } finally {
+        turfStub.pointInPolygon = originalPointInPolygon;
+      }
+    }
+  },
+  {
+    // D-07: an unmapped survivor counts toward summary.anyHazard without inventing a
+    // dimension string.
+    // Mutation to prove RED: make _buildGridSummary require a non-null dimension for
+    // anyHazard.
+    name: "merge-unmapped-label-counts-toward-anyhazard",
+    run: async (helper) => {
+      resetHelper(helper);
+      resetLogs();
+      const originalPointInPolygon = turfStub.pointInPolygon;
+      turfStub.pointInPolygon = () => true;
+      try {
+        helper._nowMs = () => MERGE_NOW_MS;
+        const toggles = { showHazardsOutlook: true };
+        helper._products = toggles;
+        const { start, end } = mergeGridWindow(3);
+        installHttp(helper, hazardsRoutes({ 4: () => httpResponse({
+          body: hazardsCollection([hazardsFeature({ label: "Volcanic Ash", startDate: start, endDate: end })]),
+          etag: "merge-unmapped-anyhazard-v1"
+        }) }));
+        const out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, toggles);
+        assertPayloadIntact(out);
+        assertHazardsBlockIntact(out);
+
+        // Precondition guard: no dimension is attributed anywhere in the payload, so
+        // the verdict cannot be explained by a mapped hazard sneaking in.
+        if (out.summary.dimensions.length !== 0) {
+          throw new Error(`precondition failed: expected summary.dimensions empty, got ${JSON.stringify(out.summary.dimensions)}`);
+        }
+        if (out.summary.anyHazard !== true) {
+          throw new Error(`D-07: expected summary.anyHazard true from an unmapped-only survivor, got ${JSON.stringify(out.summary.anyHazard)}`);
+        }
+
+        // Control: with the label removed, anyHazard reads false, proving the gate is
+        // not stuck true.
+        resetHelper(helper);
+        resetLogs();
+        turfStub.pointInPolygon = () => true;
+        helper._nowMs = () => MERGE_NOW_MS;
+        helper._products = toggles;
+        installHttp(helper, hazardsRoutes());
+        const controlOut = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, toggles);
+        assertPayloadIntact(controlOut);
+        if (controlOut.summary.anyHazard !== false) {
+          throw new Error(`control: expected summary.anyHazard false with the unmapped label removed, got ${JSON.stringify(controlOut.summary.anyHazard)}`);
+        }
+      } finally {
+        turfStub.pointInPolygon = originalPointInPolygon;
+      }
+    }
+  },
+  {
+    // RPT-07/D-20: a window-band-only state must not read as an all-clear -- closes,
+    // at the payload level, the Phase 16 deferred "live Hazards-Outlook no-risk-gate"
+    // item.
+    // Mutation to prove RED: drop the window-band term from anyHazard's union.
+    name: "merge-summary-band-only-is-not-an-all-clear",
+    run: async (helper) => {
+      resetHelper(helper);
+      resetLogs();
+      const originalPointInPolygon = turfStub.pointInPolygon;
+      turfStub.pointInPolygon = () => true;
+      try {
+        helper._nowMs = () => MERGE_NOW_MS;
+        const toggles = { showHazardsOutlook: true };
+        helper._products = toggles;
+        const { start, end } = mergeGridWindow(3);
+        installHttp(helper, hazardsRoutes({ 1: () => httpResponse({
+          body: hazardsCollection([hazardsFeature({ label: "Frost/Freeze", startDate: start, endDate: end })]),
+          etag: "merge-summary-band-v1"
+        }) }));
+        const out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, toggles);
+        assertPayloadIntact(out);
+        assertHazardsBlockIntact(out);
+
+        // Precondition guard: every day-scoped grid entry is genuinely empty, so the
+        // verdict is attributable to the band term and nothing else (line 4903's
+        // isolation idiom).
+        for (let d = 1; d <= 14; d++) {
+          if (out.days[String(d)].hazards.length !== 0) {
+            throw new Error(`precondition failed: day ${d} is not empty, so this scenario would pass through the day-grid gate term and prove nothing about the window-band term: ${JSON.stringify(out.days[String(d)].hazards)}`);
+          }
+        }
+
+        if (out.summary.anyHazard !== true) {
+          throw new Error(`RPT-07/D-20: expected summary.anyHazard true with a window-band entry present, got ${JSON.stringify(out.summary.anyHazard)}`);
+        }
+        if (out.summary.bandDiagnostics.windowBandCount !== 1) {
+          throw new Error(`D-20: expected summary.bandDiagnostics.windowBandCount 1, got ${JSON.stringify(out.summary.bandDiagnostics)}`);
+        }
+
+        // Control: with the band entry removed, anyHazard reads false, proving the
+        // gate is not stuck true.
+        resetHelper(helper);
+        resetLogs();
+        turfStub.pointInPolygon = () => true;
+        helper._nowMs = () => MERGE_NOW_MS;
+        helper._products = toggles;
+        installHttp(helper, hazardsRoutes());
+        const controlOut = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, toggles);
+        assertPayloadIntact(controlOut);
+        if (controlOut.summary.anyHazard !== false) {
+          throw new Error(`control: expected summary.anyHazard false with no band entry, got ${JSON.stringify(controlOut.summary.anyHazard)}`);
+        }
+      } finally {
+        turfStub.pointInPolygon = originalPointInPolygon;
+      }
+    }
+  },
+  {
+    // RPT-07/D-20: an advisory-only state must not read as an all-clear -- the backend
+    // counterpart of the live Phase 15 defect where the getDom no-risk gate made MPD
+    // invisible.
+    // Mutation to prove RED: drop the advisories term from anyHazard's union.
+    name: "merge-summary-advisory-only-is-not-an-all-clear",
+    requires: "kml-deps",
+    run: async (helper) => {
+      resetHelper(helper);
+      resetLogs();
+      const originalPointInPolygon = turfStub.pointInPolygon;
+      turfStub.pointInPolygon = () => true;
+      try {
+        const toggles = { showSPCMD: true, showMPD: false, showExcessiveRain: false, showWinterImpact: false };
+        helper._products = toggles;
+        const memberUrl = "https://www.spc.noaa.gov/products/md/MD3001.kmz";
+        const indexBuffer = kmzOf({ "activemd.kml": activeIndexKml([memberUrl]) });
+        const memberBuffer = kmzOf({ "MD3001.kml": mdKml("MD 3001") });
+        installHttp(helper, advisoryRoutes({
+          index: { url: PRODUCT_REGISTRY.spcMD.discoveryUrl, buffer: indexBuffer },
+          members: [{ url: memberUrl, buffer: memberBuffer }]
+        }));
+        const out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, toggles);
+        assertPayloadIntact(out);
+
+        // Precondition guard: every day-scoped grid entry and the window band are
+        // genuinely empty, so the verdict is attributable to the advisory term and
+        // nothing else, and the fixture really did produce an active MD.
+        for (let d = 1; d <= 14; d++) {
+          if (out.days[String(d)].hazards.length !== 0) {
+            throw new Error(`precondition failed: day ${d} is not empty: ${JSON.stringify(out.days[String(d)].hazards)}`);
+          }
+        }
+        if (out.hazardsOutlook.windowBand.length !== 0) {
+          throw new Error(`precondition failed: expected an empty window band, got ${JSON.stringify(out.hazardsOutlook.windowBand)}`);
+        }
+        if (out.advisories.spcMD.length !== 1) {
+          throw new Error(`precondition failed: expected exactly 1 SPC MD entry, got ${out.advisories.spcMD.length}`);
+        }
+
+        if (out.summary.anyHazard !== true) {
+          throw new Error(`RPT-07/D-20: expected summary.anyHazard true with an advisory-only state, got ${JSON.stringify(out.summary.anyHazard)}`);
+        }
+        if (out.summary.bandDiagnostics.advisoryCount !== 1) {
+          throw new Error(`D-20: expected summary.bandDiagnostics.advisoryCount 1, got ${JSON.stringify(out.summary.bandDiagnostics)}`);
+        }
+
+        // Control: with no MD active, anyHazard reads false, proving the gate is not
+        // stuck true.
+        resetHelper(helper);
+        resetLogs();
+        turfStub.pointInPolygon = () => true;
+        helper._products = toggles;
+        installHttp(helper, advisoryRoutes({
+          index: { url: PRODUCT_REGISTRY.spcMD.discoveryUrl, buffer: kmzOf({ "activemd.kml": activeIndexKml([]) }) }
+        }));
+        const controlOut = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, toggles);
+        assertPayloadIntact(controlOut);
+        if (controlOut.summary.anyHazard !== false) {
+          throw new Error(`control: expected summary.anyHazard false with no active MD, got ${JSON.stringify(controlOut.summary.anyHazard)}`);
+        }
+      } finally {
+        turfStub.pointInPolygon = originalPointInPolygon;
+      }
+    }
+  },
+  {
+    // sources[].reporting closing the wave-2 accumulator wiring: heatrisk and
+    // wpc-hazards both populate reportedDays/activeDays in wave 2 (plan 18-03), while
+    // the other four sources populate them in wave 3 (plan 18-04) -- nothing else in
+    // this suite proves the wave-2 half is wired at all.
+    // Mutation to prove RED: delete the notes.noteReported("heatrisk", gridDay) call
+    // in _addHeatRiskGridEntries -- the exact wiring gap the plan-checker found.
+    name: "merge-sources-reporting-true-for-wave2-sources",
+    run: async (helper) => {
+      resetHelper(helper);
+      resetLogs();
+      const originalPointInPolygon = turfStub.pointInPolygon;
+      turfStub.pointInPolygon = () => true;
+      try {
+        helper._nowMs = () => MERGE_NOW_MS;
+        const onToggles = { showHeatRisk: true, showHazardsOutlook: true };
+        helper._products = onToggles;
+        const { start, end } = mergeGridWindow(3);
+        const items = [heatRiskCatalogItem({ name: "HeatRisk_3_Mercator", validtime: MERGE_NOMINAL_MS + 2 * 86400000, filedate: MERGE_NOW_MS - 30 * 60 * 1000 })];
+        installHttp(helper, [
+          [HEATRISK_URL, () => httpResponse({ body: heatRiskIdentifyResponse({ items, values: ["2"] }), etag: "merge-sources-heat-v1" })],
+          ...hazardsRoutes({ 4: () => httpResponse({
+            body: hazardsCollection([hazardsFeature({ label: "High Winds", startDate: start, endDate: end })]),
+            etag: "merge-sources-wpc-v1"
+          }) })
+        ]);
+        const onOut = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, onToggles);
+        assertPayloadIntact(onOut);
+        assertHeatRiskBlockIntact(onOut);
+        assertHazardsBlockIntact(onOut);
+
+        // Precondition guard: both entries actually reached day 3, so a false
+        // `reporting` cannot be explained by the fixture producing no data.
+        const heat = onOut.days["3"].hazards.find((h) => h.source === "heatrisk");
+        const wpc = onOut.days["3"].hazards.find((h) => h.source === "wpc-hazards" && h.label === "High Winds");
+        if (!heat || !wpc) {
+          throw new Error(`precondition failed: expected both heatrisk and wpc-hazards entries on day 3, got ${JSON.stringify(onOut.days["3"].hazards)}`);
+        }
+
+        if (onOut.sources.heatrisk.reporting !== true || onOut.sources["wpc-hazards"].reporting !== true) {
+          throw new Error(`expected sources.heatrisk.reporting and sources['wpc-hazards'].reporting both true, got ${JSON.stringify({ heatrisk: onOut.sources.heatrisk.reporting, wpcHazards: onOut.sources["wpc-hazards"].reporting })}`);
+        }
+        if (!onOut.sources.heatrisk.reportedDays.includes(3) || !onOut.sources["wpc-hazards"].reportedDays.includes(3)) {
+          throw new Error(`expected both sources' reportedDays to include day 3, got ${JSON.stringify({ heatrisk: onOut.sources.heatrisk.reportedDays, wpcHazards: onOut.sources["wpc-hazards"].reportedDays })}`);
+        }
+        const independentCount = Object.keys(onOut.sources).filter((id) => onOut.sources[id].reporting === true).length;
+        if (onOut.summary.reportingSourceCount !== independentCount) {
+          throw new Error(`expected summary.reportingSourceCount (${onOut.summary.reportingSourceCount}) to equal independently-counted reporting sources (${independentCount})`);
+        }
+
+        // Control: with both toggles off, the same two `reporting` values are false
+        // and reportingSourceCount drops by exactly two -- proving the field tracks
+        // real reporting rather than being hardcoded either way.
+        resetHelper(helper);
+        resetLogs();
+        turfStub.pointInPolygon = () => true;
+        helper._nowMs = () => MERGE_NOW_MS;
+        const offToggles = {};
+        helper._products = offToggles;
+        installHttp(helper, hazardsRoutes());
+        const offOut = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, offToggles);
+        assertPayloadIntact(offOut);
+        if (offOut.sources.heatrisk.reporting !== false || offOut.sources["wpc-hazards"].reporting !== false) {
+          throw new Error(`control: expected both sources' reporting false with both toggles off, got ${JSON.stringify({ heatrisk: offOut.sources.heatrisk.reporting, wpcHazards: offOut.sources["wpc-hazards"].reporting })}`);
+        }
+        if (offOut.summary.reportingSourceCount !== onOut.summary.reportingSourceCount - 2) {
+          throw new Error(`control: expected reportingSourceCount to drop by exactly two, got ${offOut.summary.reportingSourceCount} vs ${onOut.summary.reportingSourceCount}`);
+        }
+      } finally {
+        turfStub.pointInPolygon = originalPointInPolygon;
+      }
+    }
+  },
+  {
+    // spc-fire's D-14 absent-versus-below-floor concern applies exactly as it does to
+    // spc-convective and heatrisk, and it is the last structurally identical sibling
+    // left unproven -- the same asymmetry that hid the original accumulator gap. Note:
+    // spc-fire has no config toggle (enabled is hardcoded true), so the toggle-off
+    // control used above does not exist here; the answered-no-area control below is
+    // the stronger control anyway.
+    // Mutation to prove RED: in _addSpcGridEntries, move the noteReported("spc-fire",
+    // N) call inside the `value > 0` branch, so ANSWERED-NO-AREA collapses into ABSENT.
+    // The control assertion is what must catch this -- the primary assertion still
+    // passes under the mutation.
+    name: "merge-sources-spc-fire-reporting-tracks-answering-not-finding",
+    run: async (helper) => {
+      resetHelper(helper);
+      resetLogs();
+      const originalPointInPolygon = turfStub.pointInPolygon;
+      turfStub.pointInPolygon = () => true;
+      try {
+        helper._nowMs = () => MERGE_NOW_MS;
+        helper._products = {};
+        installHttp(helper, [
+          ["day1fw_windrh.lyr.geojson", () => httpResponse({ body: FIRE_CRIT_BODY, etag: "merge-sources-fire-crit-v1" })],
+          ["day1fw_dryt.lyr.geojson", () => httpResponse({ body: FIRE_CRIT_BODY, etag: "merge-sources-fire-crit-v2" })],
+          ...hazardsRoutes()
+        ]);
+        const out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, true, {});
+        assertPayloadIntact(out);
+
+        // Precondition guard: the legacy fireWeather block actually resolved a real
+        // fire reading, so a false `reporting` cannot be explained by the fixture
+        // producing no fire data at all.
+        if (!(out.fireWeather.day1Risk > 0)) {
+          throw new Error(`precondition failed: expected fireWeather.day1Risk > 0, got ${JSON.stringify(out.fireWeather.day1Risk)}`);
+        }
+
+        if (out.sources["spc-fire"].reporting !== true) {
+          throw new Error(`expected sources['spc-fire'].reporting true, got ${JSON.stringify(out.sources["spc-fire"].reporting)}`);
+        }
+        if (!out.sources["spc-fire"].reportedDays.includes(1) || !out.sources["spc-fire"].activeDays.includes(1)) {
+          throw new Error(`expected sources['spc-fire'].reportedDays and activeDays to both include day 1, got ${JSON.stringify(out.sources["spc-fire"])}`);
+        }
+        const fireEntries = out.days["1"].hazards.filter((h) => h.source === "spc-fire");
+        if (fireEntries.length !== 1 || fireEntries[0].dimension !== "fire") {
+          throw new Error(`expected exactly one spc-fire entry with dimension fire on day 1, got ${JSON.stringify(fireEntries)}`);
+        }
+
+        // Control: the SAME day evaluating to no fire weather area (value 0, a real
+        // "we looked, nothing here" answer) -- reporting is STILL true and
+        // reportedDays still contains 1, while activeDays does not and no spc-fire
+        // entry exists.
+        resetHelper(helper);
+        resetLogs();
+        turfStub.pointInPolygon = () => true;
+        helper._nowMs = () => MERGE_NOW_MS;
+        helper._products = {};
+        installHttp(helper, [
+          ["day1fw_windrh.lyr.geojson", () => httpResponse({ body: EMPTY_FEATURE_COLLECTION, etag: "merge-sources-fire-noarea-v1" })],
+          ["day1fw_dryt.lyr.geojson", () => httpResponse({ body: EMPTY_FEATURE_COLLECTION, etag: "merge-sources-fire-noarea-v2" })],
+          ...hazardsRoutes()
+        ]);
+        const controlOut = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, true, {});
+        assertPayloadIntact(controlOut);
+        if (controlOut.fireWeather.day1Risk !== 0) {
+          throw new Error(`control precondition failed: expected fireWeather.day1Risk 0 (answered, no area), got ${JSON.stringify(controlOut.fireWeather.day1Risk)}`);
+        }
+        if (controlOut.sources["spc-fire"].reporting !== true) {
+          throw new Error(`control: expected sources['spc-fire'].reporting to STAY true on an answered-no-area day, got ${JSON.stringify(controlOut.sources["spc-fire"].reporting)}`);
+        }
+        if (!controlOut.sources["spc-fire"].reportedDays.includes(1)) {
+          throw new Error(`control: expected sources['spc-fire'].reportedDays to still include day 1, got ${JSON.stringify(controlOut.sources["spc-fire"].reportedDays)}`);
+        }
+        if (controlOut.sources["spc-fire"].activeDays.includes(1)) {
+          throw new Error(`control: expected sources['spc-fire'].activeDays to NOT include day 1 on an answered-no-area day, got ${JSON.stringify(controlOut.sources["spc-fire"].activeDays)}`);
+        }
+        if (controlOut.days["1"].hazards.some((h) => h.source === "spc-fire")) {
+          throw new Error(`control: expected no spc-fire entry on day 1 for an answered-no-area day, got ${JSON.stringify(controlOut.days["1"].hazards)}`);
+        }
+      } finally {
+        turfStub.pointInPolygon = originalPointInPolygon;
+      }
+    }
+  },
+  {
+    // spc-fire's three reachable states, stated explicitly so a reader does not have
+    // to re-derive them:
+    //   ACTIVE           value > 0 (ELEV/CRIT/EXTM) -- in reportedDays and activeDays
+    //   ANSWERED-NO-AREA value === 0 on a day that was fetched -- in reportedDays
+    //                     only. A real reading: evaluated, no fire weather area covers
+    //                     this location. fireRiskToValue has exactly three tiers, all
+    //                     >= 1, so this is the source's entire below-floor space.
+    //   ABSENT           grid days 9-14 always, plus days 3-8 under extended: false --
+    //                     in neither accumulator.
+    // Mutation to prove RED: make _addSpcGridEntries call noteReported("spc-fire", N)
+    // for all fourteen grid days regardless of this source's day-8 coverage boundary.
+    name: "merge-sources-spc-fire-absent-day-is-not-the-floor-path",
+    run: async (helper) => {
+      resetHelper(helper);
+      resetLogs();
+      const originalPointInPolygon = turfStub.pointInPolygon;
+      turfStub.pointInPolygon = () => true;
+      try {
+        helper._nowMs = () => MERGE_NOW_MS;
+        const toggles = { showHazardsOutlook: true };
+        helper._products = toggles;
+        const day3Window = mergeGridWindow(3);
+        const day4Window = mergeGridWindow(4);
+        const day9Window = mergeGridWindow(9);
+        installHttp(helper, [
+          ["day3fw_windrhcat.lyr.geojson", () => httpResponse({
+            body: { type: "FeatureCollection", features: [{ type: "Feature", properties: { DN: 8 }, geometry: { type: "Polygon", coordinates: [SAMPLE_RING] } }] },
+            etag: "merge-sources-fire-absent-day3-v1"
+          })],
+          ...hazardsRoutes({
+            4: () => httpResponse({
+              body: hazardsCollection([
+                hazardsFeature({ label: "Critical Wildfire Risk", startDate: day3Window.start, endDate: day3Window.end }),
+                hazardsFeature({ label: "Critical Wildfire Risk", startDate: day4Window.start, endDate: day4Window.end })
+              ]),
+              etag: "merge-sources-fire-absent-wpc-4-v1"
+            }),
+            6: () => httpResponse({
+              body: hazardsCollection([hazardsFeature({ label: "Critical Wildfire Risk", startDate: day9Window.start, endDate: day9Window.end })]),
+              etag: "merge-sources-fire-absent-wpc-6-v1"
+            })
+          })
+        ]);
+        const out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, true, toggles);
+        assertPayloadIntact(out);
+        assertHazardsBlockIntact(out);
+
+        // Precondition guard: spc-fire genuinely reported for at least one day (the
+        // accumulator is populated at all), but NOT for day 9 -- proving this is the
+        // ABSENT path, not ANSWERED-NO-AREA.
+        if (out.sources["spc-fire"].reportedDays.length === 0) {
+          throw new Error(`precondition failed: sources['spc-fire'].reportedDays is empty: ${JSON.stringify(out.sources["spc-fire"])}`);
+        }
+        if (out.sources["spc-fire"].reportedDays.includes(9)) {
+          throw new Error(`precondition failed: sources['spc-fire'].reportedDays includes day 9, so this is not the absent path: ${JSON.stringify(out.sources["spc-fire"].reportedDays)}`);
+        }
+
+        const day9Entry = out.days["9"].hazards.find((h) => h.source === "wpc-hazards" && h.label === "Critical Wildfire Risk");
+        if (!day9Entry || day9Entry.suppressedBy !== null) {
+          throw new Error(`expected the wpc-hazards Critical Wildfire Risk entry on day 9 (spc-fire absent) to survive with suppressedBy null, got ${JSON.stringify(day9Entry)}`);
+        }
+
+        // Control: on grid day 3, where SPC fire evaluates to CRIT, the same label IS
+        // suppressed -- the ABSENT and ACTIVE branches side by side in one scenario.
+        const day3Wpc = out.days["3"].hazards.find((h) => h.source === "wpc-hazards" && h.label === "Critical Wildfire Risk");
+        if (!day3Wpc || day3Wpc.suppressedBy !== "spc-fire") {
+          throw new Error(`control: expected the day-3 wpc-hazards Critical Wildfire Risk entry suppressedBy "spc-fire" (ACTIVE), got ${JSON.stringify(day3Wpc)}`);
+        }
+        // Second control assertion: grid day 4 with SPC fire at ANSWERED-NO-AREA --
+        // the WPC label survives, while that day IS in reportedDays, distinguishing
+        // the third state from the first two.
+        const day4Wpc = out.days["4"].hazards.find((h) => h.source === "wpc-hazards" && h.label === "Critical Wildfire Risk");
+        if (!day4Wpc || day4Wpc.suppressedBy !== null) {
+          throw new Error(`control: expected the day-4 wpc-hazards Critical Wildfire Risk entry to survive (ANSWERED-NO-AREA), got ${JSON.stringify(day4Wpc)}`);
+        }
+        if (!out.sources["spc-fire"].reportedDays.includes(4)) {
+          throw new Error(`control: expected sources['spc-fire'].reportedDays to include day 4 (answered, no area), got ${JSON.stringify(out.sources["spc-fire"].reportedDays)}`);
+        }
+        if (out.sources["spc-fire"].activeDays.includes(4)) {
+          throw new Error(`control: expected sources['spc-fire'].activeDays to NOT include day 4, got ${JSON.stringify(out.sources["spc-fire"].activeDays)}`);
+        }
+      } finally {
+        turfStub.pointInPolygon = originalPointInPolygon;
+      }
+    }
+  },
+  {
+    // The heatrisk counterpart to merge-precedence-spc-absent-day-is-not-the-floor-path,
+    // closing the asymmetry that hid the wave-2 accumulator gap: heatrisk is rank 1
+    // for the heat dimension and stops at day 7, so days 8-14 are the one non-SPC
+    // place where "rank 1 never covered this day" decides an outcome.
+    // Mutation to prove RED: make _addHeatRiskGridEntries call
+    // notes.noteReported("heatrisk", d) for all fourteen grid days regardless of
+    // coverage.
+    name: "merge-sources-heatrisk-absent-day-is-not-the-floor-path",
+    run: async (helper) => {
+      resetHelper(helper);
+      resetLogs();
+      const originalPointInPolygon = turfStub.pointInPolygon;
+      turfStub.pointInPolygon = () => true;
+      try {
+        helper._nowMs = () => MERGE_NOW_MS;
+        const toggles = { showHeatRisk: true, showHazardsOutlook: true };
+        helper._products = toggles;
+        const heatItems = [];
+        const heatValues = [];
+        for (let d = 1; d <= 7; d++) {
+          heatItems.push(heatRiskCatalogItem({ name: `HeatRisk_${d}_Mercator`, validtime: MERGE_NOMINAL_MS + (d - 1) * 86400000, filedate: MERGE_NOW_MS - 30 * 60 * 1000 }));
+          heatValues.push(d === 3 ? "2" : "1");
+        }
+        const day3Window = mergeGridWindow(3);
+        const day8Window = mergeGridWindow(8);
+        installHttp(helper, [
+          [HEATRISK_URL, () => httpResponse({ body: heatRiskIdentifyResponse({ items: heatItems, values: heatValues }), etag: "merge-sources-heat-absent-v1" })],
+          ...hazardsRoutes({
+            4: () => httpResponse({
+              body: hazardsCollection([hazardsFeature({ label: "Excessive Heat", startDate: day3Window.start, endDate: day3Window.end })]),
+              etag: "merge-sources-heat-absent-wpc4-v1"
+            }),
+            6: () => httpResponse({
+              body: hazardsCollection([hazardsFeature({ label: "Excessive Heat", startDate: day8Window.start, endDate: day8Window.end })]),
+              etag: "merge-sources-heat-absent-wpc6-v1"
+            })
+          })
+        ]);
+        const out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, toggles);
+        assertPayloadIntact(out);
+        assertHeatRiskBlockIntact(out);
+        assertHazardsBlockIntact(out);
+
+        // Precondition guard: heatrisk genuinely reported for at least one day (the
+        // accumulator is populated at all), but NOT for day 8 -- proving this is the
+        // absent path, not a below-floor reading.
+        if (out.sources.heatrisk.reportedDays.length === 0) {
+          throw new Error(`precondition failed: sources.heatrisk.reportedDays is empty: ${JSON.stringify(out.sources.heatrisk)}`);
+        }
+        if (out.sources.heatrisk.reportedDays.includes(8)) {
+          throw new Error(`precondition failed: sources.heatrisk.reportedDays includes day 8, so this is not the absent path: ${JSON.stringify(out.sources.heatrisk.reportedDays)}`);
+        }
+
+        const day8Wpc = out.days["8"].hazards.find((h) => h.source === "wpc-hazards" && h.label === "Excessive Heat");
+        if (!day8Wpc || day8Wpc.suppressedBy !== null) {
+          throw new Error(`expected the wpc-hazards Excessive Heat entry on day 8 (heatrisk absent) to survive with suppressedBy null, got ${JSON.stringify(day8Wpc)}`);
+        }
+
+        // Control: on grid day 3 (within HeatRisk's 1-7 span), where HeatRisk reports
+        // category 2, the same label IS suppressed -- the two branches side by side.
+        const day3Wpc = out.days["3"].hazards.find((h) => h.source === "wpc-hazards" && h.label === "Excessive Heat");
+        if (!day3Wpc || day3Wpc.suppressedBy !== "heatrisk") {
+          throw new Error(`control: expected the day-3 wpc-hazards Excessive Heat entry suppressedBy "heatrisk", got ${JSON.stringify(day3Wpc)}`);
+        }
+      } finally {
+        turfStub.pointInPolygon = originalPointInPolygon;
+      }
+    }
+  },
+  {
+    // D-16: the three-way empty-state distinction -- all-quiet is genuinely different
+    // from all-failed and all-disabled, and RPT-05's empty state must only fire on the
+    // first.
+    // Mutation to prove RED: make anyHazard unconditionally true.
+    name: "merge-summary-all-quiet-is-an-all-clear",
+    run: async (helper) => {
+      resetHelper(helper);
+      resetLogs();
+      const originalPointInPolygon = turfStub.pointInPolygon;
+      turfStub.pointInPolygon = () => true;
+      try {
+        helper._nowMs = () => MERGE_NOW_MS;
+        const toggles = { showExcessiveRain: true, showWinterImpact: true, showHazardsOutlook: true, showHeatRisk: true };
+        helper._products = toggles;
+        // hazardsRoutes()'s own HEATRISK_URL default (okEmptyHeatRisk) is a HEALTHY
+        // category-1 response, not a quiet one -- an all-quiet fixture must override
+        // it with a genuinely below-floor reading on every day.
+        const quietHeatItems = [];
+        const quietHeatValues = [];
+        for (let d = 1; d <= 7; d++) {
+          quietHeatItems.push(heatRiskCatalogItem({ name: `HeatRisk_${d}_Mercator`, validtime: MERGE_NOMINAL_MS + (d - 1) * 86400000, filedate: MERGE_NOW_MS - 30 * 60 * 1000 }));
+          quietHeatValues.push("0");
+        }
+        installHttp(helper, [
+          [HEATRISK_URL, () => httpResponse({ body: heatRiskIdentifyResponse({ items: quietHeatItems, values: quietHeatValues }), etag: "merge-summary-all-quiet-heat-v1" })],
+          ...hazardsRoutes()
+        ]);
+        const out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, toggles);
+        assertPayloadIntact(out);
+        assertHazardsBlockIntact(out);
+        assertHeatRiskBlockIntact(out);
+
+        // Precondition guard: this is genuinely all-quiet, not all-failed -- at least
+        // one source actually reported this poll.
+        if (!(out.summary.reportingSourceCount > 0)) {
+          throw new Error(`precondition failed: expected summary.reportingSourceCount > 0, got ${JSON.stringify(out.summary.reportingSourceCount)}`);
+        }
+
+        if (out.summary.anyHazard !== false) {
+          throw new Error(`expected summary.anyHazard false with every product quiet, got ${JSON.stringify(out.summary.anyHazard)}`);
+        }
+        if (out.summary.dimensions.length !== 0 || out.summary.activeDays.length !== 0) {
+          throw new Error(`expected summary.dimensions and summary.activeDays both empty, got ${JSON.stringify({ dimensions: out.summary.dimensions, activeDays: out.summary.activeDays })}`);
+        }
+
+        // Control: this is not all-disabled either -- at least one source is enabled.
+        if (!(out.summary.enabledSourceCount > 0)) {
+          throw new Error(`control: expected summary.enabledSourceCount > 0, got ${JSON.stringify(out.summary.enabledSourceCount)}`);
+        }
+      } finally {
+        turfStub.pointInPolygon = originalPointInPolygon;
+      }
+    }
+  },
+  {
+    // RESEARCH.md's Pitfall 9 cross-check, constructible only while both
+    // representations coexist: for each grid day, the unified days[] block agrees with
+    // the legacy per-source blocks on above-floor presence. wpc-hazards and heatrisk
+    // are deliberately EXCLUDED (D-09): D-09 re-anchors those two sources onto the SPC
+    // grid, so their day keys are expected to disagree with the legacy block near a
+    // boundary, and asserting agreement here would encode the bug this phase exists to
+    // fix.
+    // Mutation to prove RED: make _addRegistryDayGridEntries skip ERO day 1.
+    name: "merge-parity-unified-days-agree-with-legacy-blocks",
+    run: async (helper) => {
+      resetHelper(helper);
+      resetLogs();
+      const originalPointInPolygon = turfStub.pointInPolygon;
+      turfStub.pointInPolygon = () => true;
+      try {
+        helper._nowMs = () => MERGE_NOW_MS;
+        const toggles = { showExcessiveRain: true, showWinterImpact: true };
+        helper._products = toggles;
+        const SPC_ENH_BODY = {
+          type: "FeatureCollection",
+          features: [{ type: "Feature", properties: { LABEL: "ENH" }, geometry: { type: "Polygon", coordinates: [SAMPLE_RING] } }]
+        };
+        installHttp(helper, [
+          // Day 1: everything active.
+          ["day1otlk_cat.lyr.geojson", () => httpResponse({ body: SPC_SLGT_BODY, etag: "merge-parity-spc-day1-v1" })],
+          [ERO_URLS[1], () => httpResponse({ body: ERO_SLGT_BODY, etag: "merge-parity-ero-day1-v1" })],
+          [WSSI_URLS[1], () => httpResponse({ body: WSSI_MINOR_BODY, etag: "merge-parity-wssi-day1-v1" })],
+          ["day1fw_windrh.lyr.geojson", () => httpResponse({ body: FIRE_CRIT_BODY, etag: "merge-parity-fire-day1-v1" })],
+          // Day 2: everything quiet.
+          ["day2otlk_cat.lyr.geojson", () => httpResponse({ body: EMPTY_FEATURE_COLLECTION, etag: "merge-parity-spc-day2-v1" })],
+          [ERO_URLS[2], () => httpResponse({ body: EMPTY_FEATURE_COLLECTION, etag: "merge-parity-ero-day2-v1" })],
+          [WSSI_URLS[2], () => httpResponse({ body: EMPTY_FEATURE_COLLECTION, etag: "merge-parity-wssi-day2-v1" })],
+          ["day2fw_windrh.lyr.geojson", () => httpResponse({ body: EMPTY_FEATURE_COLLECTION, etag: "merge-parity-fire-day2-v1" })],
+          // Day 3: SPC and WSSI active, ERO quiet.
+          ["day3otlk_cat.lyr.geojson", () => httpResponse({ body: SPC_ENH_BODY, etag: "merge-parity-spc-day3-v1" })],
+          [WSSI_URLS[3], () => httpResponse({ body: WSSI_MODERATE_BODY, etag: "merge-parity-wssi-day3-v1" })],
+          [ERO_URLS[3], () => httpResponse({ body: EMPTY_FEATURE_COLLECTION, etag: "merge-parity-ero-day3-v1" })],
+          // Day 4: ERO active (WSSI does not cover day 4).
+          [ERO_URLS[4], () => httpResponse({ body: ERO_SLGT_BODY, etag: "merge-parity-ero-day4-v1" })],
+          // Day 5: ERO quiet.
+          [ERO_URLS[5], () => httpResponse({ body: EMPTY_FEATURE_COLLECTION, etag: "merge-parity-ero-day5-v1" })],
+          ...hazardsRoutes()
+        ]);
+        const out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, toggles);
+        assertPayloadIntact(out);
+
+        // Precondition guard: a parity check over an all-quiet poll is vacuous
+        // (Phase 15's first vacuity mechanism) -- at least three of the four compared
+        // sources produced at least one above-floor reading in this fixture.
+        const aboveFloorSources = [];
+        if (out.day1.risk !== "NONE" || out.day3.risk !== "NONE") aboveFloorSources.push("spc-convective");
+        if (out.excessiveRain.day1Risk !== "NONE" || out.excessiveRain.day4Risk !== "NONE") aboveFloorSources.push("wpc-ero");
+        if (out.winterImpact.day1Risk !== "NONE" || out.winterImpact.day3Risk !== "NONE") aboveFloorSources.push("wpc-wssi");
+        if (out.fireWeather.day1Risk > 0) aboveFloorSources.push("spc-fire");
+        if (aboveFloorSources.length < 3) {
+          throw new Error(`precondition failed: expected at least 3 of 4 compared sources to produce an above-floor reading, got ${JSON.stringify(aboveFloorSources)}`);
+        }
+
+        const mismatches = [];
+        for (let d = 1; d <= 3; d++) {
+          const legacyRisk = out["day" + d].risk;
+          const legacyAbove = legacyRisk !== "NONE" && legacyRisk !== "TSTM";
+          const unifiedPresent = out.days[String(d)].hazards.some((h) => h.source === "spc-convective");
+          if (legacyAbove !== unifiedPresent) {
+            mismatches.push(`day ${d} spc-convective: legacy risk=${JSON.stringify(legacyRisk)} (above floor=${legacyAbove}) vs unified presence=${unifiedPresent}`);
+          }
+        }
+        for (let d = 1; d <= 5; d++) {
+          const legacyRisk = out.excessiveRain["day" + d + "Risk"];
+          const legacyAbove = legacyRisk !== "NONE";
+          const unifiedPresent = out.days[String(d)].hazards.some((h) => h.source === "wpc-ero");
+          if (legacyAbove !== unifiedPresent) {
+            mismatches.push(`day ${d} wpc-ero: legacy risk=${JSON.stringify(legacyRisk)} (above floor=${legacyAbove}) vs unified presence=${unifiedPresent}`);
+          }
+        }
+        for (let d = 1; d <= 3; d++) {
+          const legacyRisk = out.winterImpact["day" + d + "Risk"];
+          const legacyAbove = legacyRisk !== "NONE";
+          const unifiedPresent = out.days[String(d)].hazards.some((h) => h.source === "wpc-wssi");
+          if (legacyAbove !== unifiedPresent) {
+            mismatches.push(`day ${d} wpc-wssi: legacy risk=${JSON.stringify(legacyRisk)} (above floor=${legacyAbove}) vs unified presence=${unifiedPresent}`);
+          }
+        }
+        for (let d = 1; d <= 2; d++) {
+          const legacyRisk = out.fireWeather["day" + d + "Risk"];
+          const legacyAbove = legacyRisk > 0;
+          const unifiedPresent = out.days[String(d)].hazards.some((h) => h.source === "spc-fire");
+          if (legacyAbove !== unifiedPresent) {
+            mismatches.push(`day ${d} spc-fire: legacy risk=${JSON.stringify(legacyRisk)} (above floor=${legacyAbove}) vs unified presence=${unifiedPresent}`);
+          }
+        }
+
+        if (mismatches.length !== 0) {
+          // Primary: every comparison agrees. Each mismatch names the grid day, the
+          // source, the legacy value and the unified presence, so a wrong answer is
+          // diagnosable without a debugger.
+          throw new Error(`parity mismatch (grid day, source, legacy value, unified presence): ${mismatches.join(" | ")}`);
+        }
+
+        // control: the failure message above names the grid day, source, legacy
+        // value and unified presence for every mismatch, so a wrong answer is
+        // diagnosable without a debugger -- this is the diagnosability control 15
+        // D-10 requires, in place of a second run.
+        //
+        // D-09: wpc-hazards and heatrisk are deliberately excluded from this
+        // comparison above -- see the scenario's header comment.
+      } finally {
+        turfStub.pointInPolygon = originalPointInPolygon;
+      }
+    }
   }
 ];
 
