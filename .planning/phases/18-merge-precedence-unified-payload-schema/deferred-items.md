@@ -37,3 +37,44 @@ correct answer; only a caller that reads the raw `reportedDays` array directly, 
 runner return a `fetched: boolean` alongside its payload so the grid-entry builder can skip
 `noteReported` when the underlying fetch never ran — mirroring HeatRisk's
 empty-`gridTuples`-when-off pattern.
+
+## A live `wpc-hazards` single-day feature with `start_date === end_date` is silently dropped from the unified `days[]` grid (MERGE-01)
+
+**Found during:** 18-09 Task 1, live capture against `cpc_weather_hazards/MapServer` layer 4
+(Precipitation, Days 3-7).
+
+**What's wrong:** `_addHazardsOutlookGridEntries` (node_helper.js:2835-2919) computes
+`gridStart = _gridDayOf(match.startDate, anchorInfo.nominalStartMs)` and
+`gridEnd = _gridDayOf(match.endDate, anchorInfo.nominalStartMs)`, then emits on grid days
+`gridStart .. (gridEnd - 1)` inclusive. This assumes, per the function's own comment
+(node_helper.js:2874-2876), that `end_date` is the EXCLUSIVE end of the source's 00Z-00Z span, so
+a genuine single-calendar-day feature has `gridEnd = gridStart + 1`. A live feature captured
+2026-09-05 (`"Heavy Rain"`, `objectid 7917`, near Kotzebue, AK) instead carries
+`start_date === end_date` (`1788998400000` for both, i.e. `2026-09-10T00:00:00.000Z` for both) —
+an INCLUSIVE/zero-duration representation. Under that live shape, `gridEnd - 1 < gridStart`, the
+clamped emission range is empty, and the entry is silently dropped from every grid day, while the
+legacy `hazardsOutlook` block's own inclusive-endpoint loop (`_bucketHazardMatch`) correctly
+buckets the same feature onto `day5` (its calendar date). Full trace, live values, and the
+substituted-value control confirming the mechanism is otherwise sound: see
+`18-LIVE-CAPTURE.md`'s "Criterion 1 (MERGE-01, near-boundary)" section.
+
+Note this is NOT a universal upstream convention failure: a same-poll, same-MapServer
+Temperature-group feature (`"High Winds"`) DID show the assumed exclusive-end shape
+(`end_date = start_date + 86400000`). The two groups are not internally consistent about this
+convention in this one live sample, at minimum.
+
+**Why it's out of scope for 18-09:** 18-09's `files_modified` are `18-LIVE-CAPTURE.md` and
+`STATE.md` only; the plan explicitly prohibits modifying production source. The root cause lives
+in 18-04's already-committed `_addHazardsOutlookGridEntries`, and the correct fix is a product-code
+decision (see below), not a mechanical one this plan's scope covers.
+
+**Suggested fix (future plan):** treat `start_date === end_date` as a genuine 1-day inclusive span
+in `_addHazardsOutlookGridEntries` — e.g., when `match.endDate === match.startDate`, compute
+`gridEnd` as `_gridDayOf(match.endDate, anchorInfo.nominalStartMs) + 1` before subtracting 1, so a
+zero-duration live feature is treated identically to the "genuine single-day feature" case the
+existing comment already describes, mirroring the legacy loop's own inclusive semantics
+(`_bucketHazardMatch`'s `for (d = max(offsetStart, firstDay); d <= min(offsetEnd, lastDay); d++)`
+treats `offsetStart === offsetEnd` as exactly one day). A mutation-proven probe scenario using the
+live-observed `start_date === end_date` shape (rather than
+`merge-grid-hazards-00z-feature-forward-aligns-to-next-grid-day`'s assumed `end = start + 1 day`
+fixture) should accompany the fix.
