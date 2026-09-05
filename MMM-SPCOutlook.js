@@ -76,6 +76,13 @@
   },
 
   start: function() {
+    // PERF-03/D-17: the wall-clock bracket's start — module start to first accepted
+    // payload. The backend-interval half of the same measurement is logged by
+    // node_helper.js (D-17); MagicMirror calls updateDom() synchronously off
+    // socketNotificationReceived, which is why first-accepted-payload is the practical
+    // proxy for first populated render.
+    this._startedAtMs = Date.now();
+    this._loggedFirstPayloadMs = false;
     // Request data once the module starts
     Log.info(`Starting module: ${this.name}`);
     Log.info("SPC-Outlook: GET_SPC_DATA - " + this.config.lat + "," + this.config.lon + "," + this.config.extended);
@@ -151,6 +158,19 @@
         this._lastSeq = seq;
       }
       this.spcrisk = payload[0];
+      // PERF-03/D-17: the wall-clock bracket's other end, fired only for a payload that
+      // passed every guard above (foreign-instance, epoch, out-of-order sequence) and was
+      // actually accepted and stored — a rejected payload is not a populated render, and
+      // measuring one would report a figure the user never saw. Logged once per module
+      // start; the backend-interval half of the same measurement is logged by
+      // node_helper.js (D-17).
+      if (!this._loggedFirstPayloadMs) {
+        this._loggedFirstPayloadMs = true;
+        Log.info("MMM-SPCOutlook: first accepted payload " + (Date.now() - this._startedAtMs) +
+                 "ms after module start (wall clock; module-start -> first accepted " +
+                 "SPC_DATA_RESULT -> updateDom(), the practical proxy for first populated " +
+                 "render; see node_helper.js for this measurement's backend-interval half)");
+      }
       this.updateDom();
     }
   },
