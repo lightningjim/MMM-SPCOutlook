@@ -26,9 +26,10 @@ const select = xpath.useNamespaces({
 const { PRODUCT_REGISTRY, MPD_FILENAME_PATTERN, hazardLabelKey } = require("./productRegistry");
 // hazardTaxonomy.js's first and only consumer (D-06). Destructured to only what this file
 // actually reads: dimensionOf resolves a (source, label) pair to D-05's dimension roster;
-// NO_RISK_FLOOR is read directly by the HeatRisk grid-entry builder to decide whether a
-// category is an active claim or a quiet reading.
-const { dimensionOf, NO_RISK_FLOOR } = require("./hazardTaxonomy");
+// NO_RISK_FLOOR is read directly by the HeatRisk and registry-day grid-entry builders to
+// decide whether a reading is an active claim or a quiet one; FLOOR_PREBAKED is the
+// sentinel _addRegistryDayGridEntries checks against rather than hardcoding the comparison.
+const { dimensionOf, NO_RISK_FLOOR, FLOOR_PREBAKED } = require("./hazardTaxonomy");
 // WR-16 / D-10: `showDrought` is NOT a product flag in the `configFlag` sense — it does
 // not gate a fetch, it gates which labels within an already-fetched product (Hazards
 // Outlook) are displayable — so it cannot be derived from `PRODUCT_REGISTRY` and needs
@@ -210,6 +211,10 @@ module.exports = NodeHelper.create({
     // D-12: guards the once-per-process log line when the SPC grid anchor falls back to
     // the clock estimate (no usable VALID_ISO/EXPIRE_ISO from the day-1 outlook).
     this._loggedGridAnchorFallback = false;
+    // MERGE-01: excessiveRain.day1ValidTime has had no consumer since 14 D-03 and is
+    // unexercised end-to-end until this plan first reads it — guards a single logged
+    // sample per process so a null/malformed field surfaces now rather than in Phase 19.
+    this._loggedEroValidTimeSample = false;
     // CR-03: overlapping polls. socketNotificationReceived is async and MagicMirror does
     // not await it, so nothing stopped a second GET_SPC_DATA from starting while the first
     // ~25-hop serial chain was still running. _inFlight prevents the overlap; _seq stamps
@@ -3186,6 +3191,98 @@ module.exports = NodeHelper.create({
   },
 
   /**
+   * MERGE-01/D-01/D-05/D-11/D-13: re-bucket one `arcgis-day-layers` registry product
+   * (`wpc-ero` via `excessiveRain`, `wpc-wssi` via `winterImpact`) onto the Phase 18 grid,
+   * reading the SAME flat `day{N}Risk/Text/Color/ValidTime` payload
+   * `_runArcGisDayProduct` already built — no second fetch, no re-derivation. Both
+   * products are 12Z-native, so D-11's straight-through rule applies: payload day N is
+   * grid day N. This function never calls `_gridDayOf`.
+   * @param gridDays - the fourteen-key `days` skeleton from `_buildGridDays`, mutated in place
+   * @param sourceId - "wpc-ero" or "wpc-wssi"
+   * @param payload - eroPayload or wssiPayload, the existing flat day{N}Risk/Text/Color block
+   * @param row - PRODUCT_REGISTRY.excessiveRain or .winterImpact — WR-16: the row's own
+   *   `days` is the sole iteration bound, never a literal 5 or 3
+   * @param notes - `{ noteReported, noteActive, noteUnmapped }`
+   */
+  _addRegistryDayGridEntries(gridDays, sourceId, payload, row, notes) {
+    const floor = NO_RISK_FLOOR[sourceId];
+
+    // ERO's `dayNRisk` payload field carries the short tier ("MRGL"), not the long
+    // "outlook" vocabulary hazardTaxonomy.js's wpc-ero map is keyed on ("Marginal (At
+    // Least 5%)", live-verified in 18-RESEARCH.md/STACK.md). No registry map carries that
+    // long form — ERO's own `toValue` only reads the numeric `dn` field — so this
+    // translates the SAME tier value the payload field was already built from
+    // (row.valueToTier) into the taxonomy's own label vocabulary, rather than declaring a
+    // second (source, label) -> dimension map. WSSI needs no translation: row.valueToTier's
+    // tiers (MINOR/MODERATE/MAJOR/EXTREME) are already the taxonomy's raw uppercase
+    // `impact` vocabulary verbatim.
+    const eroTierToOutlookLabel = {
+      MRGL: "Marginal (At Least 5%)",
+      SLGT: "Slight (At Least 15%)",
+      MDT: "Moderate (At Least 40%)",
+      HIGH: "High (At Least 70%)"
+    };
+
+    // The numeric tier `_runArcGisDayProduct` already resolved, reversed out of the SAME
+    // registry map the payload's tier string was built from — never a second value table.
+    const valueByTier = {};
+    for (const numericValue of Object.keys(row.valueToTier)) {
+      valueByTier[row.valueToTier[numericValue]] = Number(numericValue);
+    }
+
+    for (let d = 1; d <= row.days; d++) {
+      const tier = payload[`day${d}Risk`];
+      // T-18-04 containment; unreachable today — _runArcGisDayProduct always seeds every
+      // day with a string tier before this function ever runs.
+      if (typeof tier !== "string") continue;
+
+      notes.noteReported(sourceId, d);
+
+      if (floor !== FLOOR_PREBAKED) {
+        // Both callers' floor is prebaked at fetch-evaluate time by their own registry
+        // row's `includesFeat` gate; a non-prebaked floor here means this function was
+        // wired to a source it was never designed for.
+        throw new Error(
+          "_addRegistryDayGridEntries: NO_RISK_FLOOR[\"" + sourceId + "\"] is not FLOOR_PREBAKED"
+        );
+      }
+      // FLOOR_PREBAKED: "NONE" is this product's only below-floor tier — ERO's
+      // `includesFeat: (label, val) => val > 0` and WSSI's `includesFeat: (label, val) =>
+      // val >= 2` (which filters WINTER WEATHER AREA out before evaluatePolygons ever
+      // sees it) already applied the floor at extractPolygons time.
+      if (tier === "NONE") continue;
+
+      notes.noteActive(sourceId, d);
+
+      const label = sourceId === "wpc-ero"
+        ? (Object.prototype.hasOwnProperty.call(eroTierToOutlookLabel, tier) ? eroTierToOutlookLabel[tier] : tier)
+        : tier;
+      const dimension = dimensionOf(sourceId, label);
+
+      if (dimension === null) {
+        // D-07: a label with no taxonomy entry passes through verbatim rather than being
+        // dropped or emitting `undefined`.
+        notes.noteUnmapped(sourceId, label);
+      }
+
+      const dayEntry = gridDays[String(d)];
+      if (dayEntry) {
+        dayEntry.hazards.push({
+          dimension,
+          source: sourceId,
+          label,
+          text: payload[`day${d}Text`],
+          value: Object.prototype.hasOwnProperty.call(valueByTier, tier) ? valueByTier[tier] : null,
+          color: payload[`day${d}Color`],
+          suppressedBy: null
+        });
+      }
+    }
+    // Sorting is plan 18-05's job (D-15's taxonomy category order) — do not add a second
+    // sort here.
+  },
+
+  /**
    * Fetch a GeoJSON URL with ETag/hash caching, returning parsed data or cached result on hit/error.
    * @param url - GeoJSON endpoint URL to fetch
    * @param isValidBody - body-shape validator for the cache-miss branches; defaults to
@@ -4351,6 +4448,16 @@ module.exports = NodeHelper.create({
       // D-04: attribute this registry product's own already-computed anyStale to its
       // hazardTaxonomy source id, beside (not instead of) the payload-wide read above.
       if (results.excessiveRain.anyStale) staleBySource["wpc-ero"] = true;
+      // MERGE-01: excessiveRain.day1ValidTime has had no consumer since 14 D-03 and is
+      // unexercised end-to-end until this read — a single sample logged once per process
+      // catches a null/malformed field now. D-11 makes ERO straight-through and
+      // `valid_time` is a composite display string, not a machine anchor, so day
+      // attribution is never built on it.
+      if (!this._loggedEroValidTimeSample) {
+        Log.info("MMM-SPCOutlook: excessiveRain.day1ValidTime sample: " +
+                 JSON.stringify(eroPayload.day1ValidTime));
+        this._loggedEroValidTimeSample = true;
+      }
 
       const wssiPayload = results.winterImpact.payload;
       if (results.winterImpact.anyStale) anyStale = true;
@@ -4470,6 +4577,16 @@ module.exports = NodeHelper.create({
         }
       };
       this._addSpcGridEntries(gridDays, spcLocals, gridNotes);
+
+      // MERGE-01/D-01: wpc-ero and wpc-wssi are the two 12Z-native registry-driven
+      // sources, reading the SAME eroPayload/wssiPayload blocks the legacy
+      // excessiveRain/winterImpact keys below are built from.
+      this._addRegistryDayGridEntries(
+        gridDays, "wpc-ero", eroPayload, PRODUCT_REGISTRY.excessiveRain, gridNotes
+      );
+      this._addRegistryDayGridEntries(
+        gridDays, "wpc-wssi", wssiPayload, PRODUCT_REGISTRY.winterImpact, gridNotes
+      );
 
       return {
         // WR-04: the oldest cached reading that contributed to this payload, or null when
