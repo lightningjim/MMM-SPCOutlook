@@ -3484,6 +3484,113 @@ module.exports = NodeHelper.create({
   },
 
   /**
+   * D-01/D-04/D-08/D-12: per-product health for every id in `hazardTaxonomy.SOURCE_IDS`,
+   * all eight always present regardless of any toggle — the same shape invariant D-02
+   * gives `days`.
+   *
+   * `reporting` means "we got an answer this poll", NEVER "it found a hazard" — that is
+   * `activeDays`. For the six day-scoped sources this reads `reportedDays[id]` (lazily
+   * keyed; an absent key is a legitimate "reported nothing", not an error). For the two
+   * advisory sources, whose entries never live in `reportedDays` (they are not
+   * day-scoped), it is "the row's fetch completed without being marked stale, while its
+   * toggle is on" — `_runKmlAdvisoryRow` itself never fetches at all when its toggle is
+   * off (node_helper.js:1475-1478), so gating on `enabled` here mirrors that same rule
+   * rather than inventing a second one.
+   *
+   * `reportedDays`/`activeDays` is the SAME absent-vs-below-floor distinction
+   * `_resolveGridDayPrecedence` reads (D-14): a grid day absent from `reportedDays` means
+   * the source never covered that day at all; a day present in `reportedDays` but absent
+   * from `activeDays` means the source reported and its own reading fell below its floor.
+   * This is what makes that distinction diagnosable from a captured payload without a
+   * dedicated payload field for it.
+   *
+   * @param productToggles - this request's own toggle snapshot (WR-13)
+   * @param reportedDays / activeDays / unmappedLabels - the lazily-keyed accumulators
+   *   `getSpcOutlook` declares immediately before the grid-entry-assembly calls
+   * @param staleBySource - `{ [sourceId]: boolean }`, lazily keyed; an absent key reads
+   *   as `false`
+   * @param gridAnchorInfo - the object `_spcGridAnchor` returned this poll
+   * @param results - the settled runner-results object, read only for
+   *   `results.hazardsOutlook.idpFiledate` / `results.heatRisk.idpFiledate` — 16 D-13:
+   *   only these two products publish an `idp_filedate`, so every other source's field is
+   *   `null`, meaning "this product has no such field", not "unknown"
+   * @returns object keyed by every `SOURCE_IDS` entry, `{ id, displayName, enabled,
+   *   reporting, stale, idpFiledate, reportedDays, activeDays, unmappedLabels,
+   *   gridAnchor? }` — `gridAnchor` present only on `spc-convective` (D-12)
+   */
+  _buildSourceHealth(productToggles, reportedDays, activeDays, unmappedLabels, staleBySource, gridAnchorInfo, results) {
+    const displayNames = {
+      "spc-convective": "SPC Convective Outlook",
+      "spc-fire": "SPC Fire Weather Outlook",
+      "wpc-ero": "WPC Excessive Rainfall Outlook",
+      "wpc-wssi": "WPC Winter Storm Severity Index",
+      "wpc-hazards": "WPC/CPC Hazards Outlook",
+      heatrisk: "NWS HeatRisk",
+      "spc-md": "SPC Mesoscale Discussion",
+      "wpc-mpd": "WPC Mesoscale Precipitation Discussion"
+    };
+
+    // The registry `configFlag` each toggled source reads its `enabled` bit from.
+    // spc-convective/spc-fire predate the registry (14 D-08) and have no toggle at all —
+    // they are the module's always-on core, handled as a special case below rather than
+    // looked up here.
+    const configFlagBySource = {
+      "wpc-ero": PRODUCT_REGISTRY.excessiveRain.configFlag,
+      "wpc-wssi": PRODUCT_REGISTRY.winterImpact.configFlag,
+      "wpc-hazards": PRODUCT_REGISTRY.hazardsOutlook.configFlag,
+      heatrisk: PRODUCT_REGISTRY.heatRisk.configFlag,
+      "spc-md": PRODUCT_REGISTRY.spcMD.configFlag,
+      "wpc-mpd": PRODUCT_REGISTRY.mpd.configFlag
+    };
+
+    const toAscendingArray = (setsBySource, sourceId) => {
+      const set = setsBySource[sourceId];
+      return set ? Array.from(set).sort((a, b) => a - b) : [];
+    };
+
+    const sources = {};
+    for (const sourceId of SOURCE_IDS) {
+      const isAlwaysOn = sourceId === "spc-convective" || sourceId === "spc-fire";
+      // T-18-14: strict `=== true`, the same idiom node_helper.js:295/307 already use for
+      // every other `configFlag` read, so a non-boolean config value can never read as
+      // enabled.
+      const enabled = isAlwaysOn ? true : productToggles[configFlagBySource[sourceId]] === true;
+
+      // Rule 1 fix: `wpc-ero`/`wpc-wssi`'s toggle-off default ("NONE" on every day, seeded
+      // by `_runArcGisDayProduct` before its own `productToggles[row.configFlag]` fetch
+      // gate) is a string, so `_addRegistryDayGridEntries` calls `noteReported` for every
+      // day even when the toggle never let a fetch happen — unlike HeatRisk, whose
+      // toggle-off path returns an empty `gridTuples` up front. Gating `reporting` on
+      // `enabled` here (for every source, not only the advisory two) is what keeps a
+      // disabled product from claiming "we got an answer" it never asked for; a reader
+      // must be able to trust `enabled: false` to mean `reporting` is also `false`.
+      const isAdvisory = ADVISORY_SOURCE_IDS.includes(sourceId);
+      const reporting = !enabled ? false : (isAdvisory
+        ? staleBySource[sourceId] !== true
+        : (reportedDays[sourceId] ? reportedDays[sourceId].size : 0) > 0);
+
+      const idpFiledate =
+        sourceId === "wpc-hazards" ? (results.hazardsOutlook.idpFiledate ?? null) :
+        sourceId === "heatrisk" ? (results.heatRisk.idpFiledate ?? null) :
+        null;
+
+      sources[sourceId] = {
+        id: sourceId,
+        displayName: displayNames[sourceId],
+        enabled,
+        reporting,
+        stale: staleBySource[sourceId] === true,
+        idpFiledate,
+        reportedDays: toAscendingArray(reportedDays, sourceId),
+        activeDays: toAscendingArray(activeDays, sourceId),
+        unmappedLabels: unmappedLabels[sourceId] || [],
+        ...(sourceId === "spc-convective" ? { gridAnchor: gridAnchorInfo.anchor } : {})
+      };
+    }
+    return sources;
+  },
+
+  /**
    * Fetch a GeoJSON URL with ETag/hash caching, returning parsed data or cached result on hit/error.
    * @param url - GeoJSON endpoint URL to fetch
    * @param isValidBody - body-shape validator for the cache-miss branches; defaults to
@@ -3848,17 +3955,54 @@ module.exports = NodeHelper.create({
    *   the location (D-03). Both keys are always arrays, empty when the row's toggle is
    *   off or nothing is active — never omitted, matching the day-block toggle-off
    *   guarantee above;
-   *   days: { "1".."14": { date, windowStart, windowEnd, hazards: [] } } — the Phase 18
-   *   unified day grid (D-01), an ADDITIVE sibling of the eight legacy blocks above for
-   *   this phase only; both representations are built from the same in-memory values,
-   *   never a second pass over the raw sources. All fourteen keys are always present
-   *   (D-02). `hazards` is empty until later Phase 18 plans populate it. `windowStart`/
-   *   `windowEnd` are ISO-8601 UTC strings so nothing downstream re-derives a boundary
-   *   (D-12/RPT-07). Grid day 1 may be shorter than 24 hours when SPC truncated its
-   *   re-issuance (D-11) — its `windowStart` reflects the real (possibly truncated)
-   *   start while its `date` still reflects the NOMINAL 12Z start, so the label does not
-   *   shift;
-   *   and optional _stale (boolean) and _staleAsOf (timestamp) when serving cached data
+   *   days: { "1".."14": { date, windowStart, windowEnd, hazards: [{ dimension, source,
+   *   label, text, value, color, suppressedBy, detail? }] } } — the Phase 18 unified day
+   *   grid (D-01), an ADDITIVE sibling of the eight legacy blocks above for this phase
+   *   only; both representations are built from the same in-memory values, never a
+   *   second pass over the raw sources. All fourteen keys are always present (D-02).
+   *   `windowStart`/`windowEnd` are ISO-8601 UTC strings so nothing downstream
+   *   re-derives a boundary (D-12/RPT-07). Grid day 1 may be shorter than 24 hours when
+   *   SPC truncated its re-issuance (D-11) — its `windowStart` reflects the real
+   *   (possibly truncated) start while its `date` still reflects the NOMINAL 12Z start,
+   *   so the label does not shift. Each `hazards` entry's `suppressedBy` is a source id
+   *   or `null`, already resolved per grid day (MERGE-02/MERGE-03/MERGE-04, D-13/D-14):
+   *   compact rendering is "the entries where `suppressedBy === null`, in array order"
+   *   and detailed rendering is "all of them, with `sources[entry.source].displayName`"
+   *   (D-03). The array already carries the taxonomy's fixed category order
+   *   (D-15) — survivors before suppressed within a dimension — so no downstream sort
+   *   is ever needed (RPT-07). `spc-convective` entries optionally carry a `detail`
+   *   sub-object (tornado/hail/wind on days 1-2, probRisk/cig or probRisk/sign
+   *   elsewhere) per D-05;
+   *   summary: { anyHazard, dimensions, activeDays, windowStart, windowEnd,
+   *   enabledSourceCount, reportingSourceCount, bandDiagnostics: { windowBandCount,
+   *   advisoryCount } } — D-16's seven fields, flat and exactly as locked, plus D-20's
+   *   nested `bandDiagnostics` extension (only the two counters were ever an addition).
+   *   `anyHazard` is a UNION over every grid day's surviving entries, the Hazards
+   *   Outlook window band, and both advisory arrays — this is D-16's own stated purpose
+   *   (make RPT-05 decidable in one read), not an extension of it, since a
+   *   day-scoped-only `anyHazard` would reproduce Phase 15's MPD-invisible `getDom` gate
+   *   and the still-unexercised Phase 16 band-only case. `summary` is a ROLLUP of the
+   *   already-resolved `days`, never a second precedence pass (D-14) — it never
+   *   re-consults `PRECEDENCE` or `NO_RISK_FLOOR`;
+   *   sources: { [id]: { id, displayName, enabled, reporting, stale, idpFiledate,
+   *   reportedDays, activeDays, unmappedLabels, gridAnchor? } } — all eight
+   *   `hazardTaxonomy.SOURCE_IDS` always present, regardless of any toggle (D-01/D-08).
+   *   `reporting` means "this source produced any reading this poll", NEVER "it found a
+   *   hazard" (that is `activeDays`). `reportedDays` vs `activeDays` is the SAME
+   *   absent-vs-below-floor distinction `days[].hazards` resolves on: a grid day absent
+   *   from `reportedDays` means the source never covered that day at all, while a day
+   *   present in `reportedDays` but absent from `activeDays` means the source reported
+   *   and its own reading fell below its no-risk floor — two different facts that must
+   *   never be conflated (D-14). `idpFiledate` is non-null only for `wpc-hazards` and
+   *   `heatrisk`, the two products that publish one (16 D-13); `gridAnchor` appears only
+   *   on `spc-convective` (D-12);
+   *   and optional _stale (boolean) and _staleAsOf (timestamp) when serving cached data.
+   *
+   *   D-01 invariant, for this phase only: the eight legacy blocks above and this
+   *   unified `days`/`summary`/`sources` block are two representations of the SAME
+   *   poll, built from the same in-memory values — nothing in this return statement
+   *   re-fetches or re-derives one representation from the other. Phase 19 removes the
+   *   legacy blocks.
    */
   async getSpcOutlook(lat, lon, extended, products) {
     try {
@@ -4797,6 +4941,16 @@ module.exports = NodeHelper.create({
         this._resolveGridDayPrecedence(gridDays[String(d)], d, reportedDays);
       }
 
+      // D-04: sourceHealth first — _buildGridSummary counts over it (`enabledSourceCount`/
+      // `reportingSourceCount`).
+      const sourceHealth = this._buildSourceHealth(
+        productToggles, reportedDays, activeDays, unmappedLabels, staleBySource,
+        gridAnchorInfo, results
+      );
+      const gridSummary = this._buildGridSummary(
+        gridDays, hazardsPayload.windowBand, advisories, sourceHealth, gridAnchorInfo
+      );
+
       return {
         // WR-04: the oldest cached reading that contributed to this payload, or null when
         // the degrade was a hard failure with nothing cached to age.
@@ -4913,7 +5067,9 @@ module.exports = NodeHelper.create({
         // MERGE-03 must tell those two apart).
         heatRisk: heatRiskPayload,
         advisories: advisories,
-        days: gridDays
+        days: gridDays,
+        summary: gridSummary,
+        sources: sourceHealth
       };
 
     } catch (err) {
