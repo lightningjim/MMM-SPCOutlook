@@ -189,6 +189,9 @@ module.exports = NodeHelper.create({
     this._updateInterval = 60;
     this._proximityWeighting = false;
     this._loggedIntervalFallback = false;
+    // D-12: guards the once-per-process log line when the SPC grid anchor falls back to
+    // the clock estimate (no usable VALID_ISO/EXPIRE_ISO from the day-1 outlook).
+    this._loggedGridAnchorFallback = false;
     // CR-03: overlapping polls. socketNotificationReceived is async and MagicMirror does
     // not await it, so nothing stopped a second GET_SPC_DATA from starting while the first
     // ~25-hop serial chain was still running. _inFlight prevents the overlap; _seq stamps
@@ -2374,6 +2377,56 @@ module.exports = NodeHelper.create({
   },
 
   /**
+   * D-12: derive the Phase 18 grid anchor from SPC's own day-1 categorical outlook
+   * VALID_ISO/EXPIRE_ISO properties, with a marked clock fallback. Never throws (T-18-02)
+   * — `new Date(str)` on a malformed string yields `Invalid Date`, not a throw, so every
+   * parse is gated with `Number.isFinite(d.getTime())` before use, same containment
+   * discipline used elsewhere in this file (e.g. `_bucketHazardMatch`).
+   *
+   * The raw fields are read fresh on every call — `T12:00:00Z` is never hardcoded as a
+   * parsed constant on the observed path, since the whole point of D-12 is that SPC's
+   * real re-issuance time is read every poll, not assumed.
+   *
+   * @param validIso - the winning day-1 polygon's VALID_ISO property, or null
+   * @param expireIso - the winning day-1 polygon's EXPIRE_ISO property, or null
+   * @returns {
+   *   nominalStartMs: epoch ms of grid day 1's NOMINAL 12Z start (EXPIRE_ISO minus 24h,
+   *     or the clock-derived estimate),
+   *   day1StartMs: epoch ms of grid day 1's ACTUAL start (the truncated VALID_ISO when
+   *     it is finite and falls inside [nominalStartMs, day1EndMs], else nominalStartMs),
+   *   day1EndMs: epoch ms of grid day 1's end (EXPIRE_ISO, or nominalStartMs + 24h),
+   *   anchor: "observed" when EXPIRE_ISO was usable, "estimated" when it fell back to
+   *     the clock rule
+   * }
+   */
+  _spcGridAnchor(validIso, expireIso) {
+    const expireMs = typeof expireIso === "string" && expireIso ? new Date(expireIso).getTime() : NaN;
+    if (Number.isFinite(expireMs)) {
+      const nominalStartMs = expireMs - MS_PER_DAY;
+      const day1EndMs = expireMs;
+      const validMs = typeof validIso === "string" && validIso ? new Date(validIso).getTime() : NaN;
+      // A nonsensical VALID_ISO (outside the nominal 24h window) is rejected rather than
+      // producing an inverted or overlong day-1 window (T-18-03) — falls back to the
+      // nominal start instead.
+      const day1StartMs = (Number.isFinite(validMs) && validMs >= nominalStartMs && validMs <= day1EndMs)
+        ? validMs
+        : nominalStartMs;
+      return { nominalStartMs, day1StartMs, day1EndMs, anchor: "observed" };
+    }
+    // Clock fallback (D-11): day 1 is the outlook period currently in progress, and the
+    // grid rolls at 12Z. Only UTC-getter and Date.UTC forms are used here, matching the
+    // timezone-bug guard `_todayUtcMs` already documents — the local-time equivalents
+    // would reintroduce that bug on a Pi whose system clock is not UTC.
+    const now = new Date(this._nowMs());
+    const todayMidnightMs = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+    const nominalStartMs = now.getUTCHours() >= 12
+      ? todayMidnightMs + 12 * 60 * 60 * 1000
+      : todayMidnightMs - MS_PER_DAY + 12 * 60 * 60 * 1000;
+    const day1EndMs = nominalStartMs + MS_PER_DAY;
+    return { nominalStartMs, day1StartMs: nominalStartMs, day1EndMs, anchor: "estimated" };
+  },
+
+  /**
    * D-06's zip-before-sort: build `{ attrs, rawValue }` tuples from the HeatRisk identify
    * response's `catalogItems.features` and `properties.Values` arrays BEFORE any sort, so
    * no positional index survives into the sort and a `catalogItems`/`Values` desync
@@ -3075,6 +3128,13 @@ module.exports = NodeHelper.create({
       let day1RiskResult;
       let day1Risk;
       let day1CatProximity = null;
+      // D-12 grid anchor: hoisted alongside day1CatProximity because day1RiskPoly (below)
+      // is block-scoped to the fresh-fetch branch only and does not survive past this
+      // block's closing brace. Each branch assigns these independently, same as
+      // day1CatProximity; both stay null when no polygons are available, which
+      // _spcGridAnchor treats as "fall back to the clock estimate."
+      let day1ValidIso = null;
+      let day1ExpireIso = null;
       {
         const fetchResult = await this.fetchGeoJsonCached(day1CatURL);
         if (fetchResult.stale || fetchResult.failed) anyStale = true;
@@ -3085,14 +3145,29 @@ module.exports = NodeHelper.create({
             if (cachedEntry && cachedEntry.polys) {
               const lines = this.deriveLinesIfMissing(cachedEntry);
               day1CatProximity = this.computeProximity(lines, loc, day1RiskResult, catComparator);
+              // A cache hit still carries the polygons that produced this result when
+              // proximity weighting is on, so the grid anchor can be read here too.
+              day1ValidIso = this._validTimeOfWinner(cachedEntry.polys, loc, day1RiskResult, "VALID_ISO");
+              day1ExpireIso = this._validTimeOfWinner(cachedEntry.polys, loc, day1RiskResult, "EXPIRE_ISO");
             }
+            // else: a cache hit with proximity weighting off carries no polygons at
+            // all, so the anchor legitimately degrades to the clock fallback below.
           }
         } else if (fetchResult.data === null) {
           day1RiskResult = 0;
+          // Hard failure with nothing cached: no polygons exist anywhere, so both stay
+          // null and _spcGridAnchor falls back to the clock estimate.
         } else {
           const gj = fetchResult.data;
           const day1RiskPoly = this.extractPolygons(gj, label => riskToValue[label] || 0, (label, val) => val > 0, day1CatURL);
           day1RiskResult = this.evaluatePolygons(day1RiskPoly, loc, catComparator);
+          // D-12: read VALID_ISO/EXPIRE_ISO off the winning polygon here, using
+          // day1RiskResult (the numeric winning value) — NOT day1Risk (the string label,
+          // not assigned until after this block closes). RESEARCH.md's code example
+          // passes day1Risk; that would fail this helper's internal winning-value
+          // comparison every time, and the anchor would silently stay null forever.
+          day1ValidIso = this._validTimeOfWinner(day1RiskPoly, loc, day1RiskResult, "VALID_ISO");
+          day1ExpireIso = this._validTimeOfWinner(day1RiskPoly, loc, day1RiskResult, "EXPIRE_ISO");
           let day1RiskLines = null;
           if (this._proximityWeighting) {
             day1RiskLines = day1RiskPoly.map(item => ({
@@ -3113,6 +3188,12 @@ module.exports = NodeHelper.create({
           });
         }
         day1Risk = day1RiskResult === 0 ? "NONE" : valueToRisk[day1RiskResult];
+      }
+      const gridAnchorInfo = this._spcGridAnchor(day1ValidIso, day1ExpireIso);
+      if (gridAnchorInfo.anchor === "estimated" && !this._loggedGridAnchorFallback) {
+        Log.info("MMM-SPCOutlook: SPC grid anchor unavailable (no VALID_ISO/EXPIRE_ISO from " +
+                 "the day-1 categorical outlook); falling back to the clock-derived estimate.");
+        this._loggedGridAnchorFallback = true;
       }
   
       // Day 1 Torn
