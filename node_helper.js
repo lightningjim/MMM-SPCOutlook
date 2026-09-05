@@ -136,6 +136,12 @@ const STALE_WINDOW_INTERVALS = 2;
 // file, so this is the one place that fact is spelled out.
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
+// D-02: the Phase 18 unified `days` block is fixed at fourteen keys, always — the union
+// of the Hazards Outlook's day-14 reach and D-02's fourteen-key shape invariant. This is
+// the sole declaration of the number 14 in the merge code (WR-03's `daySpanOf` rule); no
+// other constant or loop bound restates it.
+const GRID_DAY_COUNT = 14;
+
 // 16-REVIEW WR-06: two remote-controlled COUNTS in the Hazards Outlook path, bounded for
 // the same reason ADVISORY_MAX_CANDIDATES is — this runs on a Raspberry Pi and every value
 // below originates upstream. T-16-20 bounded label LENGTH at the render boundary; these
@@ -150,6 +156,13 @@ const MS_PER_DAY = 24 * 60 * 60 * 1000;
 // 60 characters is exactly what the frontend will ever display of it.
 const HAZARDS_MAX_LOGGED_UNMAPPED_LABELS = 64;
 const HAZARDS_LOG_LABEL_MAX_CHARS = 60;
+
+// D-07: the per-source unmapped-label ledger recorded in the Phase 18 payload's
+// `sources[id].unmappedLabels[]`. Defined in terms of the existing process-lifetime
+// Hazards Outlook ledger cap above rather than as an independent number, since both
+// bound the same class of upstream-controlled-count risk (T-18-05). Labels recorded
+// here are additionally truncated to HAZARDS_LOG_LABEL_MAX_CHARS.
+const UNMAPPED_LABELS_MAX_PER_SOURCE = HAZARDS_MAX_LOGGED_UNMAPPED_LABELS;
 
 // The window band had no entry cap at all: its dedupe key is `label|offsetStart|offsetEnd`,
 // which bounds nothing when the labels vary, and every surviving entry becomes a DOM line
@@ -2427,6 +2440,52 @@ module.exports = NodeHelper.create({
   },
 
   /**
+   * The 1-based Phase 18 grid day number of an epoch-ms value, relative to the grid's
+   * NOMINAL 12Z start (see the nominal-anchor rule above `_hazardDayOffset`). Delegates
+   * to `_hazardDayOffset` verbatim rather than restating its rounding division — the
+   * only difference from that function's existing callers is which anchor is passed in.
+   * Not clamped to 1..14: an out-of-range value is returned as-is so a caller-side bug
+   * is visible rather than silently folded onto an edge day; `_buildGridDays` below
+   * never calls this outside that range, so clamping here would only hide a defect.
+   * @param epochMs - epoch milliseconds
+   * @param nominalStartMs - the grid anchor's nominalStartMs (from `_spcGridAnchor`)
+   * @returns integer grid day number, 1-based, unclamped
+   */
+  _gridDayOf(epochMs, nominalStartMs) {
+    return this._hazardDayOffset(epochMs, nominalStartMs) + 1;
+  },
+
+  /**
+   * D-02/D-03: build the fourteen-key `days` skeleton every later Phase 18 plan
+   * populates. All fourteen keys `"1"`..`"14"` are always present, with empty
+   * `hazards` arrays — this plan lands the shape, not the content.
+   *
+   * Day 1 uses the anchor's ACTUAL (possibly truncated) window; days 2-14 use the
+   * NOMINAL 12Z-aligned window derived from `anchorInfo.nominalStartMs`. `date` always
+   * uses the NOMINAL start for every day, including day 1, so day 1's calendar-date
+   * label does not shift when SPC truncates its re-issuance (D-11) — only its
+   * `windowStart` does.
+   * @param anchorInfo - the object `_spcGridAnchor` returns
+   * @returns { "1": { date, windowStart, windowEnd, hazards: [] }, ... "14": {...} }
+   */
+  _buildGridDays(anchorInfo) {
+    const days = {};
+    for (let n = 1; n <= GRID_DAY_COUNT; n++) {
+      const nominalStartForDay = anchorInfo.nominalStartMs + (n - 1) * MS_PER_DAY;
+      const nominalEndForDay = anchorInfo.nominalStartMs + n * MS_PER_DAY;
+      const windowStartMs = n === 1 ? anchorInfo.day1StartMs : nominalStartForDay;
+      const windowEndMs = n === 1 ? anchorInfo.day1EndMs : nominalEndForDay;
+      days[String(n)] = {
+        date: this._utcDateString(nominalStartForDay),
+        windowStart: new Date(windowStartMs).toISOString(),
+        windowEnd: new Date(windowEndMs).toISOString(),
+        hazards: []
+      };
+    }
+    return days;
+  },
+
+  /**
    * D-06's zip-before-sort: build `{ attrs, rawValue }` tuples from the HeatRisk identify
    * response's `catalogItems.features` and `properties.Values` arrays BEFORE any sort, so
    * no positional index survives into the sort and a `catalogItems`/`Values` desync
@@ -3005,6 +3064,16 @@ module.exports = NodeHelper.create({
    *   the location (D-03). Both keys are always arrays, empty when the row's toggle is
    *   off or nothing is active — never omitted, matching the day-block toggle-off
    *   guarantee above;
+   *   days: { "1".."14": { date, windowStart, windowEnd, hazards: [] } } — the Phase 18
+   *   unified day grid (D-01), an ADDITIVE sibling of the eight legacy blocks above for
+   *   this phase only; both representations are built from the same in-memory values,
+   *   never a second pass over the raw sources. All fourteen keys are always present
+   *   (D-02). `hazards` is empty until later Phase 18 plans populate it. `windowStart`/
+   *   `windowEnd` are ISO-8601 UTC strings so nothing downstream re-derives a boundary
+   *   (D-12/RPT-07). Grid day 1 may be shorter than 24 hours when SPC truncated its
+   *   re-issuance (D-11) — its `windowStart` reflects the real (possibly truncated)
+   *   start while its `date` still reflects the NOMINAL 12Z start, so the label does not
+   *   shift;
    *   and optional _stale (boolean) and _staleAsOf (timestamp) when serving cached data
    */
   async getSpcOutlook(lat, lon, extended, products) {
@@ -3793,6 +3862,44 @@ module.exports = NodeHelper.create({
       // failed fetch is flagged, so the user sees ⚠ rather than a confident reading.
       if ((this._unusableFeatureCount || 0) > unusableFeaturesAtStart) anyStale = true;
 
+      const gridDays = this._buildGridDays(gridAnchorInfo);
+
+      // Phase 18 merge accumulators (D-01's shared-in-memory-values constraint): declared
+      // here, in the wave-1 shape plan, so plan 18-03 (wpc-hazards, heatrisk) and plan
+      // 18-04 (the remaining four sources) never write into a structure the other plan
+      // has not yet created. Not emitted in the payload by this plan; plan 18-05 owns
+      // `sources`. Per-source Sets are created lazily on first write — seeding one key
+      // per source id here would restate the source-id roster hazardTaxonomy.js already
+      // owns (D-08), exactly the two-places-declare-one-rule drift WR-03 condemns.
+      const reportedDays = {};
+      const activeDays = {};
+      const unmappedLabels = {};
+
+      // Record that `sourceId` produced ANY reading for `gridDay` (present, whether or
+      // not it was above that source's no-risk floor).
+      const noteReported = (sourceId, gridDay) => {
+        if (!reportedDays[sourceId]) reportedDays[sourceId] = new Set();
+        reportedDays[sourceId].add(gridDay);
+      };
+
+      // Record that `sourceId` produced an ABOVE-floor reading for `gridDay`.
+      const noteActive = (sourceId, gridDay) => {
+        if (!activeDays[sourceId]) activeDays[sourceId] = new Set();
+        activeDays[sourceId].add(gridDay);
+      };
+
+      // D-07: record a pass-through label with no taxonomy entry, deduped per source and
+      // capped at UNMAPPED_LABELS_MAX_PER_SOURCE. This is a diagnostic ledger, not a
+      // filter (WR-06) — past the cap the label still RENDERS verbatim in `days[].hazards`,
+      // it is simply no longer additionally recorded here.
+      const noteUnmapped = (sourceId, label) => {
+        if (!unmappedLabels[sourceId]) unmappedLabels[sourceId] = [];
+        const truncated = String(label).slice(0, HAZARDS_LOG_LABEL_MAX_CHARS);
+        if (unmappedLabels[sourceId].includes(truncated)) return;
+        if (unmappedLabels[sourceId].length >= UNMAPPED_LABELS_MAX_PER_SOURCE) return;
+        unmappedLabels[sourceId].push(truncated);
+      };
+
       return {
         // WR-04: the oldest cached reading that contributed to this payload, or null when
         // the degrade was a hard failure with nothing cached to age.
@@ -3908,7 +4015,8 @@ module.exports = NodeHelper.create({
         // category is the raw 0-4 the service reported, or null for no reading (Phase 18
         // MERGE-03 must tell those two apart).
         heatRisk: heatRiskPayload,
-        advisories: advisories
+        advisories: advisories,
+        days: gridDays
       };
 
     } catch (err) {
