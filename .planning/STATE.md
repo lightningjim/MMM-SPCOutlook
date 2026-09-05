@@ -4,13 +4,13 @@ milestone: v2.0
 milestone_name: WPC & CPC Integration + Unified Day Report
 status: executing
 stopped_at: Phase 18 context gathered
-last_updated: "2026-09-05T17:51:26.745Z"
+last_updated: "2026-09-05T18:26:21.322Z"
 last_activity: 2026-09-05 -- Phase 18 execution started
 progress:
   total_phases: 7
   completed_phases: 4
   total_plans: 42
-  completed_plans: 37
+  completed_plans: 38
   percent: 57
 ---
 
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-08-15 after v2.0 scoping)
 ## Current Position
 
 Phase: 18 (merge-precedence-unified-payload-schema) — EXECUTING
-Plan: 5 of 9
+Plan: 6 of 9
 Status: Executing Phase 18
 Last activity: 2026-09-05 -- Phase 18 execution started
 
-Progress: [█████████░] 88%
+Progress: [█████████░] 90%
 
 ## Performance Metrics
 
@@ -68,6 +68,8 @@ Decisions are logged in PROJECT.md Key Decisions table. Recent decisions affecti
 - [Phase 18-02]: Resolved Open Question 1 — reuse _hazardDayOffset verbatim, anchored to EXPIRE_ISO minus 24 hours, never raw VALID_ISO.
 - [Phase 18-02]: Case C (heavily truncated 01:00Z anchor) coincidentally computed the correct grid day, refuting the plan's own predicted failure for that case; only Case B (live-observed 13:00Z truncation) actually failed. The nominal-anchor rule stands regardless.
 - [Phase 18]: 18-04: ERO's long-form taxonomy vocabulary has no registry-owned map; a small tier-value-derived translation table bridges it rather than a second (source,label)->dimension map, and spc-fire's tier token is recovered the same way by reversing fireRiskToValue.
+- [Phase ?]: [Phase 18-05]: _resolveGridDayPrecedence's reportedDays parameter never changes which source wins a dimension; it only keeps 'rank source absent' and 'rank source reported below floor' as two distinct, individually commented code branches per D-14's absent-vs-below-floor requirement.
+- [Phase ?]: [Phase 18-05]: sources[].reporting is gated on enabled for every source, not only the two advisory ones the plan's literal formula named -- a disabled wpc-ero/wpc-wssi must never claim reporting: true. The underlying reportedDays-array over-population is logged in deferred-items.md rather than fixed in 18-04's already-committed code.
 
 ### Pending Todos
 
@@ -111,9 +113,10 @@ Items acknowledged and carried forward from previous milestone close:
 | Phase 18 P01 | 15min | 2 tasks | 1 files |
 | Phase 18 P02 | ~15min | 3 tasks | 1 files |
 | Phase 18 P04 | ~20min | 3 tasks | 1 files |
+| Phase 18 P05 | ~30min | 3 tasks | 1 files |
 
 ## Session Continuity
 
-Last session: 2026-09-05T17:50:49.020Z
+Last session: 2026-09-05T18:26:21.311Z
 Stopped at: Phase 18 context gathered
 Resume file: .planning/phases/18-merge-precedence-unified-payload-schema/18-CONTEXT.md
