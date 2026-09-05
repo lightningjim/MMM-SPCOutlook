@@ -4,13 +4,13 @@ milestone: v2.0
 milestone_name: WPC & CPC Integration + Unified Day Report
 status: executing
 stopped_at: Phase 18 context gathered
-last_updated: "2026-09-05T17:21:01.638Z"
+last_updated: "2026-09-05T17:51:26.745Z"
 last_activity: 2026-09-05 -- Phase 18 execution started
 progress:
   total_phases: 7
   completed_phases: 4
   total_plans: 42
-  completed_plans: 36
+  completed_plans: 37
   percent: 57
 ---
 
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-08-15 after v2.0 scoping)
 ## Current Position
 
 Phase: 18 (merge-precedence-unified-payload-schema) — EXECUTING
-Plan: 4 of 9
+Plan: 5 of 9
 Status: Executing Phase 18
 Last activity: 2026-09-05 -- Phase 18 execution started
 
-Progress: [█████████░] 86%
+Progress: [█████████░] 88%
 
 ## Performance Metrics
 
@@ -67,6 +67,7 @@ Decisions are logged in PROJECT.md Key Decisions table. Recent decisions affecti
 - [Phase 18]: hazardTaxonomy.js derives wpc-hazards' label key set from PRODUCT_REGISTRY.hazardsOutlook.displayColor at require() time rather than restating the label list, throwing load-time if the registry ever renders a colour this file cannot dimension
 - [Phase 18-02]: Resolved Open Question 1 — reuse _hazardDayOffset verbatim, anchored to EXPIRE_ISO minus 24 hours, never raw VALID_ISO.
 - [Phase 18-02]: Case C (heavily truncated 01:00Z anchor) coincidentally computed the correct grid day, refuting the plan's own predicted failure for that case; only Case B (live-observed 13:00Z truncation) actually failed. The nominal-anchor rule stands regardless.
+- [Phase 18]: 18-04: ERO's long-form taxonomy vocabulary has no registry-owned map; a small tier-value-derived translation table bridges it rather than a second (source,label)->dimension map, and spc-fire's tier token is recovered the same way by reversing fireRiskToValue.
 
 ### Pending Todos
 
@@ -109,9 +110,10 @@ Items acknowledged and carried forward from previous milestone close:
 | Quality | Phase 15 F3: `wssi-zero-features-out-of-season` structurally-proven, not mutation-proven (no threshold exists to break) | Accepted, disclosed | Phase 15 close |
 | Phase 18 P01 | 15min | 2 tasks | 1 files |
 | Phase 18 P02 | ~15min | 3 tasks | 1 files |
+| Phase 18 P04 | ~20min | 3 tasks | 1 files |
 
 ## Session Continuity
 
-Last session: 2026-09-05T17:02:27.022Z
+Last session: 2026-09-05T17:50:49.020Z
 Stopped at: Phase 18 context gathered
 Resume file: .planning/phases/18-merge-precedence-unified-payload-schema/18-CONTEXT.md
