@@ -3015,6 +3015,177 @@ module.exports = NodeHelper.create({
   },
 
   /**
+   * MERGE-01/D-01/D-05/D-11/D-13/D-14: re-bucket SPC convective (grid days 1-8) and SPC
+   * fire weather (grid days 1-8) onto the Phase 18 grid, reading the SAME inline locals
+   * the legacy `day1`..`day8`/`fireWeather` blocks below are built from — no second
+   * fetch, no second evaluation. `spc-convective` and `spc-fire` predate the registry
+   * (14 D-08), so unlike `_addHazardsOutlookGridEntries`/`_addHeatRiskGridEntries` there
+   * is no `results.<id>.payload` to iterate; `spcLocals` is a plain object built at the
+   * call site from the existing named locals (D-01's shared-in-memory-values constraint
+   * made concrete).
+   *
+   * D-11: every 12Z product's native day index equals the grid index at every hour, so
+   * SPC day N maps to grid day N directly. This function never calls `_gridDayOf` —
+   * reaching for it here would reintroduce the exact off-by-one D-11 exists to prevent.
+   *
+   * @param gridDays - the fourteen-key `days` skeleton from `_buildGridDays`, mutated in place
+   * @param spcLocals - { extended, riskToValue, valueToFullRisk, riskToColor,
+   *   fireRiskToValue, fireValueToFull, fireRiskToColor, categorical: { 1..3: {...} },
+   *   probabilistic: { 4..8: {...} }, fire: { 1..8: number } } — see call site
+   * @param notes - `{ noteReported, noteActive, noteUnmapped }`
+   */
+  _addSpcGridEntries(gridDays, spcLocals, notes) {
+    const {
+      extended, riskToValue, valueToFullRisk, riskToColor,
+      fireRiskToValue, fireValueToFull, fireRiskToColor
+    } = spcLocals;
+    const floor = NO_RISK_FLOOR["spc-convective"];
+    const fireFloor = NO_RISK_FLOOR["spc-fire"];
+
+    // D-05: reversed out of fireRiskToValue rather than a second hardcoded token table —
+    // no existing local already holds a value->token map for fire weather.
+    const fireValueToRisk = {};
+    for (const token of Object.keys(fireRiskToValue)) {
+      fireValueToRisk[fireRiskToValue[token]] = token;
+    }
+
+    // Convective, grid days 1-3: categorical plus each day's own probabilistic breakdown.
+    // Days 1-3 are fetched unconditionally — no `extended` gate here (D-14).
+    for (let d = 1; d <= 3; d++) {
+      const day = spcLocals.categorical[d];
+      // T-18-04 containment: a malformed local (never observed live; evaluatePolygons'
+      // domain is bounded 0-6 by construction) must not take its sibling days down with it.
+      if (typeof day.risk !== "string") continue;
+
+      // A day-1/2/3 categorical fetch always runs, and a clean "NONE" answer IS a report —
+      // that is what keeps "SPC forgot to report" distinguishable from "SPC reported
+      // below-floor" (D-14's nuance).
+      notes.noteReported("spc-convective", d);
+
+      const value = day.risk === "NONE"
+        ? 0
+        : (Object.prototype.hasOwnProperty.call(riskToValue, day.risk) ? riskToValue[day.risk] : undefined);
+      if (value === undefined) {
+        // D-07: an unrecognised categorical token (never observed live; risk is always
+        // "NONE" or one of riskToValue's own keys) passes through verbatim rather than
+        // emitting `undefined` into the payload.
+        notes.noteUnmapped("spc-convective", day.risk);
+        const dayEntry = gridDays[String(d)];
+        if (dayEntry) {
+          dayEntry.hazards.push({
+            dimension: null, source: "spc-convective", label: day.risk, text: day.risk,
+            value: null, color: null, suppressedBy: null
+          });
+        }
+        continue;
+      }
+
+      // D-13: TSTM (General Thunderstorms) and NONE both fail the floor — neither is an
+      // active claim. `reportedDays` already recorded this day above.
+      if (!floor.categorical(value)) continue;
+
+      notes.noteActive("spc-convective", d);
+
+      // D-05: SPC's own tornado/hail/wind (days 1-2) or probRisk/cig (day 3) breakdown
+      // rides as an optional `detail` sub-object on this single `convective` entry, never
+      // as separate dimensions. Omitted entirely when every field is null/zero/false, so
+      // the payload does not carry an empty sub-object on every day.
+      const detail = d === 3
+        ? { probRisk: day.probRisk, cig: day.cig }
+        : {
+            probRisk: day.probRisk, torRisk: day.torRisk, torCig: day.torCig,
+            hailRisk: day.hailRisk, hailCig: day.hailCig, windRisk: day.windRisk, windCig: day.windCig
+          };
+      const hasDetail = Object.values(detail).some((v) => !!v);
+
+      const dayEntry = gridDays[String(d)];
+      if (dayEntry) {
+        dayEntry.hazards.push({
+          dimension: dimensionOf("spc-convective", day.risk),
+          source: "spc-convective",
+          label: day.risk,
+          text: valueToFullRisk[day.risk],
+          value,
+          color: riskToColor[day.risk],
+          suppressedBy: null,
+          ...(hasDetail ? { detail } : {})
+        });
+      }
+    }
+
+    // Convective, grid days 4-8: probabilistic-only (D-14's fact correction — SPC covers
+    // days 1-8, not 1-3; the coverage boundary that matters for `convective` precedence
+    // is day 8, not day 3). Fetched only when `extended` is true — with `extended: false`
+    // these locals hold the zero/no-risk defaults from a fetch that never happened, so
+    // `noteReported` must not fire for them (a false "answered" claim in the one field
+    // that exists to distinguish "no answer" from "answered no risk").
+    for (let d = 4; d <= 8; d++) {
+      if (!extended) continue;
+
+      const day = spcLocals.probabilistic[d];
+      if (typeof day.risk !== "string") continue; // T-18-04 containment; unreachable today
+
+      notes.noteReported("spc-convective", d);
+
+      // percToRisk returns "NONE" only when the percent is exactly 0 — the "no
+      // probabilistic area / predictability too low" floor for this day range.
+      if (!floor.probabilistic(day.risk)) continue;
+
+      notes.noteActive("spc-convective", d);
+
+      const dayEntry = gridDays[String(d)];
+      if (dayEntry) {
+        dayEntry.hazards.push({
+          dimension: dimensionOf("spc-convective", day.risk),
+          source: "spc-convective",
+          label: day.risk,
+          text: valueToFullRisk[day.risk],
+          value: riskToValue[day.risk],
+          color: riskToColor[day.risk],
+          suppressedBy: null,
+          detail: { probRisk: day.probRisk, sign: day.sign }
+        });
+      }
+    }
+
+    // Fire weather, grid days 1-8. Three reachable states per day: ACTIVE (value > 0,
+    // reported and active), ANSWERED-NO-AREA (value === 0 on a fetched day — reported,
+    // not active, a real "no fire weather area covers this location" reading), and
+    // ABSENT (grid days 9-14 always, plus days 3-8 under extended: false — not reported
+    // at all). fireRiskToValue's three tiers are all >= 1 with no sub-ELEV rung, so the
+    // floor test is `value > 0` rather than a tier comparison (NO_RISK_FLOOR["spc-fire"]).
+    // Days 1-2 are fetched unconditionally; days 3-8 only when `extended` is true.
+    for (let d = 1; d <= 8; d++) {
+      if (d >= 3 && !extended) continue;
+
+      const value = spcLocals.fire[d];
+      if (typeof value !== "number") continue; // T-18-04 containment; unreachable today
+
+      notes.noteReported("spc-fire", d);
+
+      if (!fireFloor(value)) continue; // value === 0: ANSWERED-NO-AREA, reported but not active
+
+      notes.noteActive("spc-fire", d);
+
+      const label = fireValueToRisk[value];
+      const dayEntry = gridDays[String(d)];
+      if (dayEntry) {
+        dayEntry.hazards.push({
+          dimension: dimensionOf("spc-fire", label),
+          source: "spc-fire",
+          label,
+          text: fireValueToFull[value],
+          value,
+          color: fireRiskToColor[value],
+          suppressedBy: null
+        });
+      }
+    }
+    // Sorting is plan 18-05's job (D-15's taxonomy category order) — do not add a second
+    // sort here.
+  },
+
+  /**
    * Fetch a GeoJSON URL with ETag/hash caching, returning parsed data or cached result on hit/error.
    * @param url - GeoJSON endpoint URL to fetch
    * @param isValidBody - body-shape validator for the cache-miss branches; defaults to
@@ -3785,6 +3956,10 @@ module.exports = NodeHelper.create({
       const day2FwDryTURL   = "https://www.spc.noaa.gov/products/fire_wx/day2fw_dryt.lyr.geojson";
       const fireRiskToValue = { ELEV: 1, CRIT: 2, EXTM: 3 };
       const fireValueToFull = { 0: "None", 1: "Elevated", 2: "Critical", 3: "Extremely Critical" };
+      // D-05: mirrors MMM-SPCOutlook.js's own render-path fireRiskToColor map exactly — the
+      // frontend and this backend run in separate processes with no shared module, so this
+      // palette is declared once per side, the same way riskToColor's SPC palette above is.
+      const fireRiskToColor = { 0: "aaaaaa", 1: "FF7F00", 2: "FF0000", 3: "FF00FF" };
       const fireComparator  = { initial: 0, comparator: (best, val) => Math.max(best, val) };
       // Day 3-8 fire weather (extended) — "exper" path, "cat" suffix per Phase 8 verification
       const dnToFireValue = { 5: 1, 8: 2, 10: 3 };
@@ -4258,6 +4433,43 @@ module.exports = NodeHelper.create({
       this._addHeatRiskGridEntries(
         gridDays, results.heatRisk.gridTuples || [], gridAnchorInfo, gridNotes
       );
+
+      // MERGE-01/D-01: spc-convective and spc-fire predate the registry (14 D-08), so
+      // there is no results.<id>.payload for them — spcLocals is built here from the
+      // exact same named locals the legacy day1..day8/fireWeather literals below read,
+      // never a second fetch or re-derivation.
+      const spcLocals = {
+        extended,
+        riskToValue, valueToFullRisk, riskToColor,
+        fireRiskToValue, fireValueToFull, fireRiskToColor,
+        categorical: {
+          1: {
+            risk: day1Risk, probRisk: day1ProbRisk,
+            torRisk: day1TorRisk, torCig: day1TorCig,
+            hailRisk: day1HailRisk, hailCig: day1HailCig,
+            windRisk: day1WindRisk, windCig: day1WindCig
+          },
+          2: {
+            risk: day2Risk, probRisk: day2ProbRisk,
+            torRisk: day2TorRisk, torCig: day2TorCig,
+            hailRisk: day2HailRisk, hailCig: day2HailCig,
+            windRisk: day2WindRisk, windCig: day2WindCig
+          },
+          3: { risk: day3Risk, probRisk: day3ProbRisk, cig: day3Cig }
+        },
+        probabilistic: {
+          4: { risk: day4Risk, probRisk: day4ProbRisk, sign: day4Sign },
+          5: { risk: day5Risk, probRisk: day5ProbRisk, sign: day5Sign },
+          6: { risk: day6Risk, probRisk: day6ProbRisk, sign: day6Sign },
+          7: { risk: day7Risk, probRisk: day7ProbRisk, sign: day7Sign },
+          8: { risk: day8Risk, probRisk: day8ProbRisk, sign: day8Sign }
+        },
+        fire: {
+          1: day1FireRisk, 2: day2FireRisk, 3: day3FireRisk, 4: day4FireRisk,
+          5: day5FireRisk, 6: day6FireRisk, 7: day7FireRisk, 8: day8FireRisk
+        }
+      };
+      this._addSpcGridEntries(gridDays, spcLocals, gridNotes);
 
       return {
         // WR-04: the oldest cached reading that contributed to this payload, or null when
