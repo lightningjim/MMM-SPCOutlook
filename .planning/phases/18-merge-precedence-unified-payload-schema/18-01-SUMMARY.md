@@ -106,3 +106,10 @@ None - no external service configuration required.
 ---
 *Phase: 18-merge-precedence-unified-payload-schema*
 *Completed: 2026-09-05*
+
+## Self-Check: PASSED
+
+- FOUND: hazardTaxonomy.js
+- FOUND: .planning/phases/18-merge-precedence-unified-payload-schema/18-01-SUMMARY.md
+- FOUND: 88d4749 (feat commit)
+- FOUND: 5aa4657 (docs summary commit)

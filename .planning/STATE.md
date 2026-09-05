@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: WPC & CPC Integration + Unified Day Report
-status: planning
+status: executing
 stopped_at: Phase 18 context gathered
-last_updated: "2026-09-05T16:29:19.208Z"
-last_activity: 2026-09-05 -- Phase 18 planning complete
+last_updated: "2026-09-05T16:49:06.729Z"
+last_activity: 2026-09-05 -- Phase 18 execution started
 progress:
   total_phases: 7
   completed_phases: 4
   total_plans: 42
-  completed_plans: 33
+  completed_plans: 34
   percent: 57
 ---
 
@@ -21,16 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-08-15 after v2.0 scoping)
 
 **Core value:** Accurately and efficiently tell the user if they're in a weather risk zone right now — no false negatives, no unnecessary CPU burn on the RPi.
-**Current focus:** Phase 18 — merge, precedence & unified payload schema
+**Current focus:** Phase 18 — merge-precedence-unified-payload-schema
 
 ## Current Position
 
-Phase: 18
-Plan: Not started
-Status: Ready to plan
-Last activity: 2026-09-05 -- Phase 18 planning complete
+Phase: 18 (merge-precedence-unified-payload-schema) — EXECUTING
+Plan: 2 of 9
+Status: Executing Phase 18
+Last activity: 2026-09-05 -- Phase 18 execution started
 
-Progress: [████▓░░░░░] 43%
+Progress: [████████░░] 81%
 
 ## Performance Metrics
 
@@ -64,6 +64,7 @@ Decisions are logged in PROJECT.md Key Decisions table. Recent decisions affecti
 - Roadmap sequencing (binding, from research + user decisions): CFG-02 payload-shape decoupling precedes all data-source phases; data sources land ERO → WSSI/MPD → Hazards Outlook → HeatRisk; merge/precedence logic (Phase 18) follows all data sources and is validated against live captured payloads; getDom() rewrite (Phase 19) is strictly last and single-purpose.
 - [Phase 17-09]: HEAT-04 UAT accepted on fixture evidence (heatrisk-duplicate-validtime-keeps-latest-filedate) rather than live observation — upstream has never served a duplicate idp_validtime to observe
 - [Phase 17-09]: PERF-01 corroborated live on deployed hardware: 10 consecutive new-product batch settled-in log lines over 3h15m uptime, wall clock tracking the slowest member (2275ms) rather than the summed member time (4392ms)
+- [Phase 18]: hazardTaxonomy.js derives wpc-hazards' label key set from PRODUCT_REGISTRY.hazardsOutlook.displayColor at require() time rather than restating the label list, throwing load-time if the registry ever renders a colour this file cannot dimension
 
 ### Pending Todos
 
@@ -104,9 +105,10 @@ Items acknowledged and carried forward from previous milestone close:
 | Quality | Phase 15 F1: WSSI tiers above the D-09 floor unexercised (`WSSI_MODERATE/MAJOR/EXTREME_BODY` declared, unconsumed) | Accepted — floor boundary IS pinned, no per-tier branching exists | Phase 15 close |
 | Quality | Phase 15 F2: dead helpers `kmzToKmlfilename` / `extractKmlFromKmz` (zero call sites) | Remove in a cleanup pass | Phase 15 close |
 | Quality | Phase 15 F3: `wssi-zero-features-out-of-season` structurally-proven, not mutation-proven (no threshold exists to break) | Accepted, disclosed | Phase 15 close |
+| Phase 18 P01 | 15min | 2 tasks | 1 files |
 
 ## Session Continuity
 
-Last session: 2026-09-05T14:26:27.639Z
+Last session: 2026-09-05T16:48:38.359Z
 Stopped at: Phase 18 context gathered
 Resume file: .planning/phases/18-merge-precedence-unified-payload-schema/18-CONTEXT.md

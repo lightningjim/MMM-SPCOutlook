@@ -42,9 +42,9 @@
 ### Cross-Source Merge and Precedence
 
 - [ ] **MERGE-01**: User sees each hazard placed on the day its valid-time window actually covers, via a normalization layer that reconciles SPC's 12Z–12Z, the Hazards Outlook's 00Z–00Z, and ERO Day 1's 01Z–12Z conventions
-- [ ] **MERGE-02**: User sees SPC's granular convective risk instead of WPC's derived Severe Weather flag, suppressed by a hazard-dimension-scoped rule validated against live payloads — never by label-string matching
-- [ ] **MERGE-03**: User sees HeatRisk's 5-level scale instead of WPC's binary Hazardous Heat flag
-- [ ] **MERGE-04**: User does not lose a distinct hazard to over-merging, nor see the same hazard twice from under-merging
+- [x] **MERGE-02**: User sees SPC's granular convective risk instead of WPC's derived Severe Weather flag, suppressed by a hazard-dimension-scoped rule validated against live payloads — never by label-string matching
+- [x] **MERGE-03**: User sees HeatRisk's 5-level scale instead of WPC's binary Hazardous Heat flag
+- [x] **MERGE-04**: User does not lose a distinct hazard to over-merging, nor see the same hazard twice from under-merging
 
 ### Unified Day Report
 
@@ -132,9 +132,9 @@ Deferred to v2.x. Tracked but not in this roadmap.
 | PERF-01 | Phase 17 | Complete |
 | DATA-03 | Phase 17 | Complete |
 | MERGE-01 | Phase 18 | Pending |
-| MERGE-02 | Phase 18 | Pending |
-| MERGE-03 | Phase 18 | Pending |
-| MERGE-04 | Phase 18 | Pending |
+| MERGE-02 | Phase 18 | Complete |
+| MERGE-03 | Phase 18 | Complete |
+| MERGE-04 | Phase 18 | Complete |
 | RPT-07 | Phase 18 | Pending |
 | PERF-03 | Phase 18 | Pending |
 | RPT-01 | Phase 19 | Pending |
