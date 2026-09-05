@@ -258,7 +258,7 @@ Plans:
   5. The backend emits a single `days`/`summary`/`sources`/`advisories`-shaped payload; compact and detailed output can both be produced by reading that one payload, with no precedence logic left to be recomputed downstream (RPT-07).
   6. A cold-cache run on the target Raspberry Pi hardware, with every product toggle enabled, produces a measured startup latency figure recorded before the milestone closes (PERF-03).
 
-**Plans**: 9 plans in 7 waves
+**Plans**: 12 plans in 10 waves
 
 Plans:
 **Wave 1**
@@ -290,6 +290,18 @@ Plans:
 **Wave 7** *(blocked on Wave 6 completion)*
 
 - [ ] 18-09-PLAN.md — live payload capture, per-criterion validation, local PERF-03 figures, human checkpoint (wave 7)
+
+**Wave 8** *(gap closure — blocked on Wave 7 completion)*
+
+- [ ] 18-10-PLAN.md — MERGE-01 inclusive/exclusive endpoint fix plus its live-shaped, mutation-proven scenarios (wave 8)
+
+**Wave 9** *(gap closure — blocked on Wave 8 completion)*
+
+- [ ] 18-11-PLAN.md — sources[].reportedDays toggle-off hygiene fix plus its mutation-proven scenario (wave 9)
+
+**Wave 10** *(gap closure — blocked on Wave 9 completion)*
+
+- [ ] 18-12-PLAN.md — criterion 1 re-validation, MERGE-04 re-check, tracking propagation, operator checkpoints (wave 10)
 
 ### Phase 19: Unified Day Report — getDom() Rewrite
 
