@@ -24,6 +24,9 @@ const select = xpath.useNamespaces({
   k: "http://www.opengis.net/kml/2.2"
 });
 const { PRODUCT_REGISTRY, MPD_FILENAME_PATTERN, hazardLabelKey } = require("./productRegistry");
+// hazardTaxonomy.js's first and only consumer (D-06). Destructured to only what this file
+// actually reads: dimensionOf resolves a (source, label) pair to D-05's dimension roster.
+const { dimensionOf } = require("./hazardTaxonomy");
 // WR-16 / D-10: `showDrought` is NOT a product flag in the `configFlag` sense — it does
 // not gate a fetch, it gates which labels within an already-fetched product (Hazards
 // Outlook) are displayable — so it cannot be derived from `PRODUCT_REGISTRY` and needs
@@ -2764,6 +2767,133 @@ module.exports = NodeHelper.create({
   },
 
   /**
+   * Re-bucket the Hazards Outlook's `gridMatches` side-channel (Task 1) onto the Phase 18
+   * SPC 12Z grid and append the resulting hazard entries to `gridDays[N].hazards` in place.
+   * MERGE-01/D-10.
+   *
+   * Does not sort — plan 18-05 owns final ordering (D-15's taxonomy category order).
+   *
+   * @param gridDays - the fourteen-key `days` skeleton from `_buildGridDays`, mutated in place
+   * @param gridMatches - the raw `{ label, startDate, endDate, group, dayRange }` array from
+   *   `_runArcGisHazardWindowProduct`'s Task 1 side-channel — the SAME objects the legacy
+   *   `hazardsOutlook` block was built from, never re-fetched or re-derived (D-01)
+   * @param anchorInfo - the object `_spcGridAnchor` returns
+   * @param notes - `{ noteReported, noteActive, noteUnmapped }`, declared by 18-02 in
+   *   `getSpcOutlook`'s scope and passed in explicitly so this method stays pure over its
+   *   arguments rather than reaching for `this`
+   */
+  _addHazardsOutlookGridEntries(gridDays, gridMatches, anchorInfo, notes) {
+    const row = PRODUCT_REGISTRY.hazardsOutlook;
+    const todayUtcMs = this._todayUtcMs();
+
+    for (const match of gridMatches) {
+      // T-18-04: contain a malformed match here so its siblings still land (the CR-02
+      // lesson, extended to this grid pass) — the SAME containment `_bucketHazardMatch`
+      // applies to the legacy block.
+      if (!match || typeof match.startDate !== "number" || typeof match.endDate !== "number" ||
+          !Number.isFinite(match.startDate) || !Number.isFinite(match.endDate)) {
+        continue;
+      }
+
+      // D-04's window-band-vs-day-grid routing decision is made on the LEGACY
+      // `_todayUtcMs`-anchored offsets, unchanged by this phase's grid re-anchor — D-09
+      // moves WHICH grid day a day-scoped entry lands on, not WHETHER it is day-scoped.
+      // CONTEXT.md's Deferred section already flags "how 16 D-04's multi-day span
+      // features re-map onto the 12Z grid" as an open item; this plan deliberately
+      // leaves band membership on its existing rule, since re-deciding it on the shifted
+      // anchor would silently move entries between the day grid and the band.
+      const legacyOffsetStart = this._hazardDayOffset(match.startDate, todayUtcMs);
+      const legacyOffsetEnd = this._hazardDayOffset(match.endDate, todayUtcMs);
+      if (legacyOffsetEnd < legacyOffsetStart) continue; // inverted span, contained
+
+      if (match.group !== "precipitation" ||
+          this._isFullNominalWindow(legacyOffsetStart, legacyOffsetEnd, match.dayRange)) {
+        // HAZ-02: Temperature and Wildfire/Drought carry no per-day resolution and route
+        // to the window band unconditionally; D-04's full-nominal-window guard routes a
+        // Precipitation feature spanning its layer's entire nominal window there too.
+        // Neither case reaches the day grid.
+        continue;
+      }
+
+      // D-10: re-anchor onto the SPC 12Z grid using the NOMINAL start, never
+      // `anchorInfo.day1StartMs` — 18-02 established that a truncated start shifts a
+      // 00Z-aligned feature one grid day early.
+      const gridStart = this._gridDayOf(match.startDate, anchorInfo.nominalStartMs);
+      const gridEnd = this._gridDayOf(match.endDate, anchorInfo.nominalStartMs);
+
+      // `endDate` is the exclusive end of the source's own 00Z-00Z span, so a
+      // single-calendar-day feature has `gridEnd = gridStart + 1`. Emit on grid days
+      // `gridStart`..`gridEnd - 1` inclusive — this reproduces 16 D-04's "a 2-day Heavy
+      // Rain renders on both days" behaviour on the new grid. Clamp at the loop header
+      // (T-18-03, the same discipline T-16-05 closed in `_bucketHazardMatch`), never by
+      // filtering inside the body, so a hostile span cannot produce unbounded iteration.
+      const lastGridDay = gridEnd - 1;
+      const clampedStart = Math.max(gridStart, 1);
+      const clampedEnd = Math.min(lastGridDay, GRID_DAY_COUNT);
+      if (clampedEnd < clampedStart) continue; // clamped range is empty; skip entirely
+
+      // D-11/resolveStyle's convention, reused rather than reimplemented: a label present
+      // in the registry's own displayColor map is "mapped"; every mapped label is
+      // guaranteed a HAZARD_TAXONOMY entry (hazardTaxonomy.js derives its key set from
+      // this same map at require() time), so `dimension === null` and `!mapped` agree.
+      const mapped = Object.prototype.hasOwnProperty.call(row.displayColor, match.label);
+      const color = mapped ? row.displayColor[match.label] : row.defaultColor;
+      const dimension = dimensionOf("wpc-hazards", match.label);
+
+      if (dimension === null) {
+        // D-07: record the pass-through label once per source (capped, deduped) so it is
+        // diagnosable from a captured payload, reusing the existing process-lifetime
+        // ledger and truncation (16 D-11's pattern) rather than a second one.
+        notes.noteUnmapped("wpc-hazards", match.label);
+        const logKey = String(match.label).slice(0, HAZARDS_LOG_LABEL_MAX_CHARS);
+        if (!this._loggedUnmappedHazardLabels.has(logKey) &&
+            this._loggedUnmappedHazardLabels.size < HAZARDS_MAX_LOGGED_UNMAPPED_LABELS) {
+          this._loggedUnmappedHazardLabels.add(logKey);
+          Log.info(
+            "MMM-SPCOutlook hazardsOutlook: unmapped hazard label rendered verbatim in the default style: " + logKey
+          );
+        }
+      }
+
+      for (let d = clampedStart; d <= clampedEnd; d++) {
+        // NO_RISK_FLOOR["wpc-hazards"] is FLOOR_PREBAKED: this service has no severity
+        // ladder anywhere in its schema (no valueToTier/includesFeat on the registry
+        // row), so a label reaching the day grid at all IS an above-floor claim — for
+        // THIS product only, "reported" and "active" coincide. That does NOT hold for
+        // the other five sources; a reader who assumes it generally will misread
+        // `sources[].reporting`.
+        notes.noteReported("wpc-hazards", d);
+        notes.noteActive("wpc-hazards", d);
+
+        const dayEntry = gridDays[String(d)];
+        if (!dayEntry) continue; // defensive; unreachable given the clamp above
+
+        // Dedupe by label within a grid day — two layers can contribute the same label
+        // to the same day, matching the legacy block's `seenLabels` behaviour.
+        if (dayEntry.hazards.some((h) => h.source === "wpc-hazards" && h.label === match.label)) {
+          continue;
+        }
+
+        dayEntry.hazards.push({
+          dimension,
+          source: "wpc-hazards",
+          label: match.label,
+          // This service's label IS its display text — there is no separate text map to
+          // look for.
+          text: match.label,
+          // This service has no severity ladder anywhere in its schema, so presence is
+          // the only signal.
+          value: null,
+          color,
+          suppressedBy: null
+        });
+      }
+      // Sorting is plan 18-05's job (D-15's taxonomy category order) — do not add a
+      // second sort here.
+    }
+  },
+
+  /**
    * Fetch a GeoJSON URL with ETag/hash caching, returning parsed data or cached result on hit/error.
    * @param url - GeoJSON endpoint URL to fetch
    * @param isValidBody - body-shape validator for the cache-miss branches; defaults to
@@ -3963,6 +4093,19 @@ module.exports = NodeHelper.create({
         if (unmappedLabels[sourceId].length >= UNMAPPED_LABELS_MAX_PER_SOURCE) return;
         unmappedLabels[sourceId].push(truncated);
       };
+
+      const gridNotes = { noteReported, noteActive, noteUnmapped };
+
+      // MERGE-01/D-01: re-bucket the two wave-2 sources onto the SPC grid, reading the
+      // SAME in-memory values (`gridMatches`/`gridTuples`) their legacy blocks were built
+      // from — no second fetch, no second parse. `results.hazardsOutlook`/`results.heatRisk`
+      // are always well-shaped objects here (Promise.allSettled's rejection branch above
+      // substitutes `{ payload: null, entries: [], anyStale: true }` on an unexpected
+      // throw, which has no `gridMatches`/`gridTuples` key — `|| []` degrades that case to
+      // an empty array rather than throwing here too).
+      this._addHazardsOutlookGridEntries(
+        gridDays, results.hazardsOutlook.gridMatches || [], gridAnchorInfo, gridNotes
+      );
 
       return {
         // WR-04: the oldest cached reading that contributed to this payload, or null when
