@@ -3506,6 +3506,23 @@ module.exports = NodeHelper.create({
 
       let anyStale = false;
 
+      // D-04: per-source degrade attribution for the two SPC inline products
+      // (spc-convective, spc-fire), which predate the registry (14 D-08) and so share this
+      // one `anyStale` accumulator today with no way to tell them apart. Keyed lazily —
+      // an absent key reads as `false` — for the same reason plan 18-02 keys
+      // `reportedDays` lazily: seeding every source id here would restate the roster
+      // hazardTaxonomy.js already owns (D-08). Plan 18-05 iterates SOURCE_IDS when it
+      // assembles `sources[]` and treats a missing key as healthy.
+      //
+      // Deliberately does NOT feed `_stale`: WR-08's payload-wide degrade rule is
+      // unchanged by this plan, and per-product staleness UX remains out of scope per
+      // PROJECT.md — D-04 emits the data only.
+      const staleBySource = {};
+      const noteStale = (sourceId) => {
+        anyStale = true;
+        staleBySource[sourceId] = true;
+      };
+
       //Day 1
 
       //Day 1 Cat
@@ -3521,7 +3538,7 @@ module.exports = NodeHelper.create({
       let day1ExpireIso = null;
       {
         const fetchResult = await this.fetchGeoJsonCached(day1CatURL);
-        if (fetchResult.stale || fetchResult.failed) anyStale = true;
+        if (fetchResult.stale || fetchResult.failed) noteStale("spc-convective");
         if (fetchResult.data === null && fetchResult.cachedResult !== null) {
           day1RiskResult = fetchResult.cachedResult;
           if (this._proximityWeighting) {
@@ -3583,17 +3600,17 @@ module.exports = NodeHelper.create({
       // Day 1 Torn
       const { risk: day1TorRisk, cig: day1TorCig, stale: s1Tor, cigProximity: day1TorCigProximity } =
         await this.fetchAndEvaluateHazard(day1TorURL, day1CigTorURL, loc, percComparator, cigComparator, cigToTier);
-      if (s1Tor) anyStale = true;
+      if (s1Tor) noteStale("spc-convective");
 
       // Day 1 Hail
       const { risk: day1HailRisk, cig: day1HailCig, stale: s1Hail, cigProximity: day1HailCigProximity } =
         await this.fetchAndEvaluateHazard(day1HailURL, day1CigHailURL, loc, percComparator, cigComparator, cigToTier);
-      if (s1Hail) anyStale = true;
+      if (s1Hail) noteStale("spc-convective");
 
       // Day 1 Wind
       const { risk: day1WindRisk, cig: day1WindCig, stale: s1Wind, cigProximity: day1WindCigProximity } =
         await this.fetchAndEvaluateHazard(day1WindURL, day1CigWindURL, loc, percComparator, cigComparator, cigToTier);
-      if (s1Wind) anyStale = true;
+      if (s1Wind) noteStale("spc-convective");
 
       // If Day 1 Risk at all
       const day1ProbRisk = day1TorRisk > 0 || day1HailRisk > 0 || day1WindRisk > 0;
@@ -3606,7 +3623,7 @@ module.exports = NodeHelper.create({
       let day2CatProximity = null;
       {
         const fetchResult = await this.fetchGeoJsonCached(day2CatURL);
-        if (fetchResult.stale || fetchResult.failed) anyStale = true;
+        if (fetchResult.stale || fetchResult.failed) noteStale("spc-convective");
         if (fetchResult.data === null && fetchResult.cachedResult !== null) {
           day2RiskResult = fetchResult.cachedResult;
           if (this._proximityWeighting) {
@@ -3647,17 +3664,17 @@ module.exports = NodeHelper.create({
       // Day 2 Torn
       const { risk: day2TorRisk, cig: day2TorCig, stale: s2Tor, cigProximity: day2TorCigProximity } =
         await this.fetchAndEvaluateHazard(day2TorURL, day2CigTorURL, loc, percComparator, cigComparator, cigToTier);
-      if (s2Tor) anyStale = true;
+      if (s2Tor) noteStale("spc-convective");
 
       // Day 2 Hail
       const { risk: day2HailRisk, cig: day2HailCig, stale: s2Hail, cigProximity: day2HailCigProximity } =
         await this.fetchAndEvaluateHazard(day2HailURL, day2CigHailURL, loc, percComparator, cigComparator, cigToTier);
-      if (s2Hail) anyStale = true;
+      if (s2Hail) noteStale("spc-convective");
 
       // Day 2 Wind
       const { risk: day2WindRisk, cig: day2WindCig, stale: s2Wind, cigProximity: day2WindCigProximity } =
         await this.fetchAndEvaluateHazard(day2WindURL, day2CigWindURL, loc, percComparator, cigComparator, cigToTier);
-      if (s2Wind) anyStale = true;
+      if (s2Wind) noteStale("spc-convective");
 
       // If Day 2 Risk at all
       const day2ProbRisk = day2TorRisk > 0 || day2HailRisk > 0 || day2WindRisk > 0;
@@ -3669,7 +3686,7 @@ module.exports = NodeHelper.create({
       let day3CatProximity = null;
       {
         const fetchResult = await this.fetchGeoJsonCached(day3CatURL);
-        if (fetchResult.stale || fetchResult.failed) anyStale = true;
+        if (fetchResult.stale || fetchResult.failed) noteStale("spc-convective");
         if (fetchResult.data === null && fetchResult.cachedResult !== null) {
           day3RiskResult = fetchResult.cachedResult;
           if (this._proximityWeighting) {
@@ -3711,7 +3728,7 @@ module.exports = NodeHelper.create({
       let day3ProbRisk;
       {
         const fetchResult = await this.fetchGeoJsonCached(day3ProbURL);
-        if (fetchResult.stale || fetchResult.failed) anyStale = true;
+        if (fetchResult.stale || fetchResult.failed) noteStale("spc-convective");
         if (fetchResult.data === null && fetchResult.cachedResult !== null) {
           day3ProbRisk = fetchResult.cachedResult;
         } else if (fetchResult.data === null) {
@@ -3727,7 +3744,7 @@ module.exports = NodeHelper.create({
       let day3CigProximity = null;
       if (day3ProbRisk > 0) {
         const fetchResult = await this.fetchGeoJsonCached(day3CigUrl);
-        if (fetchResult.stale || fetchResult.failed) anyStale = true;
+        if (fetchResult.stale || fetchResult.failed) noteStale("spc-convective");
         if (fetchResult.data === null && fetchResult.cachedResult !== null) {
           day3Cig = fetchResult.cachedResult;
           if (this._proximityWeighting) {
@@ -3776,7 +3793,7 @@ module.exports = NodeHelper.create({
       let day1FireRisk = 0;
       {
         const fetchResult = await this.fetchGeoJsonCached(day1FwWindRHURL);
-        if (fetchResult.stale || fetchResult.failed) anyStale = true;
+        if (fetchResult.stale || fetchResult.failed) noteStale("spc-fire");
         if (fetchResult.data === null && fetchResult.cachedResult !== null) {
           day1FireRisk = Math.max(day1FireRisk, fetchResult.cachedResult);
         } else if (fetchResult.data !== null) {
@@ -3788,7 +3805,7 @@ module.exports = NodeHelper.create({
       }
       {
         const fetchResult = await this.fetchGeoJsonCached(day1FwDryTURL);
-        if (fetchResult.stale || fetchResult.failed) anyStale = true;
+        if (fetchResult.stale || fetchResult.failed) noteStale("spc-fire");
         if (fetchResult.data === null && fetchResult.cachedResult !== null) {
           day1FireRisk = Math.max(day1FireRisk, fetchResult.cachedResult);
         } else if (fetchResult.data !== null) {
@@ -3803,7 +3820,7 @@ module.exports = NodeHelper.create({
       let day2FireRisk = 0;
       {
         const fetchResult = await this.fetchGeoJsonCached(day2FwWindRHURL);
-        if (fetchResult.stale || fetchResult.failed) anyStale = true;
+        if (fetchResult.stale || fetchResult.failed) noteStale("spc-fire");
         if (fetchResult.data === null && fetchResult.cachedResult !== null) {
           day2FireRisk = Math.max(day2FireRisk, fetchResult.cachedResult);
         } else if (fetchResult.data !== null) {
@@ -3815,7 +3832,7 @@ module.exports = NodeHelper.create({
       }
       {
         const fetchResult = await this.fetchGeoJsonCached(day2FwDryTURL);
-        if (fetchResult.stale || fetchResult.failed) anyStale = true;
+        if (fetchResult.stale || fetchResult.failed) noteStale("spc-fire");
         if (fetchResult.data === null && fetchResult.cachedResult !== null) {
           day2FireRisk = Math.max(day2FireRisk, fetchResult.cachedResult);
         } else if (fetchResult.data !== null) {
@@ -3838,7 +3855,7 @@ module.exports = NodeHelper.create({
 
           {
             const fetchResult = await this.fetchGeoJsonCached(windRHUrl);
-            if (fetchResult.stale || fetchResult.failed) anyStale = true;
+            if (fetchResult.stale || fetchResult.failed) noteStale("spc-fire");
             if (fetchResult.data === null && fetchResult.cachedResult !== null) {
               dayRisk = Math.max(dayRisk, fetchResult.cachedResult);
             } else if (fetchResult.data !== null) {
@@ -3850,7 +3867,7 @@ module.exports = NodeHelper.create({
           }
           {
             const fetchResult = await this.fetchGeoJsonCached(dryTUrl);
-            if (fetchResult.stale || fetchResult.failed) anyStale = true;
+            if (fetchResult.stale || fetchResult.failed) noteStale("spc-fire");
             if (fetchResult.data === null && fetchResult.cachedResult !== null) {
               dayRisk = Math.max(dayRisk, fetchResult.cachedResult);
             } else if (fetchResult.data !== null) {
@@ -3884,7 +3901,7 @@ module.exports = NodeHelper.create({
         // Day 4
         {
           const fetch4 = await this.fetchGeoJsonCached(day4URL);
-          if (fetch4.stale || fetch4.failed) anyStale = true;
+          if (fetch4.stale || fetch4.failed) noteStale("spc-convective");
           if (fetch4.data === null && fetch4.cachedResult !== null) {
             day4ProbRisk = fetch4.cachedResult.probRisk;
             day4Sign = fetch4.cachedResult.sign;
@@ -3904,7 +3921,7 @@ module.exports = NodeHelper.create({
         // Day 5
         {
           const fetch5 = await this.fetchGeoJsonCached(day5URL);
-          if (fetch5.stale || fetch5.failed) anyStale = true;
+          if (fetch5.stale || fetch5.failed) noteStale("spc-convective");
           if (fetch5.data === null && fetch5.cachedResult !== null) {
             day5ProbRisk = fetch5.cachedResult.probRisk;
             day5Sign = fetch5.cachedResult.sign;
@@ -3924,7 +3941,7 @@ module.exports = NodeHelper.create({
         // Day 6
         {
           const fetch6 = await this.fetchGeoJsonCached(day6URL);
-          if (fetch6.stale || fetch6.failed) anyStale = true;
+          if (fetch6.stale || fetch6.failed) noteStale("spc-convective");
           if (fetch6.data === null && fetch6.cachedResult !== null) {
             day6ProbRisk = fetch6.cachedResult.probRisk;
             day6Sign = fetch6.cachedResult.sign;
@@ -3944,7 +3961,7 @@ module.exports = NodeHelper.create({
         // Day 7
         {
           const fetch7 = await this.fetchGeoJsonCached(day7URL);
-          if (fetch7.stale || fetch7.failed) anyStale = true;
+          if (fetch7.stale || fetch7.failed) noteStale("spc-convective");
           if (fetch7.data === null && fetch7.cachedResult !== null) {
             day7ProbRisk = fetch7.cachedResult.probRisk;
             day7Sign = fetch7.cachedResult.sign;
@@ -3964,7 +3981,7 @@ module.exports = NodeHelper.create({
         // Day 8
         {
           const fetch8 = await this.fetchGeoJsonCached(day8URL);
-          if (fetch8.stale || fetch8.failed) anyStale = true;
+          if (fetch8.stale || fetch8.failed) noteStale("spc-convective");
           if (fetch8.data === null && fetch8.cachedResult !== null) {
             day8ProbRisk = fetch8.cachedResult.probRisk;
             day8Sign = fetch8.cachedResult.sign;
@@ -4156,20 +4173,31 @@ module.exports = NodeHelper.create({
 
       const eroPayload = results.excessiveRain.payload;
       if (results.excessiveRain.anyStale) anyStale = true;
+      // D-04: attribute this registry product's own already-computed anyStale to its
+      // hazardTaxonomy source id, beside (not instead of) the payload-wide read above.
+      if (results.excessiveRain.anyStale) staleBySource["wpc-ero"] = true;
 
       const wssiPayload = results.winterImpact.payload;
       if (results.winterImpact.anyStale) anyStale = true;
+      if (results.winterImpact.anyStale) staleBySource["wpc-wssi"] = true;
 
       const hazardsPayload = results.hazardsOutlook.payload;
       if (results.hazardsOutlook.anyStale) anyStale = true;
+      if (results.hazardsOutlook.anyStale) staleBySource["wpc-hazards"] = true;
 
       const heatRiskPayload = results.heatRisk.payload;
       if (results.heatRisk.anyStale) anyStale = true;
+      if (results.heatRisk.anyStale) staleBySource["heatrisk"] = true;
 
       const advisories = { spcMD: [], mpd: [] };
+      // D-04: PRODUCT_REGISTRY's kml-advisory row ids ("spcMD", "mpd") are not
+      // hazardTaxonomy.js's source ids ("spc-md", "wpc-mpd") — this two-entry map is the
+      // one place that translation happens, read only by the staleBySource write below.
+      const kmlRowSourceId = { spcMD: "spc-md", mpd: "wpc-mpd" };
       for (const row of kmlRows) {
         advisories[row.id] = results[row.id].entries;
         if (results[row.id].anyStale) anyStale = true;
+        if (results[row.id].anyStale) staleBySource[kmlRowSourceId[row.id]] = true;
       }
 
       // WR-08: a layer that lost one or more polygons to unusable geometry produced a
