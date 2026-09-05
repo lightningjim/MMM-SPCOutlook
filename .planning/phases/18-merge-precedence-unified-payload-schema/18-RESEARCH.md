@@ -339,7 +339,19 @@ const NO_RISK_FLOOR = {
 
 **If this table is empty:** N/A — three items above need confirmation before being treated as locked.
 
-## Open Questions
+## Open Questions (RESOLVED at planning time)
+
+> **Both questions were dispositioned during /bm:plan-phase 18 and neither is outstanding.**
+> - **Q1 (interval-overlap vs rounding math):** resolved analytically by the planner and scheduled for empirical
+>   confirmation. `Math.round(0.5) === 1` in JS, so reusing `_hazardDayOffset` produces D-10's forward-align
+>   direction ONLY when handed a clean 12Z boundary. Fed the live-observed truncated `VALID_ISO` of `13:00Z`,
+>   the same 00Z-aligned feature lands one grid day early. Resolution: derive the nominal anchor as
+>   `EXPIRE_ISO` minus 24 hours (EXPIRE is never truncated) for all offset math, while day 1's `windowStart`
+>   carries the real truncated `VALID_ISO` per D-11. Verified empirically by 18-02 Task 1 before anything
+>   depends on it, and mutation-proven by 18-07. See 18-02's SUMMARY for the recorded result.
+> - **Q2 (SPC fire-weather floor granularity):** carried forward as a documented low-priority, non-blocking
+>   spot-check in 18-01 Task 2, matching this document's own disposition. Not blocking.
+
 
 1. **Does the existing `_hazardDayOffset` rounding math need to become true interval-overlap math for `wpc-hazards`, given SPC's day-1 anchor is not always exactly `12:00:00Z` (per today's live finding)?**
    - What we know: the function already takes an arbitrary anchor parameter and CR-01/D-04-style containment; D-10's derivation assumes a clean half-day offset, which holds when the anchor is exactly 12:00Z but may not hold precisely when SPC's day-1 anchor is truncated (13:00Z observed today).

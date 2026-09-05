@@ -277,6 +277,27 @@ no cache directory — so "cold cache" means exactly "a fresh process," with no 
 
 ---
 
+## Addendum — decided during /bm:plan-phase 18
+
+### D-20 — `summary` shape extension
+
+Not part of the original discussion. Raised by the plan-checker, which found the planner had added
+`windowBandCount` and `advisoryCount` as flat fields on `summary`, widening D-16's explicitly locked
+seven-field shape on its own authority. Surfaced to the user rather than self-approved.
+
+| Option | Description | Selected |
+|--------|-------------|----------|
+| Drop the two counters — Recommended | Keep D-16's exact seven. Under D-01 the legacy `hazardsOutlook.windowBand`/`advisories` arrays survive, so Phase 19 can count them. Cost: if Phase 19 deletes the legacy blocks it needs a backend change to get the counts back. | |
+| Keep them as flat fields | The planner's own proposal. Cost: nine fields where seven were locked, decided by the planner. | |
+| Keep them in a nested `bandDiagnostics` sub-object | D-16's seven stay flat and untouched; the extension is obvious to anyone diffing against D-16. | ✓ |
+
+**User's choice:** Nested `summary.bandDiagnostics` → **D-20**
+
+Separated during the exchange: `anyHazard` becoming a union over days, window band and advisories is
+not an extension — it is what D-16's stated purpose requires. Only the two counters were the addition.
+
+---
+
 ## Notes for future discussions
 
 Two corrections in this session are worth carrying forward as method, not just as facts:
