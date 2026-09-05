@@ -1666,6 +1666,13 @@ module.exports = NodeHelper.create({
   // Called when the front-end (MMM-SPCOutlook.js) sends a socket notification
   socketNotificationReceived: async function(notification, payload) {
     if (notification === "GET_SPC_DATA") {
+      // PERF-03/D-17: the backend-interval bracket — GET_SPC_DATA received to
+      // SPC_DATA_RESULT emitted. Captured before the in-flight guard so the elapsed value
+      // for the poll that actually runs is measured from the instant this notification
+      // arrived, not from whenever the guard happened to let it through. An early return on
+      // an in-flight poll never reaches the elapsed computation below, so it correctly
+      // contributes nothing — no result is emitted on that path.
+      const t0 = this._nowMs();
       // Before the in-flight guard, which would otherwise drop a second instance's request
       // without ever seeing where it was for.
       this._noteRequestLocation(payload);
@@ -1757,6 +1764,9 @@ module.exports = NodeHelper.create({
         // Echoed rather than reformatted so the frontend's comparison is against the exact
         // values it sent (see _noteRequestLocation).
         this._seq = (this._seq || 0) + 1;
+        // PERF-03/D-17: the backend-interval bracket's other end. The existing `_inFlight`
+        // try/finally above already brackets exactly this span; no new try/finally is added.
+        const backendIntervalMs = this._nowMs() - t0;
         this.sendSocketNotification("SPC_DATA_RESULT",
                                     [outlook, this._seq, { epoch: this._epoch ?? null, lat, lon }]);
       } finally {
@@ -4136,6 +4146,12 @@ module.exports = NodeHelper.create({
         staleBySource[sourceId] = true;
       };
 
+      // PERF-03/D-17: brackets the SPC convective + fire-weather inline chain that runs
+      // serially before the Promise.allSettled batch below (see the elapsed assignment
+      // near the end of this block for why it is recorded as one `spc-inline` entry
+      // rather than two per-source entries).
+      const spcInlineStart = this._nowMs();
+
       //Day 1
 
       //Day 1 Cat
@@ -4616,6 +4632,16 @@ module.exports = NodeHelper.create({
         }
       }
 
+      // PERF-03/D-17: the inline chain's other end. Its own code is genuinely interleaved
+      // rather than cleanly separated by source — convective days 1-3 run first, then
+      // fire-weather days 1-8, then convective days 4-8 (this block, gated by `extended`)
+      // — so a per-source split would need to sum two disjoint code regions under the
+      // `spc-convective` key, which this file has no established idiom for. Recorded as a
+      // single `spc-inline` entry covering the whole chain instead, merged into
+      // `memberTimings` below. This span runs BEFORE the `Promise.allSettled` batch, so its
+      // time ADDS to the poll's wall time rather than overlapping with the batch members.
+      const spcInlineElapsedMs = this._nowMs() - spcInlineStart;
+
       const day4Risk = this.percToRisk(day4ProbRisk, day4Sign);
       const day5Risk = this.percToRisk(day5ProbRisk, day5Sign);
       const day6Risk = this.percToRisk(day6ProbRisk, day6Sign);
@@ -4758,7 +4784,13 @@ module.exports = NodeHelper.create({
       // D-10: each member's own start time is captured BEFORE its await, with elapsed
       // recorded in a `finally`, so an overlap probe can observe issue order independently
       // of resolve order — the instrument Phase 18's PERF-03 Pi measurement consumes.
-      const memberTimings = {};
+      // PERF-03/D-17: seeded with the inline SPC/fire-weather chain's own elapsed time
+      // (spcInlineElapsedMs, captured above) rather than a parallel timing structure — the
+      // per-product breakdown extends this SAME object PERF-01 already built. `spc-inline`
+      // is NOT one of the members the batch below settles; it ran serially before this
+      // point, so its time ADDS to the poll's wall time rather than overlapping with any
+      // batch member.
+      const memberTimings = { "spc-inline": spcInlineElapsedMs };
       const settleStart = this._nowMs();
       const settled = await Promise.allSettled(members.map(async (m) => {
         const t0 = this._nowMs();
@@ -4950,6 +4982,21 @@ module.exports = NodeHelper.create({
       const gridSummary = this._buildGridSummary(
         gridDays, hazardsPayload.windowBand, advisories, sourceHealth, gridAnchorInfo
       );
+
+      // PERF-03/D-17: name the slowest source explicitly (the key with the maximum
+      // elapsed value) rather than leaving a reader to scan the JSON blob the batch-settled
+      // log line above already prints. Held on a helper-global read in-process by
+      // `socketNotificationReceived`, NOT added as a payload key — a timing figure that
+      // varies every poll would defeat PERF-02's byte-identity intent for cache comparison,
+      // and the socket handler runs in the same process so it needs no transport for this.
+      let slowestId = null, slowestMs = -1;
+      for (const [id, ms] of Object.entries(memberTimings)) {
+        if (ms > slowestMs) { slowestId = id; slowestMs = ms; }
+      }
+      this._lastPollTimings = {
+        memberTimings,
+        slowest: slowestId === null ? null : { id: slowestId, ms: slowestMs }
+      };
 
       return {
         // WR-04: the oldest cached reading that contributed to this payload, or null when
