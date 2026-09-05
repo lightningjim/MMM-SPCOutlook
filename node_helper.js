@@ -660,8 +660,15 @@ module.exports = NodeHelper.create({
    * @param loc - turf point representing the query location
    * @param productToggles - this request's own toggle snapshot (WR-13), including the
    *   `showDrought` sub-toggle
-   * @returns { payload, anyStale } — payload always carries the full day3..day14 +
-   *   windowBand block regardless of the toggle (Phase 14 D-05)
+   * @returns { payload, anyStale, gridMatches, idpFiledate } — payload always carries the
+   *   full day3..day14 + windowBand block regardless of the toggle (Phase 14 D-05).
+   *   `gridMatches` and `idpFiledate` are Phase 18 D-01 additive side-channels: the SAME
+   *   normalized match objects the legacy bucketer above already consumed (never a second
+   *   read of `fetchResult.data`, never a second `extractPolygons`/layer loop) and the
+   *   newest per-layer publish timestamp, so the Phase 18 merge stage (18-03) can re-anchor
+   *   this product's day-scoped labels onto the SPC 12Z grid (D-09) without a second fetch,
+   *   while `payload` stays on its own `_todayUtcMs`-anchored day3..day14 keys, untouched,
+   *   under D-01.
    */
   async _runArcGisHazardWindowProduct(row, loc, productToggles) {
     const todayUtcMs = this._todayUtcMs();
@@ -670,6 +677,15 @@ module.exports = NodeHelper.create({
     // poll still returns the full day3..day14 + windowBand block, just empty.
     const dayBuckets = {};
     const windowEntries = [];
+    // Phase 18 D-01 side-channel: the raw, clock-independent match objects the legacy
+    // bucketer below already consumes, handed to the Phase 18 merge stage (18-03) so it
+    // can re-bucket onto the SPC grid without a second fetch or a second layer loop.
+    // Seeded before the toggle check, same as dayBuckets/windowEntries, so a toggle-off
+    // poll still returns an array (never undefined) — every 18-05 consumer iterates it.
+    const gridMatches = [];
+    // The newest idp_filedate observed across all layers this poll, ignoring null
+    // (16 D-13's per-layer publish timestamp; a genuinely empty layer contributes none).
+    let newestFiledate = null;
     let anyStale = false;
 
     // `extractPolygons` calls `includesFeat(label, value)` where `label` is the
@@ -789,6 +805,14 @@ module.exports = NodeHelper.create({
             }
           }
 
+          // Phase 18 D-01/D-04: track the newest publish timestamp across all layers,
+          // ignoring null — this is 16 D-13's `idp_filedate`, surfaced in `sources` by a
+          // later plan. Runs on both the cache-hit and fresh-fetch branches, same as the
+          // freshness check above, since `layerFiledate` is populated on both.
+          if (typeof layerFiledate === "number" && (newestFiledate === null || layerFiledate > newestFiledate)) {
+            newestFiledate = layerFiledate;
+          }
+
           // Re-bucket, every poll, cache hit or miss — deliberately outside and after
           // the cache branch above. It runs identically on a hit and a miss, against
           // THIS poll's `todayUtcMs`; moving it inside the miss branch would reintroduce
@@ -797,6 +821,18 @@ module.exports = NodeHelper.create({
             // WR-01: the label gate runs HERE, beside re-bucketing, for the same reason —
             // both are decisions the cache must not be allowed to freeze.
             if (!displayable(match.label)) continue;
+            // Phase 18 D-01: push the SAME match object the legacy bucketer below
+            // consumes, from the same loop iteration — the shared-in-memory-values
+            // constraint made concrete. No second read of `fetchResult.data`, no second
+            // `extractPolygons`, no second loop over `layers`. `18-03` re-anchors this
+            // onto the SPC 12Z grid without ever re-fetching or re-parsing.
+            gridMatches.push({
+              label: match.label,
+              startDate: match.startDate,
+              endDate: match.endDate,
+              group: layer.group,
+              dayRange: layer.dayRange
+            });
             // WR-03: hand the bucketer the row's own span, so its day-grid clamp and the
             // payload-assembly loop below read ONE declaration of this product's range.
             this._bucketHazardMatch(match, layer, todayUtcMs, dayBuckets, windowEntries,
@@ -916,7 +952,7 @@ module.exports = NodeHelper.create({
     // serve-last-known-good precedent exists precisely so a WPC hiccup during an active
     // hazard does not blank the display — rows are never suppressed when `anyStale` is
     // true.
-    return { payload: block, anyStale };
+    return { payload: block, anyStale, gridMatches, idpFiledate: newestFiledate };
   },
 
   /**
@@ -931,9 +967,15 @@ module.exports = NodeHelper.create({
    * @param loc - a turf Point Feature (built once via turf.point([lon, lat])); reprojected
    *   to Web Mercator here, immediately before the URL is built
    * @param productToggles - this request's own toggle snapshot (WR-13)
-   * @returns { payload, anyStale } — payload always carries the full day1..dayN block
-   *   (row.days), regardless of the toggle (Phase 14 D-05/D-02); anyStale is never raised
-   *   by the toggle-off path, only by a genuine fetch/data problem
+   * @returns { payload, anyStale, gridTuples, idpFiledate } — payload always carries the
+   *   full day1..dayN block (row.days), regardless of the toggle (Phase 14 D-05/D-02);
+   *   anyStale is never raised by the toggle-off path, only by a genuine fetch/data
+   *   problem. `gridTuples` and `idpFiledate` are Phase 18 D-01 additive side-channels:
+   *   every deduped catalog tuple this poll saw (unfiltered by this runner's own
+   *   `_todayUtcMs`-relative span, which the Phase 18 merge stage must NOT apply — see the
+   *   comment at the push site) and the newest per-tuple publish timestamp, so 18-03 can
+   *   re-anchor onto the SPC 12Z grid without a second fetch, while `payload` stays on its
+   *   own day1..dayN keys, untouched, under D-01.
    */
   async _runHeatRiskProduct(row, loc, productToggles) {
     // Phase 14 D-05/D-02: seed the full block BEFORE anything else, so a toggle-off poll
@@ -945,10 +987,16 @@ module.exports = NodeHelper.create({
       payload["day" + d] = { category: null, text: "", color: "" };
     }
 
+    // Phase 18 D-01 side-channels: declared before every return path, including the
+    // toggle-off one below, so a consumer never sees `undefined` — every 18-05 consumer
+    // iterates `gridTuples` unconditionally.
+    const gridTuples = [];
+    let newestFiledate = null;
+
     // D-02: this all-null block is a "no reading taken" state, NOT the D-04
     // all-NoData failure state — the toggle being off must never raise anyStale.
     if (productToggles[row.configFlag] !== true) {
-      return { payload, anyStale: false };
+      return { payload, anyStale: false, gridTuples, idpFiledate: newestFiledate };
     }
 
     let anyStale = false;
@@ -1020,7 +1068,7 @@ module.exports = NodeHelper.create({
               "(features=" + featuresLen + ", Values=" + valuesLen + "); abandoning HeatRisk for this poll"
             );
           }
-          return { payload, anyStale };
+          return { payload, anyStale, gridTuples, idpFiledate: newestFiledate };
         }
         const deduped = this._dedupeHeatRiskByValidTime(raw);
         // _cacheHeatRiskTuples both writes the clock-independent cache entry AND returns
@@ -1064,6 +1112,22 @@ module.exports = NodeHelper.create({
       // no longer silent.
       const validtimeByDay = new Map();
       for (const t of sorted) {
+        // Phase 18 D-01/MERGE-01: push every deduped tuple BEFORE the
+        // `_todayUtcMs`-relative span filter below, and track its filedate. That filter
+        // is relative to THIS runner's own clock anchor, but the Phase 18 grid's day 1
+        // can start twelve hours before `_todayUtcMs` (during the 00Z-12Z part of a UTC
+        // day, grid day 1 started at 12Z YESTERDAY) — so the exact tile that covers grid
+        // day 1 is the one this filter discards as day offset 0. Dropping it here would
+        // leave grid day 1 with no HeatRisk reading for twelve hours out of every
+        // twenty-four: a false negative on a heat-safety product this project's value
+        // statement forbids outright. 18-03 re-derives its own grid day from
+        // `idpValidtime` against the SPC anchor instead of reusing `d` below.
+        gridTuples.push({ idpValidtime: t.idpValidtime, category: t.category, idpFiledate: t.idpFiledate });
+        if (typeof t.idpFiledate === "number" && Number.isFinite(t.idpFiledate) &&
+            (newestFiledate === null || t.idpFiledate > newestFiledate)) {
+          newestFiledate = t.idpFiledate;
+        }
+
         const d = this._heatRiskDayOffset(t.idpValidtime, todayUtcMs);
         if (d < 1 || d > row.days) continue; // outside this product's declared span
         inSpan.push(t);
@@ -1191,14 +1255,14 @@ module.exports = NodeHelper.create({
         }
       }
 
-      return { payload, anyStale };
+      return { payload, anyStale, gridTuples, idpFiledate: newestFiledate };
     } catch (err) {
       anyStale = true;
       Log.error(
         "MMM-SPCOutlook _runHeatRiskProduct: fetch/parse/evaluate failed, leaving the day block at no reading",
         err
       );
-      return { payload, anyStale };
+      return { payload, anyStale, gridTuples, idpFiledate: newestFiledate };
     }
   },
 
