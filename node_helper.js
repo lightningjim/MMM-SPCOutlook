@@ -214,6 +214,14 @@ module.exports = NodeHelper.create({
     // D-12: guards the once-per-process log line when the SPC grid anchor falls back to
     // the clock estimate (no usable VALID_ISO/EXPIRE_ISO from the day-1 outlook).
     this._loggedGridAnchorFallback = false;
+    // PERF-03/D-18: guards the once-per-process cold-start timing summary, logged right
+    // after the first successful SPC_DATA_RESULT is sent. No config flag — D-18 rejected
+    // one explicitly as a sixteenth independently-toggleable boolean input.
+    this._loggedColdStartTiming = false;
+    // PERF-03/D-17: the process-start end of the wall-clock bracket. node_helper.js's only
+    // cache is the in-memory `_geoJsonCache` Map above, so a fresh process IS a cold cache
+    // and needs no other setup.
+    this._processStartMs = this._nowMs();
     // MERGE-01: excessiveRain.day1ValidTime has had no consumer since 14 D-03 and is
     // unexercised end-to-end until this plan first reads it — guards a single logged
     // sample per process so a null/malformed field surfaces now rather than in Phase 19.
@@ -1769,6 +1777,28 @@ module.exports = NodeHelper.create({
         const backendIntervalMs = this._nowMs() - t0;
         this.sendSocketNotification("SPC_DATA_RESULT",
                                     [outlook, this._seq, { epoch: this._epoch ?? null, lat, lon }]);
+        // PERF-03/D-18: the cold-start timing summary, logged exactly once per process
+        // right after the first result was actually sent — never on an in-flight skip
+        // (which returns above and never reaches this line at all), so that path can never
+        // consume this guard on a poll that measured nothing. No config flag (D-18).
+        if (!this._loggedColdStartTiming) {
+          this._loggedColdStartTiming = true;
+          const wallClockMs = this._nowMs() - (this._processStartMs ?? this._nowMs());
+          // A hard failure inside getSpcOutlook's own catch never reaches its
+          // `_lastPollTimings` assignment (D-17's helper-global), so this first poll can
+          // still fall through here with nothing recorded yet — fall back to an empty
+          // breakdown rather than throwing on a null read.
+          const timings = this._lastPollTimings || { memberTimings: {}, slowest: null };
+          Log.info("MMM-SPCOutlook: cold-start timing -- backend interval " + backendIntervalMs +
+                   "ms (GET_SPC_DATA received -> SPC_DATA_RESULT emitted); " + wallClockMs +
+                   "ms since process start (module-load to first result sent)");
+          Log.info("MMM-SPCOutlook: cold-start per-product breakdown " + JSON.stringify(timings.memberTimings));
+          Log.info("MMM-SPCOutlook: cold-start slowest source " +
+                   (timings.slowest ? timings.slowest.id + " (" + timings.slowest.ms + "ms)" : "none"));
+          Log.info("MMM-SPCOutlook: cold-start timing is logged once per process start (D-18), gated by " +
+                   "no config flag; the target-hardware (Raspberry Pi) figure is a UAT item tracked " +
+                   "separately from this phase (D-19)");
+        }
       } finally {
         this._inFlight = false;
       }
