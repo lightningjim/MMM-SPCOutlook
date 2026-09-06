@@ -313,7 +313,7 @@ Plans:
 
 **Wave 13** *(gap closure — blocked on Wave 12 completion)*
 
-- [ ] 18-15-PLAN.md — bound the HeatRisk grid loop by GRID_DAY_COUNT alone, plus the suite's first sub-12Z scenario (wave 13)
+- [x] 18-15-PLAN.md — bound the HeatRisk grid loop by GRID_DAY_COUNT alone, plus the suite's first sub-12Z scenario (wave 13)
 
 **Wave 14** *(gap closure — blocked on Wave 13 completion)*
 
@@ -360,7 +360,7 @@ Phases execute in numeric order: 14 → 15 → 16 → 17 → 18 → 19
 | 15. WPC Winter Storm Severity & Mesoscale Precipitation Discussion | v2.0 | 6/9 | In Progress|  |
 | 16. WPC Day 3–7 / CPC Day 8–14 Hazards Outlook | v2.0 | 8/8 | Complete    | 2026-08-27 |
 | 17. NWS/WPC HeatRisk & Parallelized Fetching | v2.0 | 9/9 | Complete    | 2026-09-01 |
-| 18. Merge, Precedence & Unified Payload Schema | v2.0 | 14/16 | In Progress|  |
+| 18. Merge, Precedence & Unified Payload Schema | v2.0 | 15/16 | In Progress|  |
 | 19. Unified Day Report — getDom() Rewrite | v2.0 | 0/? | Not started | - |
 
 ## Backlog
