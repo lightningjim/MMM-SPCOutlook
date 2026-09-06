@@ -9664,6 +9664,118 @@ const scenarios = [
     }
   },
   {
+    // 18-VERIFICATION.md gap 1's named missing coverage: a genuinely INCLUSIVE MULTI-DAY
+    // Precipitation span, not the zero-duration degenerate case 18-10 already covers,
+    // cross-checked by resolved calendar date against the legacy hazardsOutlook block
+    // D-01 requires it to agree with. merge-parity-unified-days-agree-with-legacy-blocks
+    // deliberately EXCLUDES wpc-hazards from its comparison (D-09), so this scenario is
+    // the only place the two representations are compared on the one product where they
+    // disagreed. Mutation to prove RED (Task 3's mutation M1): restore
+    // `const lastGridDay = Math.max(gridStart, gridEnd - 1);` in
+    // _addHazardsOutlookGridEntries -- against that shipped (pre-D-21) expression this
+    // throws a parity mismatch naming 2026-09-10 as present in the legacy block and
+    // absent from days[].
+    name: "merge-grid-hazards-multi-day-inclusive-span-matches-the-legacy-block",
+    run: async (helper) => {
+      const NOW_MS = Date.UTC(2026, 8, 5, 21, 41);
+      resetHelper(helper);
+      resetLogs();
+      const originalPointInPolygon = turfStub.pointInPolygon;
+      turfStub.pointInPolygon = () => true;
+      try {
+        helper._nowMs = () => NOW_MS;
+        helper._products = { showHazardsOutlook: true };
+        const feature = hazardsFeature({
+          label: "Heavy Rain", startDate: Date.UTC(2026, 8, 8), endDate: Date.UTC(2026, 8, 10)
+        });
+        const layer4Fixture = () => httpResponse({
+          body: hazardsCollection([feature]),
+          etag: "merge-grid-hazards-multi-day-inclusive-layer4-v1"
+        });
+        // Deliberately no SPC day-1 VALID_ISO/EXPIRE_ISO route: the estimated-anchor
+        // clock fallback is the branch the live capture recorded and the one the
+        // <interfaces> arithmetic table this scenario is built on assumes.
+        installHttp(helper, hazardsRoutes({ 4: layer4Fixture }));
+        const out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showHazardsOutlook: true });
+        assertPayloadIntact(out);
+        assertHazardsBlockIntact(out);
+
+        // Precondition guard: collect every legacy day carrying "Heavy Rain" by resolved
+        // calendar date. Fewer than three distinct dates means the fixture did not
+        // produce a genuinely multi-day legacy span, so a missing grid day could not be
+        // attributed to the emission bound -- this is what stops the scenario from
+        // passing vacuously if the routing gate, the group filter or
+        // _isFullNominalWindow ever divert this feature to the window band.
+        const legacyDates = new Set();
+        for (let d = 3; d <= 14; d++) {
+          const day = out.hazardsOutlook[`day${d}`];
+          if (day.hazards.some((h) => h.label === "Heavy Rain")) {
+            legacyDates.add(day.date);
+          }
+        }
+        if (legacyDates.size < 3) {
+          throw new Error(
+            `precondition failed: expected the legacy hazardsOutlook block to carry "Heavy Rain" on at least 3 distinct calendar dates, got ${JSON.stringify([...legacyDates])}`
+          );
+        }
+
+        // Primary: parity by resolved calendar date, never by a hardcoded offset
+        // relation between the two numbering systems.
+        const unifiedDates = new Set();
+        for (let d = 1; d <= 14; d++) {
+          const day = out.days[String(d)];
+          if (day.hazards.some((h) => h.source === "wpc-hazards" && h.label === "Heavy Rain")) {
+            unifiedDates.add(day.date);
+          }
+        }
+        const mismatches = [];
+        for (const date of legacyDates) {
+          if (!unifiedDates.has(date)) mismatches.push(`${date}: present in legacy hazardsOutlook, absent from days[]`);
+        }
+        for (const date of unifiedDates) {
+          if (!legacyDates.has(date)) mismatches.push(`${date}: present in days[], absent from legacy hazardsOutlook`);
+        }
+        if (mismatches.length !== 0) {
+          throw new Error(`parity mismatch (date: which side lacks it): ${mismatches.join(" | ")}`);
+        }
+
+        // Additionally assert directly, so a future refactor that broke BOTH
+        // representations identically could not pass by symmetry.
+        for (const [gridDay, date] of [["4", "2026-09-08"], ["5", "2026-09-09"], ["6", "2026-09-10"]]) {
+          const entries = out.days[gridDay].hazards.filter((h) => h.source === "wpc-hazards" && h.label === "Heavy Rain");
+          if (entries.length !== 1 || entries[0].dimension !== "heavy-precip") {
+            throw new Error(`expected exactly one wpc-hazards "Heavy Rain" entry with dimension heavy-precip on grid day ${gridDay}, got ${JSON.stringify(out.days[gridDay].hazards)}`);
+          }
+          if (out.days[gridDay].date !== date) {
+            throw new Error(`expected grid day ${gridDay} date ${date}, got ${JSON.stringify(out.days[gridDay].date)}`);
+          }
+        }
+
+        // control: the day before the span opens and the day after it closes both carry
+        // NO entry, proving the inclusive bound ends where the span ends rather than
+        // running past it, and that the set comparison above is not vacuously satisfied
+        // by an entry smeared across every day.
+        const day3 = out.days["3"].hazards.filter((h) => h.source === "wpc-hazards" && h.label === "Heavy Rain");
+        const day7 = out.days["7"].hazards.filter((h) => h.source === "wpc-hazards" && h.label === "Heavy Rain");
+        if (day3.length !== 0 || day7.length !== 0 || out.days["3"].date !== "2026-09-07" || out.days["7"].date !== "2026-09-11") {
+          throw new Error(`control: expected NO wpc-hazards "Heavy Rain" entry on grid day 3 (2026-09-07) or grid day 7 (2026-09-11), got day3=${JSON.stringify(day3)} day7=${JSON.stringify(day7)}`);
+        }
+
+        // The recovered day must also be visible to the precedence resolver, not just
+        // days[] -- CR-02's reminder that a day dropped before noteReported is invisible
+        // to both.
+        const wpcHazardsHealth = out.sources["wpc-hazards"];
+        for (const d of [4, 5, 6]) {
+          if (!wpcHazardsHealth.reportedDays.includes(d) || !wpcHazardsHealth.activeDays.includes(d)) {
+            throw new Error(`expected sources['wpc-hazards'].reportedDays and .activeDays to include grid day ${d}, got ${JSON.stringify(wpcHazardsHealth)}`);
+          }
+        }
+      } finally {
+        turfStub.pointInPolygon = originalPointInPolygon;
+      }
+    }
+  },
+  {
     // MERGE-01/deferred-items.md: closes the sources[].reportedDays over-reporting
     // defect for the two arcgis-day-layers registry products. _runArcGisDayProduct seeds
     // every day{N}Risk to the string "NONE" before its own fetch gate (Phase 14 D-05's
