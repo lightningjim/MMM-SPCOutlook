@@ -7965,6 +7965,121 @@ const scenarios = [
     }
   },
   {
+    // CR-04 (18-VERIFICATION.md gap 1, second half): _spcGridAnchor validated that
+    // expireMs parsed but never that its window was still in force, so an EXPIRE_ISO
+    // that had already elapsed anchored the entire fourteen-day grid one day early while
+    // sources["spc-convective"].gridAnchor still reported "observed". This fires only
+    // when _validTimeOfWinner finds a value to anchor on -- which requires the user to be
+    // standing inside an active day-1 convective polygon -- so the users who saw the
+    // whole-grid day shift were exactly the users for whom correct day attribution
+    // matters most.
+    // Primary body: LABEL "SLGT", VALID_ISO "2026-09-04T13:00:00Z",
+    // EXPIRE_ISO "2026-09-05T12:00:00Z" -- elapsed 30 minutes before the pinned clock
+    // (2026-09-05T12:30:00Z).
+    // Control body: 18-02's live-observed Case B pair, VALID_ISO "2026-09-05T13:00:00Z" /
+    // EXPIRE_ISO "2026-09-06T12:00:00Z" -- still in force at the same pinned clock.
+    // Mutation to prove RED: remove `&& expireMs > this._nowMs()` from _spcGridAnchor.
+    // Second mutation to prove the control is load-bearing, not decorative: invert the
+    // guard to `expireMs < this._nowMs()`, which must turn the CONTROL half red.
+    name: "merge-grid-anchor-elapsed-expire-iso-degrades-to-estimated",
+    run: async (helper) => {
+      const originalPointInPolygon = turfStub.pointInPolygon;
+      const runWithProperties = async (props) => {
+        resetHelper(helper);
+        resetLogs();
+        turfStub.pointInPolygon = () => true;
+        helper._nowMs = () => Date.UTC(2026, 8, 5, 12, 30);
+        helper._products = {};
+        installHttp(helper, [
+          ["day1otlk_cat.lyr.geojson", () => httpResponse({
+            body: {
+              type: "FeatureCollection",
+              features: [{
+                type: "Feature",
+                properties: props,
+                geometry: { type: "Polygon", coordinates: [SAMPLE_RING] }
+              }]
+            },
+            etag: "merge-grid-anchor-elapsed-v1"
+          })],
+          ...hazardsRoutes()
+        ]);
+        const out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, {});
+        assertPayloadIntact(out);
+        return out;
+      };
+
+      // Primary and control are each asserted inside their own try/catch and their
+      // failures collected rather than thrown immediately, so an inverted-guard mutation
+      // that breaks BOTH halves (a strict-inequality inversion misclassifies every case,
+      // not just one) still surfaces the control's own failure message instead of being
+      // masked by the primary throwing first.
+      const errors = [];
+      try {
+        try {
+          const primaryOut = await runWithProperties({
+            LABEL: "SLGT",
+            VALID_ISO: "2026-09-04T13:00:00Z",
+            EXPIRE_ISO: "2026-09-05T12:00:00Z"
+          });
+
+          // Precondition guard: without a winning day-1 polygon there is no EXPIRE_ISO
+          // for _spcGridAnchor to read, and an "estimated" result would be vacuous.
+          if (primaryOut.day1.risk !== "SLGT") {
+            throw new Error(
+              `precondition failed: day1.risk is ${JSON.stringify(primaryOut.day1.risk)}, expected SLGT — without a winning day-1 polygon there is no EXPIRE_ISO for _spcGridAnchor to read and the "estimated" result would be vacuous`
+            );
+          }
+
+          if (primaryOut.sources["spc-convective"].gridAnchor !== "estimated") {
+            throw new Error(`CR-04: expected an elapsed EXPIRE_ISO to degrade to "estimated", got ${JSON.stringify(primaryOut.sources["spc-convective"].gridAnchor)}`);
+          }
+          if (primaryOut.days["1"].date !== "2026-09-05") {
+            throw new Error(`CR-04: day1.date should name the outlook period currently in progress; "2026-09-04" would mean the elapsed EXPIRE_ISO anchored the whole grid a day early, got ${primaryOut.days["1"].date}`);
+          }
+          if (primaryOut.days["1"].windowStart !== "2026-09-05T12:00:00.000Z" || primaryOut.days["1"].windowEnd !== "2026-09-06T12:00:00.000Z") {
+            throw new Error(`CR-04: day 1 should describe the period currently in progress rather than the one that already ended, got windowStart=${primaryOut.days["1"].windowStart} windowEnd=${primaryOut.days["1"].windowEnd}`);
+          }
+          requireLog(
+            ["already elapsed"],
+            "an elapsed EXPIRE_ISO fell back to the clock estimate but the reworded fallback log never fired"
+          );
+        } catch (e) {
+          errors.push(e.message);
+        }
+
+        // Control: a still-in-force VALID_ISO/EXPIRE_ISO pair proves the new guard
+        // narrows the observed branch rather than disabling it -- a fix that simply
+        // deleted the observed branch could not pass this half. Runs regardless of the
+        // primary outcome above.
+        try {
+          const controlOut = await runWithProperties({
+            LABEL: "SLGT",
+            VALID_ISO: "2026-09-05T13:00:00Z",
+            EXPIRE_ISO: "2026-09-06T12:00:00Z"
+          });
+          if (controlOut.sources["spc-convective"].gridAnchor !== "observed") {
+            throw new Error(`control: expected a still-in-force EXPIRE_ISO to resolve "observed", got ${JSON.stringify(controlOut.sources["spc-convective"].gridAnchor)}`);
+          }
+          if (controlOut.days["1"].date !== "2026-09-05") {
+            throw new Error(`control: day1.date should be 2026-09-05, got ${controlOut.days["1"].date}`);
+          }
+          if (controlOut.days["1"].windowStart !== "2026-09-05T13:00:00.000Z") {
+            throw new Error(`control: day1.windowStart should carry the truncated VALID_ISO, got ${controlOut.days["1"].windowStart}`);
+          }
+        } catch (e) {
+          errors.push(e.message);
+        }
+
+        if (errors.length > 0) {
+          throw new Error(errors.join(" | "));
+        }
+      } finally {
+        turfStub.pointInPolygon = originalPointInPolygon;
+      }
+    }
+  },
+  {
     // MERGE-01's near-boundary case (D-10): a 00Z-00Z wpc-hazards Precipitation feature
     // forward-aligns onto the SPC 12Z grid day that STARTS at 12Z on its own calendar
     // date, never the grid day before it. Reuses 18-02's live-observed VALID_ISO/
