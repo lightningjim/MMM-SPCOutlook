@@ -166,12 +166,12 @@ poll — not this one.
 
 | Criterion | Verdict | Evidence |
 |---|---|---|
-| 1 — MERGE-01 (near-boundary placement) | **FAIL** | See "Criterion 1" detail below. |
+| 1 — MERGE-01 (near-boundary placement) | **PASS** (re-validated; **FAIL** at 2026-09-05 capture time) | See the new subsection under "Criterion 1" detail below (post-18-10-fix replay). |
 | 2 — MERGE-02 (SPC suppresses WPC Severe Weather, dimension-keyed) | **NOT OBSERVABLE** (payload half); **PASS** (code-path half) | See "Criterion 2" detail below. |
-| 4 — MERGE-04 (distinct hazards both survive; over-merge does not happen) | **PASS** (under-merge half); **NOT OBSERVABLE** (over-merge half) | See "Criterion 4" detail below. |
+| 4 — MERGE-04 (distinct hazards both survive; over-merge does not happen) | **PASS** (under-merge half); **NOT OBSERVABLE** (over-merge half, unchanged after re-check) | See "Criterion 4" detail below. |
 | 5 — RPT-07 (both render levels derivable from the payload alone) | **PASS** | See "Criterion 5" detail below. |
 
-### Criterion 1 (MERGE-01, near-boundary) — FAIL
+### Criterion 1 (MERGE-01, near-boundary) — FAIL at capture time, re-validated PASS after the 18-10 fix
 
 A genuine live near-boundary case **was found** (Capture 2, above) — a `wpc-hazards`
 Precipitation-group feature whose `start_date` (`2026-09-10T00:00:00.000Z`) is exactly the kind of
@@ -224,6 +224,72 @@ This is logged as a new finding in `deferred-items.md` (see below); it is **not*
 `files_modified` scope, and the fix requires a product-code decision (treat `start_date ===
 end_date` as a 1-day inclusive span, mirroring the legacy loop's own semantics) that belongs to a
 future plan.
+
+#### Re-validation after the 18-10 fix — PASS
+
+**This is a replay of the captured live values above through the real `getSpcOutlook` code path
+with a stubbed transport, run by `scripts/probe-payload-resilience.js` — it is NOT a fresh live
+poll against NOAA.** The Kotzebue "Heavy Rain" feature (objectid 7917) was valid for 2026-09-10 and
+may no longer exist upstream by the time this document is read, so a fresh poll cannot be a
+prerequisite for closing this criterion; the replay reproduces the exact bytes captured on
+2026-09-05 against the code that actually shipped. 18-10's mutation table (M1: restoring the exact
+pre-fix `gridEnd - 1` expression reproduces the live defect verbatim; M2: a wholesale-inclusive
+`Math.max(gridStart, gridEnd)` produces a different, over-inclusive failure) is the proof this
+replay is not vacuous — it demonstrates the scenario fails in the specific way the live defect
+failed, and fails in a different specific way under the wrong fix, not merely that it passes.
+
+The replay scenario is `merge-grid-hazards-start-equals-end-live-shape-lands-on-its-own-grid-day`
+(`scripts/probe-payload-resilience.js`), built from the captured values literally:
+`start_date === end_date === 1788998400000`, `idp_filedate 1788639319000`, layer 4, the
+`"estimated"` SPC anchor branch, `nominalStartMs 2026-09-05T12:00:00.000Z`.
+
+Run 2026-09-06 against the post-18-10 code (`node scripts/probe-payload-resilience.js`):
+
+```
+PASS merge-grid-hazards-start-equals-end-live-shape-lands-on-its-own-grid-day
+PROBE RESULT: 119 passed, 0 failed, 0 skipped
+```
+
+The pre-fix `FAIL`, quoted verbatim from `18-10-SUMMARY.md`'s Task 1 record — the deterministic
+reproduction of the live defect against the unfixed code, i.e. exactly what this same capture
+produced before 18-10 shipped:
+
+```
+FAIL merge-grid-hazards-start-equals-end-live-shape-lands-on-its-own-grid-day: MERGE-01: expected exactly one wpc-hazards "Heavy Rain" entry on grid day 6 with dimension heavy-precip and color 267300, got []
+```
+
+**Corrected arithmetic**, against this poll's actual anchor (`nominalStartMs
+2026-09-05T12:00:00.000Z`):
+
+```
+gridStart = 6
+gridEnd   = 6
+lastGridDay = Math.max(gridStart, gridEnd - 1) = Math.max(6, 5) = 6
+clampedStart = max(6, 1) = 6
+clampedEnd   = min(6, 14) = 6
+clampedEnd (6) >= clampedStart (6) -> emits on grid day 6 only
+```
+
+Contrast against the original trace above: `lastGridDay 5 -> clampedEnd (5) < clampedStart (6) ->
+empty range -> dropped`. The only change is the `lastGridDay` expression; every other value in the
+poll (anchor, `gridStart`, `gridEnd`) is identical between the FAIL and PASS runs, isolating the
+fix to exactly the line 18-10 changed.
+
+**Resulting payload facts**, each of which the original capture recorded as absent/empty/false:
+
+- `days["6"].hazards` now carries the `wpc-hazards` `"Heavy Rain"` entry:
+  `{"dimension":"heavy-precip","source":"wpc-hazards","label":"Heavy Rain","text":"Heavy Rain","value":null,"color":"267300","suppressedBy":null}`,
+  on grid day 6 (`date "2026-09-10"`, `windowStart "2026-09-10T12:00:00.000Z"`).
+- `sources["wpc-hazards"].reportedDays` and `.activeDays` now include `6`, and
+  `sources["wpc-hazards"].reporting` is `true` for this poll (previously `reportedDays: []`,
+  `activeDays: []`).
+
+**Agreement with the legacy path:** `hazardsOutlook.day5` (`date "2026-09-10"`) carried the
+`"Heavy Rain"` label all along (see Capture 2's "Legacy `hazardsOutlook` block" excerpt above,
+unchanged by this fix). The unified grid and the legacy block now agree on the calendar date —
+grid day 6's `date` is `2026-09-10`, the same date `day5` names — which is exactly what D-10's
+forward-align rule requires: a 00Z-00Z source day for calendar date Sep 10 forward-aligns onto the
+grid day that *starts* at 12Z on Sep 10.
 
 ### Criterion 2 (MERGE-02) — NOT OBSERVABLE (payload) / PASS (code path)
 
@@ -308,6 +374,45 @@ Recorded NOT OBSERVABLE, standing evidence:
 `merge-flash-flood-and-heavy-precip-never-cross-suppress` (18-08-SUMMARY.md), individually
 mutation-proven by mapping `"Heavy Rain"` into the `flash-flood` dimension and confirming the
 resolver's per-dimension isolation catches it.
+
+**Re-check after the 18-10 fix (18-12) — still NOT OBSERVABLE, verdict re-decided on the evidence,
+not silently carried forward.** The criterion-1 fix removed the blocker that prevented Capture 2's
+`heavy-precip` entry from reaching the grid at all — grid day 6 at the Kotzebue, AK coordinate
+(65.936, -163.443) now carries a `heavy-precip` entry (see the Criterion 1 re-validation above).
+The remaining question is coverage: does that same day, at that same coordinate, also carry a
+surviving `flash-flood` entry from `wpc-ero`, so the two can be compared for cross-suppression?
+
+No full `sources["wpc-ero"]` block was captured for Capture 2 in the original 2026-09-05 poll (only
+Capture 1, Florence SC, has a full `sources` object on record) — the Alaska poll's own recorded
+data is limited to the `wpc-hazards` feature, the legacy block, and the unified grid days quoted
+above. The verdict below is reasoned from the registry row and Capture 1's own finding, not from a
+second live observation, and is reported as such rather than presented as a captured value:
+
+- `PRODUCT_REGISTRY.excessiveRain` (`productRegistry.js:299-326`) points `wpc-ero` at
+  `mapservices.weather.noaa.gov/vector/rest/services/hazards/wpc_precip_hazards/MapServer`, WPC's
+  Excessive Rainfall Outlook service — a CONUS-only product; the registry row carries no Alaska or
+  offshore day layers, unlike `wpc-hazards`' own CPC-fed Days 8-14 extension which explicitly
+  reaches beyond CONUS.
+- The same poll's own SPC anchor fell back to `"estimated"` specifically because 65.936, -163.443
+  "falls outside every SPC Day 1 categorical polygon" (SPC's outlook is also CONUS-only) — direct,
+  same-poll evidence that this coordinate sits outside at least one other CONUS-scoped NOAA
+  product's coverage area, corroborating rather than proving the ERO case.
+- Capture 1 (Florence, SC) is the mirror image: `wpc-ero` reported live entries there
+  (`reportedDays: [1,2,3,4,5]`, `activeDays: [1,2]`, both grid days 1-2 carrying a `flash-flood`
+  entry), but `wpc-hazards` had **no** live feature covering that coordinate at all, on any of the
+  six Hazards Outlook layers checked. Across both captures taken on 2026-09-05, no single
+  coordinate has ever had both a live ERO feature and a live `wpc-hazards` Precipitation feature
+  simultaneously.
+
+**Verdict: over-merge remains NOT OBSERVABLE.** The criterion-1 fix removed the blocker without
+producing an observation — Capture 2's coordinate has no ERO coverage (CONUS-only product, Alaska
+coordinate) and Capture 1's coordinate has no `wpc-hazards` feature (CONUS coordinate, no live
+Precipitation feature there today), so no live day anywhere in this capture can exercise the
+over-merge comparison. The existing STATE.md deferral row for MERGE-04's over-merge half stays
+intact; only its rationale text is updated (see plan 18-12 Task 2) to cite this coverage reasoning
+in place of the now-resolved "blocked by the MERGE-01 FAIL" attribution.
+`merge-flash-flood-and-heavy-precip-never-cross-suppress` (18-08-SUMMARY.md) continues to stand as
+the mutation-proven fixture evidence for the underlying resolver behavior.
 
 ### Criterion 5 (RPT-07) — PASS
 
