@@ -1,132 +1,24 @@
 ---
 phase: 18-merge-precedence-unified-payload-schema
-verified: 2026-09-06T02:00:00Z
-status: gaps_found
-score: 2/6 roadmap criteria fully verified (3 failed, 1 uncertain/not-observable)
-has_blocking_gaps: true
+verified: 2026-09-06T15:10:00Z
+status: human_needed
+score: 5/6 roadmap criteria fully verified (1 requires hardware measurement no agent can perform)
+has_blocking_gaps: false
 overrides_applied: 0
-gaps:
-  - truth: "A hazard near a day boundary is placed using strict UTC time-window overlap, reconciling SPC 12Z-12Z / Hazards Outlook 00Z-00Z / ERO 01Z-12Z conventions (MERGE-01, ROADMAP criterion 1)"
-    status: failed
-    severity: blocking
-    reason: >
-      ROADMAP records criterion 1 as PASS on the strength of 18-10's fix and its
-      18-LIVE-CAPTURE.md re-validation, but that re-validation replays only the single-day
-      / zero-duration wpc-hazards case (start_date === end_date). Two independently
-      source-confirmed defects remain outside that replay's coverage:
-      (CR-03) node_helper.js:2884 `const lastGridDay = Math.max(gridStart, gridEnd - 1);`
-      still treats a multi-day span's end_date exclusively. 18-LIVE-CAPTURE.md's own
-      Criterion 1 section records that the Precipitation group -- the only group that
-      reaches the unified day grid at all (Temperature and Wildfire/Drought route
-      unconditionally to the window band) -- was observed emitting the INCLUSIVE form live.
-      A Sep 8 -> Sep 10 inclusive span now emits grid days 4-5 (drops Sep 10) where the
-      legacy `_bucketHazardMatch` (node_helper.js:2812-2813, an inclusive `d <=
-      Math.min(offsetEnd, lastDay)` loop) emits 3-4-5. Phase 19 deletes the legacy block,
-      turning this into an outright hazard-day loss on the only surviving representation.
-      The probe suite does not merely fail to cover this -- `merge-grid-hazards-multi-day-
-      exclusive-span-still-ends-on-its-last-covered-day` (scripts/probe-payload-
-      resilience.js:9585) actively asserts grid day 8 must stay EMPTY for a Sep10->Sep12
-      span ("an always-inclusive bound would populate this day, got..."), pinning the
-      exclusive-only interpretation as correct and locking the gap in place.
-      (CR-04) node_helper.js:2532-2547 `_spcGridAnchor` accepts any finite `expireMs`
-      without checking it against the current clock. SPC's day-1 categorical layer is not
-      replaced instantaneously at 12Z (this phase's own research comment records a live
-      VALID 13:00Z / EXPIRE 12:00Z-next-day / ISSUE 12:54Z observation), and this module
-      serves cached bodies for up to 2x the update interval besides. During that window the
-      served EXPIRE_ISO is already in the past; `_spcGridAnchor` accepts it anyway, shifts
-      the entire 14-day grid one day early, and reports `gridAnchor: "observed"` -- actively
-      asserting the shifted anchor is trustworthy. This fires specifically for users
-      standing inside an active day-1 SPC polygon (the only case where
-      `_validTimeOfWinner` finds a value to anchor on), i.e. exactly the users for whom
-      correct day attribution matters most. Both defects independently falsify the
-      phase's own headline goal statement ("every hazard is attributed to the day its
-      valid-time window actually covers"), not merely a corner of it.
-    artifacts:
-      - path: "node_helper.js:2884"
-        issue: "lastGridDay = Math.max(gridStart, gridEnd - 1) drops the final day of any multi-day INCLUSIVE span; the fix only rescues the zero-duration degenerate case"
-      - path: "node_helper.js:2532-2547"
-        issue: "_spcGridAnchor never checks day1EndMs (derived from EXPIRE_ISO) against this._nowMs() before trusting it, so an already-elapsed EXPIRE_ISO anchors the whole grid a day early while reporting anchor: \"observed\""
-    missing:
-      - "Read the Hazards Outlook end_date endpoint inclusively for multi-day spans (or otherwise reconcile the two live-observed conventions), matching _bucketHazardMatch's own inclusive loop, so days[] and the legacy block agree"
-      - "Reject an EXPIRE_ISO whose window (day1EndMs) has already elapsed in _spcGridAnchor and fall through to the clock-estimate branch, which is already correct for this case"
-      - "A probe scenario for a genuinely inclusive multi-day Precipitation span (not just the zero-duration case), and a scenario feeding _spcGridAnchor a past-elapsed EXPIRE_ISO asserting anchor becomes \"estimated\""
-
-  - truth: "HeatRisk's full registry-declared 7-day span reaches the unified days[] grid every poll, so its 5-level category is available wherever MERGE-03's precedence rule needs to compare it against WPC's binary flag"
-    status: failed
-    severity: blocking
-    reason: >
-      CR-02, confirmed by direct source read at node_helper.js:2986:
-      `if (gridDay < 1 || gridDay > GRID_DAY_COUNT || gridDay > row.days) continue;`
-      compares two incompatible day-numbering systems: `gridDay` is computed against the
-      SPC-12Z grid anchor, while `row.days` (7) is HeatRisk's own span expressed in
-      product-day units anchored at UTC midnight (`_todayUtcMs`). The two numbering systems
-      differ by exactly one during the entire 00Z-12Z half of every UTC day, because
-      `_spcGridAnchor`'s clock fallback resolves `nominalStartMs` to yesterday 12Z whenever
-      `getUTCHours() < 12`. The `gridDay > row.days` term then silently discards the
-      seventh (outermost) HeatRisk tile from `days[]` -- and, because the drop happens
-      before `notes.noteReported` is ever called for that day, it also drops out of
-      `sources.heatrisk.reportedDays`, so `_resolveGridDayPrecedence` takes its
-      "absent" branch rather than "reported below floor": a genuine Extreme-heat reading is
-      indistinguishable from HeatRisk never having covered that day at all. This is a
-      heat-safety false negative on the project's own no-false-negative rule, on the NEW
-      grid path this phase built (distinct from the already-filed, differently-shaped
-      Phase 17 legacy `heatRisk.day1..day7` defect, which drops the near day, not the far
-      one, and which the operator explicitly routed to Phase 19). It also means a WPC
-      "Hazardous Heat" entry landing on that same dropped day would NOT be suppressed
-      (nothing to suppress it with), so the user could see WPC's binary flag exactly where
-      MERGE-03 requires HeatRisk's granular category to win. No probe scenario exercises
-      this: every one of the 37 new merge-* scenarios pins `now` at or after 12:00Z
-      (`MERGE_NOW_MS = Date.UTC(2026, 8, 5, 13, 0)`), so the 00Z-12Z branch this defect
-      lives in is never reached by the suite.
-    artifacts:
-      - path: "node_helper.js:2986"
-        issue: "gridDay > row.days compares a grid-day number against a differently-anchored product-day count"
-    missing:
-      - "Drop the `gridDay > row.days` term; GRID_DAY_COUNT is already the only bound expressed in grid-day units, and _addHazardsOutlookGridEntries correctly clamps to GRID_DAY_COUNT alone"
-      - "A probe scenario pinned to a `now` inside 00Z-12Z (e.g. 06:00Z) supplying all 7 HeatRisk tiles and asserting all 7 land in days[]"
-
-  - truth: "The backend emits one precomputed days/summary/sources/advisories payload the display can consume, degrading a single failed source rather than the whole response (criterion 5 / RPT-07, and the file's own documented Promise.allSettled per-member-degrade contract)"
-    status: failed
-    severity: blocking
-    reason: >
-      CR-01, confirmed by direct source read at all three cited sites. node_helper.js's own
-      comment (lines ~4750-4761) states the contract explicitly: a rejected allSettled
-      member substitutes `payload: null`, and every downstream consumer must guard against
-      that so one product's failure degrades silently rather than throwing. Phase 18 added
-      three reads that violate this contract with no guard:
-      (1) node_helper.js:4887 `JSON.stringify(eroPayload.day1ValidTime)` -- no null check;
-      fires on the first poll of every process.
-      (2) node_helper.js:5013/5016 `_addRegistryDayGridEntries(gridDays, "wpc-ero",
-      eroPayload, ...)` / `(..., wssiPayload, ...)` -- confirmed by reading
-      `_addRegistryDayGridEntries` itself (node_helper.js:3261 onward): the function's only
-      early return is the toggle gate (`productToggles[row.configFlag] !== true`), which
-      does NOT fire when the product is enabled but its runner rejected; the day loop then
-      does `payload[\`day${d}Risk\`]` on a null payload, throwing.
-      (3) node_helper.js:5035 `_buildGridSummary(gridDays, hazardsPayload.windowBand, ...)`
-      -- the property read happens at the call site, before `_buildGridSummary`'s internal
-      `Array.isArray` guard ever runs; fires on every poll.
-      Any one of the six allSettled members rejecting therefore throws a TypeError that
-      escapes to `getSpcOutlook`'s outer catch, which returns `{ error: ... }`.
-      MMM-SPCOutlook.js:421-422 confirmed: `wrapper.textContent = "Error: " +
-      this.spcrisk.error` -- the entire display goes blank/error, including SPC convective
-      and HeatRisk data that fetched cleanly in the same poll. This is precisely the "total
-      outage rendering as a confident all-clear" shape the surrounding comment names and was
-      written to prevent, now reintroduced by this phase for the identical reason. None of
-      the 119 passing probe scenarios (verified by running `node scripts/probe-payload-
-      resilience.js` at HEAD: 119 passed, 0 failed, 0 skipped) exercises the allSettled
-      rejection branch, so this regression is invisible to the phase's own test suite.
-    artifacts:
-      - path: "node_helper.js:4887"
-        issue: "JSON.stringify(eroPayload.day1ValidTime) with no null/falsy guard"
-      - path: "node_helper.js:5013-5017"
-        issue: "_addRegistryDayGridEntries has no guard for a null/rejected payload before its day loop dereferences it"
-      - path: "node_helper.js:5035"
-        issue: "hazardsPayload.windowBand dereferenced at the call site, ahead of _buildGridSummary's own internal Array.isArray guard"
-    missing:
-      - "Guard node_helper.js:4887 with eroPayload && before reading day1ValidTime"
-      - "Add `if (!payload || typeof payload !== \"object\") return;` at the head of _addRegistryDayGridEntries, before the toggle gate, so both call sites are covered by one check"
-      - "Pass hazardsPayload && hazardsPayload.windowBand into _buildGridSummary rather than the unguarded property read"
-      - "A probe scenario that forces one allSettled member to reject (not merely fail its fetch) and asserts assertPayloadIntact(out) still holds -- the review notes none of the 119 existing scenarios covers this branch"
+re_verification:
+  previous_status: gaps_found
+  previous_score: "2/6 roadmap criteria fully verified (3 failed, 1 uncertain/not-observable)"
+  gaps_closed:
+    - "Criterion 1 / MERGE-01 (CR-03): _addHazardsOutlookGridEntries now reads the Hazards Outlook end_date endpoint INCLUSIVELY (lastGridDay = gridEnd, D-21), closed by 18-13"
+    - "Criterion 1 / MERGE-01 (CR-04): _spcGridAnchor now rejects an already-elapsed EXPIRE_ISO (expireMs > this._nowMs()), closed by 18-14"
+    - "Criterion 3 / MERGE-03 (CR-02): _addHeatRiskGridEntries bounded by GRID_DAY_COUNT alone, no more row.days unit-mismatch, closed by 18-15"
+    - "Criterion 5 / RPT-07 (CR-01): three unguarded reads of a nullable Promise.allSettled payload now guarded (node_helper.js:4923, :3293, :5076), closed by 18-16"
+  gaps_remaining: []
+  regressions: []
+human_verification:
+  - test: "Run the module on the target Raspberry Pi hardware with every product toggle enabled, starting from a fresh process (cold in-memory cache), and record the logged backend-interval and wall-clock startup figures (ROADMAP criterion 6 / PERF-03)."
+    expected: "A measured cold-cache latency figure from the actual target hardware is recorded (in STATE.md or a UAT record) before the v2.0 milestone closes."
+    why_human: "No Raspberry Pi hardware is reachable from this verification environment. The instrumentation exists and was exercised locally (18-06-SUMMARY.md: backend interval 4004ms, slowest source spc-inline 2914ms), but that is a local baseline, not the target-hardware figure ROADMAP criterion 6 and PERF-03 require. This is deliberately scoped to milestone close, not phase close, per locked decision D-19 (18-CONTEXT.md), and remains an open blocker in STATE.md's carried-forward items list — confirmed present at STATE.md:94 ('Phase 18 PERF-03 requires a real cold-cache latency measurement on target Raspberry Pi hardware before the milestone can close.'). Marking this VERIFIED without the actual hardware figure would be guessing; marking it FAILED would contradict the project's own explicit, operator-approved scoping decision. It genuinely needs a human with physical access to the Pi."
 ---
 
 # Phase 18: Merge, Precedence & Unified Payload Schema Verification Report
@@ -136,48 +28,43 @@ duplicate or superseded hazards across sources collapse correctly, and the backe
 precomputed payload the display can consume without recomputing precedence — backed by a real
 cold-cache latency measurement.
 
-**Verified:** 2026-09-06T02:00:00Z
-**Status:** gaps_found
-**Re-verification:** No — initial verification
+**Verified:** 2026-09-06T15:10:00Z
+**Status:** human_needed
+**Re-verification:** Yes — after gap closure (4 plans: 18-13, 18-14, 18-15, 18-16)
 
-## Summary Verdict
+## Re-verification Summary
 
-The phase's *construction* is real and substantial: `hazardTaxonomy.js` is a genuine static
-artifact wired into `node_helper.js` and `assertTaxonomyIntegrity()` runs at `require()` time;
-the fourteen-day grid, per-source grid-entry builders, dimension-keyed precedence resolver, and
-`summary`/`sources` rollups all exist, are non-trivial, and are backed by 119 passing,
-individually mutation-proven probe scenarios (confirmed by running the suite directly). Two
-prior gap-closure waves (18-10, 18-11) genuinely fixed real live-capture-discovered defects.
+The prior `18-VERIFICATION.md` (2026-09-06T02:00:00Z) found 3 blocking gaps (CR-01, CR-02,
+CR-03+CR-04) across criteria 1, 3, and 5, all independently confirmed by direct source read.
+Four gap-closure plans have since executed. I re-read every cited line myself against current
+`HEAD` rather than trusting the SUMMARYs' narration, and independently ran the full probe suite
+and the concurrency-invariant script.
 
-However, an independent deep code review (`18-REVIEW.md`, commit `645673e`) found four Critical
-issues in the code this phase shipped. I independently re-derived all four by reading the exact
-cited source lines myself rather than trusting the review's narrative, and all four are real,
-present in the shipped code today, and uncovered by the 119-scenario probe suite. Three of them
-directly falsify a ROADMAP success criterion or the phase's own headline goal statement:
+**All three previously-blocking gaps are closed, confirmed at the source line level:**
 
-- **Criterion 1 / MERGE-01** — recorded PASS in ROADMAP.md, but that PASS rests on a replay that
-  covers only the single-day/zero-duration case. A genuine multi-day inclusive span (the
-  live-observed convention for the only hazards group that reaches the grid) still loses its
-  last day (CR-03), and the grid anchor can shift an entire day early during SPC's daily
-  re-issuance gap for users standing in an active severe-weather polygon (CR-04).
-- **MERGE-03 / the unified grid's completeness** — HeatRisk's 7th day is silently dropped from
-  `days[]` for half of every UTC day due to a unit-mismatched bound comparison (CR-02), a
-  heat-safety false negative on the phase's own new grid path.
-- **Criterion 5 / RPT-07's own documented resilience contract** — three unguarded reads Phase 18
-  added convert a single rejected product fetch into a TypeError that destroys the ENTIRE
-  payload, rendering `"Error: ..."` in place of every product including ones that fetched
-  cleanly (CR-01).
+| Gap (prior gap #) | Fix | Confirmed at |
+|---|---|---|
+| CR-03 (multi-day inclusive Hazards Outlook span loses its last day) | `const lastGridDay = gridEnd;` (D-21) | `node_helper.js:2899` |
+| CR-04 (`_spcGridAnchor` trusts an elapsed `EXPIRE_ISO`) | `if (Number.isFinite(expireMs) && expireMs > this._nowMs())` | `node_helper.js:2541` |
+| CR-02 (HeatRisk's 7th tile dropped for 00Z-12Z of every UTC day) | `if (gridDay < 1 \|\| gridDay > GRID_DAY_COUNT) continue;` (row.days term removed) | `node_helper.js:3007` |
+| CR-01 (unguarded nullable-payload reads collapse the whole payload to `{ error }`) | Three guards: `eroPayload &&`, head-of-function `!payload \|\| typeof payload !== "object"` return, `hazardsPayload &&` | `node_helper.js:4923`, `:3293`, `:5076` |
 
-Under this project's stated "no false negatives" value, a hazard silently disappearing (CR-02,
-CR-03) or the entire display going blank on any transient product failure (CR-01) are the most
-severe defect class this project defines. None of the four is covered by the probe suite; one
-(CR-03) is actively locked in as "correct" by an existing scenario that pins the exclusive-only
-convention.
+No regressions: `node scripts/probe-payload-resilience.js` run directly at `HEAD` →
+`PROBE RESULT: 123 passed, 0 failed, 0 skipped` (up from the prior verification's 119; the four
+gap-closure plans added 4 net new scenarios, all passing). `bash
+scripts/check-concurrency-invariant.sh` also passes clean (all 4 mutation-write sites clean).
 
-The taxonomy artifact, the precedence resolver's dimension-keyed (never label-string) design,
-and the under-merge behavior are all independently confirmed correct and well-tested. The gaps
-below are narrow, specific, and each has an already-identified one-line-to-few-line fix — this is
-a gap-closure situation, not a redesign.
+**One item remains open and is reclassified here** (was marked "✓ VERIFIED (deferred by design)"
+in the prior verification; that classification undersold what's actually missing): criterion 6 /
+PERF-03's target-hardware Raspberry Pi figure. This is not a code gap — it is explicitly and
+correctly scoped to milestone close rather than phase close per locked decision D-19, approved by
+the operator at the time. But no agent, including this verification pass, can produce a real
+hardware measurement from this environment, and the actual figure does not yet exist as recorded
+evidence anywhere in the phase artifacts or STATE.md (only a local-cold-start baseline does).
+Silently marking it VERIFIED would be inaccurate; marking it FAILED would contradict the project's
+own explicit scoping decision. It is routed to human verification, which is the correct
+classification for "real, defined behavior confirmable only by running it on hardware this
+environment does not have."
 
 ## Goal Achievement
 
@@ -185,120 +72,141 @@ a gap-closure situation, not a redesign.
 
 | # | Truth (ROADMAP criterion) | Status | Evidence |
 |---|---|---|---|
-| 1 | Hazard placed on the day its valid-time window actually covers, incl. a real near-boundary case (MERGE-01) | ✗ FAILED | ROADMAP records PASS from 18-10/18-12's re-validation, but that replay covers only the zero-duration case. CR-03 (multi-day inclusive span still loses its last day, node_helper.js:2884) and CR-04 (`_spcGridAnchor` accepts an elapsed EXPIRE_ISO, node_helper.js:2532-2547) both independently falsify this for cases the replay never exercised. Source-verified directly. |
-| 2 | SPC's granular tier suppresses WPC's derived Severe Weather flag, dimension-keyed not label-matched (MERGE-02) | ✓ VERIFIED (code path) / ? UNCERTAIN (payload, `unverifiable_runtime`) | `_resolveGridDayPrecedence` (node_helper.js:3356-3437) inspected directly: the suppression decision walks `PRECEDENCE[dimension]` against `entry.source`/`entry.dimension` only; no `label ===`, `.includes(`, or `indexOf(` appears in the decision block (only in the later D-15 sort comparator, on already-resolved ids). Live payload comparison is genuinely NOT OBSERVABLE today — zero `"Severe Weather"`-labeled features exist anywhere in the country per 18-LIVE-CAPTURE.md's fresh nationwide layer check — an honest abstention, not a code gap. |
-| 3 | HeatRisk's 5-level category displays instead of WPC's binary Hazardous Heat flag (MERGE-03) | ✗ FAILED (see gap 2 above) | Precedence *rule* is correct and probe-verified (`merge-precedence-heatrisk-suppresses-wpc-hazardous-heat` and its zero/null siblings pass). But CR-02 means HeatRisk's day-7 reading can be entirely absent from the grid for half of every day, so the rule has nothing to suppress WPC's flag with on that day — a genuine HeatRisk reading silently disappears instead of displaying. |
-| 4 | Two distinct hazards both appear; over-merge does not falsely hide one (MERGE-04) | ✓ VERIFIED (under-merge, live) / ? UNCERTAIN (over-merge, `unverifiable_runtime`) | Under-merge: live Florence, SC capture shows 3 concurrent distinct-dimension entries all `suppressedBy: null`, confirmed in 18-LIVE-CAPTURE.md. Over-merge: honestly recorded NOT OBSERVABLE — no live coordinate currently carries both a flash-flood and a heavy-precip feature (CONUS-only ERO vs. Alaska-reaching wpc-hazards coverage mismatch); mutation-proven synthetic scenario stands in as the only available evidence. This is a legitimate abstention, not a hidden defect. |
-| 5 | Backend emits one `days`/`summary`/`sources`/`advisories` payload; no precedence left to recompute downstream (RPT-07) | ✗ FAILED | Structurally the shape is correct and the frontend does not reimplement any precedence logic (grep for `suppressedBy`/`PRECEDENCE` in MMM-SPCOutlook.js returns nothing — the new keys aren't rendered yet at all). But CR-01's three unguarded reads mean this "one payload" guarantee does not hold under a single product's fetch rejection: the whole payload collapses into `{ error }` and the display renders `"Error: ..."` for everything, confirmed by reading MMM-SPCOutlook.js:421-422. |
-| 6 | Cold-cache run on target Raspberry Pi hardware produces a measured startup latency figure (PERF-03) | ✓ VERIFIED (deferred by design, per D-19) | Deliberately deferred to milestone close; a local cold-cache baseline (backend interval 4004ms, slowest source spc-inline at 2914ms) was recorded in 18-09-SUMMARY.md as the phase-scoped substitute, per this project's own D-19 decision. Not a gap. |
+| 1 | Hazard placed on the day its valid-time window actually covers, incl. a real near-boundary case (MERGE-01) | ✓ VERIFIED | Both CR-03 and CR-04 confirmed fixed at the cited source lines (see table above). `merge-grid-hazards-multi-day-span-covers-through-its-end-date`, `merge-grid-hazards-multi-day-inclusive-span-matches-the-legacy-block`, and `merge-grid-anchor-elapsed-expire-iso-degrades-to-estimated` all pass in the live suite run. Each fix is mutation-proven (18-13's M1/M2/M4, 18-14's M1/M2) with verbatim RED failure text recorded in the SUMMARYs and independently plausible against the guard logic read directly. |
+| 2 | SPC's granular tier suppresses WPC's derived Severe Weather flag, dimension-keyed not label-matched (MERGE-02) | ✓ VERIFIED (code path) / ? UNCERTAIN (payload, `unverifiable_runtime`) | `_resolveGridDayPrecedence` (node_helper.js:3379-3437) re-inspected directly: unchanged by any of the four gap-closure plans (none touch this function). No `label ===`/`.includes(`/`indexOf(` in the decision block. Live payload comparison remains genuinely NOT OBSERVABLE — no live "Severe Weather"-labeled feature exists anywhere in the country per 18-LIVE-CAPTURE.md, unchanged since the prior verification. Honest abstention, not a code gap; non-blocking. |
+| 3 | HeatRisk's 5-level category displays instead of WPC's binary Hazardous Heat flag (MERGE-03) | ✓ VERIFIED | CR-02 confirmed fixed at `node_helper.js:3007`: the `gridDay > row.days` unit-mismatch term is gone, bound is `GRID_DAY_COUNT` alone. `merge-grid-heatrisk-all-seven-tiles-land-under-a-sub-12z-clock` (the suite's first sub-12Z scenario, `HEATRISK_MORNING_NOW_MS` = 06:00Z) passes live, proving all 7 tiles now land in `days[]` and `sources['heatrisk'].reportedDays` during the previously-affected half of every UTC day. Mutation-proven (18-15's M1 restores the term and reproduces the exact prior failure naming grid day 8; M2 proves the scenario genuinely depends on the sub-12Z anchor branch). |
+| 4 | Two distinct hazards both appear; over-merge does not falsely hide one (MERGE-04) | ✓ VERIFIED (under-merge, live) / ? UNCERTAIN (over-merge, `unverifiable_runtime`) | Unchanged since the prior verification (no gap-closure plan touches merge/precedence dimension logic or re-runs a live capture). Under-merge: live Florence, SC capture shows 3 concurrent distinct-dimension entries all `suppressedBy: null` (18-LIVE-CAPTURE.md). Over-merge: honestly recorded NOT OBSERVABLE — no live coordinate currently carries both a flash-flood and a heavy-precip entry (the only candidate feature, Kotzebue AK "Heavy Rain", was valid through 2026-09-10 and is not guaranteed to still exist upstream); `merge-flash-flood-and-heavy-precip-never-cross-suppress` stands in as mutation-proven synthetic coverage. Legitimate abstention, not a hidden defect; non-blocking. |
+| 5 | Backend emits one `days`/`summary`/`sources`/`advisories` payload; no precedence left to recompute downstream (RPT-07) | ✓ VERIFIED | CR-01 confirmed fixed at all three cited sites (see table above). `18-REVIEW.md`'s independent re-derivation agrees. `rpt07-rejected-runner-degrades-alone-not-the-whole-payload` (new in 18-16) forces two different runner rejections and asserts `out.error === undefined` while every non-rejected product's block stays intact — this is the exact scenario class the prior verification found the suite lacked. Mutation-proven: each of the three guards independently reverted reproduces the `{ error }` collapse (verbatim `TypeError` messages recorded in 18-16-SUMMARY.md), confirming all three are load-bearing rather than redundant. `MMM-SPCOutlook.js:421` (`wrapper.textContent = "Error: " + this.spcrisk.error`) is unchanged, but the payload no longer reaches that branch on a single rejected member — the display-side blast radius that made CR-01 severe no longer triggers on this input class. |
+| 6 | Cold-cache run on target Raspberry Pi hardware produces a measured startup latency figure (PERF-03) | ? HUMAN NEEDED | See Human Verification Required below. Instrumentation exists and is exercised (local baseline: backend interval 4004ms, slowest source spc-inline 2914ms — 18-06-SUMMARY.md), but the actual target-hardware figure does not exist as recorded evidence anywhere in this repo. STATE.md:94 still carries the open blocker verbatim, confirming the project itself has not yet closed this. |
 
-**Score:** 2/6 criteria fully VERIFIED, 3 FAILED (blocking), 1 UNCERTAIN in two places (both legitimate live-data abstentions, not code gaps).
+**Score:** 5/6 criteria fully VERIFIED (2 of those 5 carry a non-blocking, honestly-abstained
+UNCERTAIN sub-case each — MERGE-02's payload half, MERGE-04's over-merge half — both unchanged
+live-data-availability limitations, not code gaps). 1 criterion routed to human verification
+(cannot be satisfied from this environment).
 
 ### Required Artifacts
 
 | Artifact | Expected | Status | Details |
 |---|---|---|---|
-| `hazardTaxonomy.js` | Dimension map, precedence table, no-risk floor table, `assertTaxonomyIntegrity` | ✓ VERIFIED | 339 lines; all 11 documented exports present (`HAZARD_TAXONOMY, PRECEDENCE, NO_RISK_FLOOR, FLOOR_PREBAKED, DIMENSIONS, DIMENSION_ORDER, SOURCE_IDS, DAY_SOURCE_IDS, ADVISORY_SOURCE_IDS, dimensionOf, assertTaxonomyIntegrity`); `require("./productRegistry")` confirmed at line 20; `assertTaxonomyIntegrity()` confirmed called at module load, line 325. |
-| `node_helper.js` grid machinery | `_spcGridAnchor`, `_buildGridDays`, `_gridDayOf`, `_addSpcGridEntries`, `_addRegistryDayGridEntries`, `_addHazardsOutlookGridEntries`, `_addHeatRiskGridEntries`, `_resolveGridDayPrecedence`, `_buildGridSummary`, `_buildSourceHealth` | ✓ VERIFIED, substantive, wired — but ⚠ HOLLOW under specific inputs | All functions exist, are non-trivial, and are called from `getSpcOutlook`'s return-assembly path (confirmed by direct read of lines 2500-3437, 4880-5040). CR-01/02/03/04 are correctness defects within otherwise-real implementations, not stubs. |
-| `scripts/probe-payload-resilience.js` merge-* scenarios | 37 new mutation-proven scenarios per plans 18-07/18-08/18-10/18-11 | ✓ VERIFIED (existence + passing) / ⚠ one scenario locks in a gap | `node scripts/probe-payload-resilience.js` run directly: 119 passed, 0 failed, 0 skipped. `merge-grid-hazards-multi-day-exclusive-span-still-ends-on-its-last-covered-day` (line 9585) explicitly asserts the exclusive-only interpretation CR-03 identifies as wrong for the live-observed Precipitation convention. |
-| `MMM-SPCOutlook.js` | PERF-03 wall-clock instrument | ✓ VERIFIED | `_startedAtMs`/first-populated-payload log present; new payload keys not yet rendered (correctly out of Phase 18's scope — Phase 19's job). |
+| `hazardTaxonomy.js` | Dimension map, precedence table, no-risk floor table, `assertTaxonomyIntegrity` | ✓ VERIFIED | Unchanged by the four gap-closure plans (none touch this file); previously confirmed 339 lines, all 11 documented exports present, `assertTaxonomyIntegrity()` called at module load. |
+| `node_helper.js` grid machinery | `_spcGridAnchor`, `_buildGridDays`, `_gridDayOf`, `_addSpcGridEntries`, `_addRegistryDayGridEntries`, `_addHazardsOutlookGridEntries`, `_addHeatRiskGridEntries`, `_resolveGridDayPrecedence`, `_buildGridSummary`, `_buildSourceHealth` | ✓ VERIFIED, substantive, wired, and — per the four gap-closure fixes — no longer hollow under the previously-identified input classes | Every function re-read directly at current `HEAD`. `_addHazardsOutlookGridEntries` (D-21 inclusive bound), `_spcGridAnchor` (elapsed-EXPIRE_ISO guard), `_addHeatRiskGridEntries` (GRID_DAY_COUNT-only bound), and `_addRegistryDayGridEntries` (head-of-function null guard) all confirmed corrected in place. |
+| `scripts/probe-payload-resilience.js` merge-* scenarios | Mutation-proven coverage for the four fixed defects, plus prior 37 MERGE-* scenarios | ✓ VERIFIED (existence + passing) | `node scripts/probe-payload-resilience.js` run directly: `123 passed, 0 failed, 0 skipped`. 4 new scenarios since the prior verification (up from 119): `merge-grid-hazards-multi-day-inclusive-span-matches-the-legacy-block`, `merge-grid-anchor-elapsed-expire-iso-degrades-to-estimated`, `merge-grid-heatrisk-all-seven-tiles-land-under-a-sub-12z-clock`, `rpt07-rejected-runner-degrades-alone-not-the-whole-payload`. |
+| `MMM-SPCOutlook.js` | PERF-03 wall-clock instrument | ✓ VERIFIED | Unchanged by the four gap-closure plans. `_startedAtMs`/first-populated-payload log present; new payload keys still not rendered (correctly out of Phase 18 scope). |
 
 ### Key Link Verification
 
 | From | To | Via | Status | Details |
 |---|---|---|---|---|
-| `hazardTaxonomy.js` | `productRegistry.js` | `require` | ✓ WIRED | Line 20. |
-| `hazardTaxonomy.js` | `assertTaxonomyIntegrity` | module-load self-check | ✓ WIRED | Line 325, mirrors `productRegistry.js:568`. |
-| `node_helper.js` | `hazardTaxonomy.js` | `require` | ✓ WIRED | Line 35, all 7+ names destructured and used (`dimensionOf`, `PRECEDENCE`, `NO_RISK_FLOOR`, etc.). |
-| `getSpcOutlook` SPC inline locals | `days[N].hazards` | `_addSpcGridEntries` | ✓ WIRED | Confirmed direct read of in-memory `spcLocals`, no refetch. |
-| `_resolveGridDayPrecedence` | `PRECEDENCE[dimension]` | dimension-keyed rank lookup | ✓ WIRED, correctly implemented | No label-string matching in the decision block (verified by targeted grep over the exact line range, per 18-LIVE-CAPTURE.md's own methodology, independently re-run). |
-| `getSpcOutlook` allSettled batch | `eroPayload`/`hazardsPayload` consumers | per-member null guard | ✗ **NOT WIRED at 3 of the sites this phase added** | See CR-01 gap above — this is the single most consequential broken link in the phase. |
-| MMM-SPCOutlook.js | new `days`/`summary`/`sources` payload keys | rendering | N/A — not yet wired | Correctly out of scope; Phase 19's job per ROADMAP. |
+| `getSpcOutlook` allSettled batch | `eroPayload`/`hazardsPayload`/`_addRegistryDayGridEntries` consumers | per-member null guard | ✓ WIRED (was NOT WIRED at 3 sites) | All three sites now guard against a `null` payload before the first dereference: `eroPayload && eroPayload.day1ValidTime` (:4923), head-of-function `if (!payload \|\| typeof payload !== "object") return;` in `_addRegistryDayGridEntries` (:3293, covers both its call sites at :5049/:5052), `hazardsPayload && hazardsPayload.windowBand` (:5076). |
+| `_addHazardsOutlookGridEntries` | `days[].hazards` | inclusive `end_date` bound | ✓ WIRED, correctly implemented | `lastGridDay = gridEnd` (D-21), clamp still enforced at the loop header (`Math.min(lastGridDay, GRID_DAY_COUNT)`), confirmed unchanged and non-negotiable per the plan's own decision record. |
+| `_spcGridAnchor` | `anchor: "observed" | "estimated"` | elapsed-window check | ✓ WIRED, correctly implemented | `expireMs > this._nowMs()` gates the observed branch; an elapsed `EXPIRE_ISO` now correctly falls through to the clock estimate. |
+| `_addHeatRiskGridEntries` | `days[].hazards` / `sources['heatrisk'].reportedDays` | `GRID_DAY_COUNT`-only bound | ✓ WIRED, correctly implemented | `row.days` unit-mismatch term removed; confirmed by direct read and the new sub-12Z scenario passing. |
+| MMM-SPCOutlook.js | new `days`/`summary`/`sources` payload keys | rendering | N/A — not yet wired | Correctly out of scope; Phase 19's job per ROADMAP. Confirmed no `suppressedBy`/`PRECEDENCE`/`days[` reference exists in `MMM-SPCOutlook.js` (27 unrelated hits on `windowBand`/`_addRegistryDayGridEntries`-adjacent tokens, none of them frontend precedence recomputation). |
 
 ### Data-Flow Trace (Level 4)
 
-Not applicable in the conventional sense — Phase 18 is backend-only, and the new `days`/`summary`/
-`sources` keys are not yet rendered by any component (confirmed: no `suppressedBy`/`PRECEDENCE`/
-`days\[` reference exists in `MMM-SPCOutlook.js`). The relevant "flow" to trace is
-runner-rejection → payload-null → grid-assembly, traced above under CR-01: a null payload from a
-rejected `Promise.allSettled` member flows unguarded into `_addRegistryDayGridEntries` and two other
-sites, terminating in a thrown `TypeError` rather than the documented degrade-to-empty. This is a
-disconnected/HOLLOW data path for the specific rejection case, not the happy path.
+Not applicable in the conventional sense — Phase 18 remains backend-only; the new `days`/
+`summary`/`sources` keys are still not rendered by any component. The relevant "flow" to trace
+is runner-rejection → payload-null → grid-assembly, previously found disconnected (CR-01) and now
+confirmed reconnected: a `null` payload from a rejected `Promise.allSettled` member now flows
+through the three guarded sites and degrades to the documented empty/null block rather than
+throwing, confirmed both by direct source read and by the `rpt07-rejected-runner-degrades-alone-
+not-the-whole-payload` scenario forcing the actual rejection and asserting the rest of the payload
+survives.
 
 ### Behavioral Spot-Checks
 
 | Behavior | Command | Result | Status |
 |---|---|---|---|
-| Full probe suite passes at HEAD | `node scripts/probe-payload-resilience.js` | `PROBE RESULT: 119 passed, 0 failed, 0 skipped` | ✓ PASS (but does not cover CR-01/02/03/04 — confirmed by grepping the suite for an allSettled-rejection scenario and an inclusive multi-day / sub-12Z-clock scenario: none exist) |
-| `_addRegistryDayGridEntries` has a null-payload guard | `sed -n '3261,3270p' node_helper.js` | Only guard present is the toggle gate; no `!payload` check | ✗ FAIL (confirms CR-01) |
-| `_bucketHazardMatch`'s legacy loop treats end_date inclusively | `sed -n '2805,2816p' node_helper.js` | `for (let d = Math.max(offsetStart, firstDay); d <= Math.min(offsetEnd, lastDay); d++)` | Confirms the legacy/new-grid divergence CR-03 describes |
-| `_spcGridAnchor` checks EXPIRE_ISO against the current clock | `sed -n '2528-2548p' node_helper.js` | Only checks `Number.isFinite(expireMs)`; no comparison against `this._nowMs()` | ✗ FAIL (confirms CR-04) |
-| Frontend renders total error string on any payload error | `sed -n '418-423p' MMM-SPCOutlook.js` | `wrapper.textContent = "Error: " + this.spcrisk.error` | Confirms CR-01's blast radius |
+| Full probe suite passes at HEAD | `node scripts/probe-payload-resilience.js` | `PROBE RESULT: 123 passed, 0 failed, 0 skipped` | ✓ PASS |
+| Concurrency invariant holds | `bash scripts/check-concurrency-invariant.sh` | `check-concurrency-invariant: all sites clean` | ✓ PASS |
+| CR-03 fix present | `sed -n '2895,2899p' node_helper.js` | `const lastGridDay = gridEnd;` with D-21 comment naming 18-10 as superseded | ✓ PASS |
+| CR-04 fix present | `sed -n '2532,2543p' node_helper.js` | `if (Number.isFinite(expireMs) && expireMs > this._nowMs())` | ✓ PASS |
+| CR-02 fix present | `sed -n '2995,3007p' node_helper.js` | `if (gridDay < 1 \|\| gridDay > GRID_DAY_COUNT) continue;` — no `row.days` term | ✓ PASS |
+| CR-01 fix present (3 sites) | `sed -n '4920,4924p;3286,3293p;5073,5077p' node_helper.js` | All three guards present exactly as SUMMARYs describe | ✓ PASS |
+| WR-02/renderDayBlock still unguarded (disclosed, not required to be fixed by any of the 4 plans) | `sed -n '604,614p' MMM-SPCOutlook.js` | `block["day"+d+"Color"]`/`block["day"+d+"Text"]` interpolated into `innerHTML` with no `validHazardColor()`/`escapeHtml()` | Confirmed present as disclosed — see Anti-Patterns |
+| M3 coverage hole still open (disclosed, not required to be closed) | grep for an `end_date`-past-day-14 probe scenario | none found; 18-13-SUMMARY.md's own disclosure stands | Confirmed still open — see Anti-Patterns |
 
 ### Probe Execution
 
-No dedicated `scripts/*/tests/probe-*.sh` shell probes exist for this project; the probe surface is
-`scripts/probe-payload-resilience.js`, run above under Behavioral Spot-Checks (119 passed, 0 failed,
-0 skipped, run directly by me at HEAD — not taken from SUMMARY.md's narration).
+No dedicated `scripts/*/tests/probe-*.sh` shell probes exist for this project; the probe surface
+is `scripts/probe-payload-resilience.js`, run above under Behavioral Spot-Checks (123 passed, 0
+failed, 0 skipped, run directly by me at HEAD).
 
 ### Requirements Coverage
 
 | Requirement | Source Plan(s) | Description | Status | Evidence |
 |---|---|---|---|---|
-| MERGE-01 | 18-02, 18-03, 18-04, 18-07, 18-09, 18-10 | Hazard placed on the day its valid-time window covers | ✗ **BLOCKED** | REQUIREMENTS.md marks Complete; CR-03 and CR-04 both directly contradict this for cases outside the 18-10 replay's coverage. |
-| MERGE-02 | 18-01, 18-05, 18-08 | SPC's granular tier over WPC's derived flag, dimension-keyed | ✓ SATISFIED (code path); payload-level confirmation genuinely unavailable today | `_resolveGridDayPrecedence` inspected directly; correct. |
-| MERGE-03 | 18-01, 18-05, 18-08 | HeatRisk's 5-level scale over WPC's binary flag | ⚠ **PARTIALLY BLOCKED** | Precedence rule itself is correct and probe-verified; CR-02 can remove HeatRisk's data from the comparison entirely for one day per poll cycle. |
-| MERGE-04 | 18-01, 18-03, 18-04, 18-05, 18-08, 18-09, 18-12 | No over-merge, no under-merge | ✓ SATISFIED (under-merge, live-verified); over-merge honestly NOT OBSERVABLE | 18-LIVE-CAPTURE.md; legitimate abstention. |
-| RPT-07 | 18-02, 18-05, 18-06, 18-08, 18-09, 18-11 | Frontend renders both detail levels from one backend payload, no recompute | ✗ **BLOCKED** | Shape and non-recompute property are correct; CR-01 breaks the "one payload" availability guarantee on any single-source rejection. |
-| PERF-03 | 18-06, 18-09 | Measured cold-cache latency figure | ✓ SATISFIED (per D-19's deliberate scoping to a local baseline pending Pi hardware) | 18-09-SUMMARY.md: backend interval 4004ms, slowest source spc-inline 2914ms. |
+| MERGE-01 | 18-02, 18-03, 18-04, 18-07, 18-09, 18-10, 18-12, 18-13, 18-14 | Hazard placed on the day its valid-time window covers | ✓ SATISFIED | Both CR-03 (18-13) and CR-04 (18-14) confirmed fixed at source; probe suite green. |
+| MERGE-02 | 18-01, 18-05, 18-08, 18-09 | SPC's granular tier over WPC's derived flag, dimension-keyed | ✓ SATISFIED (code path); payload-level confirmation genuinely unavailable today | `_resolveGridDayPrecedence` unchanged, correct. |
+| MERGE-03 | 18-01, 18-05, 18-08, 18-15 | HeatRisk's 5-level scale over WPC's binary flag | ✓ SATISFIED | CR-02 confirmed fixed; sub-12Z scenario passes. |
+| MERGE-04 | 18-01, 18-03, 18-04, 18-05, 18-08, 18-09, 18-12 | No over-merge, no under-merge | ✓ SATISFIED (under-merge, live-verified); over-merge honestly NOT OBSERVABLE | Unchanged since prior verification; legitimate abstention. |
+| RPT-07 | 18-02, 18-05, 18-06, 18-08, 18-09, 18-11, 18-16 | Frontend renders both detail levels from one backend payload, no recompute | ✓ SATISFIED | CR-01 confirmed fixed at all three sites; forced-rejection scenario passes. |
+| PERF-03 | 18-06, 18-09 | Measured cold-cache latency figure | ? NEEDS HUMAN | Instrumentation shipped and locally verified; target-hardware figure does not exist as recorded evidence, per D-19's explicit milestone-close scoping. |
 
 No orphaned requirements: every ID REQUIREMENTS.md maps to "Phase 18" (MERGE-01..04, RPT-07,
-PERF-03) appears in at least one plan's `requirements:` frontmatter field, and vice versa.
+PERF-03) appears in at least one plan's `requirements:` frontmatter field, and vice versa
+(confirmed by grepping every `18-*-PLAN.md`/`18-*-SUMMARY.md` `requirements`/
+`requirements-completed` field).
 
 ### Anti-Patterns Found
 
-Full detail in `18-REVIEW.md` (commit `645673e`); summarized here, not restated in full. The four
-Criticals are carried into Gaps above. Selected Warnings worth flagging for the eventual
-gap-closure plan (not blocking on their own, but adjacent to the same code):
+Carried forward from `18-REVIEW.md` (commit `cfd13af`, post-gap-closure re-review: 0 critical, 1
+warning) plus the disclosed, intentionally-unclosed coverage hole from 18-13. Neither is blocking
+— both are known, documented, and either non-exploitable today or a coverage gap over an
+already-correctly-clamped invariant.
 
 | File | Line | Pattern | Severity | Impact |
 |---|---|---|---|---|
-| `node_helper.js` | 3115, 3216, 3301 | `reportedDays` derived from a seeded default rather than a real fetch success signal | ⚠ Warning | Undercounts/overcounts `summary.reportingSourceCount`; a fetch failure reads as "answered, no risk" for 4 of 6 day-scoped sources |
-| `node_helper.js` | 2919-2920 | `wpc-hazards` `reporting` only set true on days it finds a hazard | ⚠ Warning | Contradicts the field's own documented contract; undercounts on quiet polls |
-| `node_helper.js` | 3303-3310 | Static taxonomy invariant re-asserted with a `throw` inside the per-day hot loop | ⚠ Warning | Same total-outage shape as CR-01 if it ever fires; should move to `assertTaxonomyIntegrity()` |
-| `node_helper.js` | 3146-3152 | `detail.probRisk` is a boolean on days 1-2, a number on days 3-8 under one field name | ⚠ Warning | A Phase 19 renderer doing a numeric comparison silently mis-renders days 1-2 |
-| `scripts/probe-payload-resilience.js` | 1294 | Every merge-* scenario pins `now >= 12:00Z` | ⚠ Warning | The entire 00Z-12Z behavior space (where CR-02 lives) is untested by the suite |
+| `MMM-SPCOutlook.js` | 604-614 | `renderDayBlock`'s `day{N}Color`/`day{N}Text` interpolate into `innerHTML` without `validHazardColor()`/`escapeHtml()`, unlike every sibling renderer in the same file | ⚠ Warning | Not currently exploitable — both fields are sourced from closed, module-authored lookup tables (`productRegistry.js`), never raw upstream strings. But the invariant is unenforced locally at this call site, and `renderDayBlock` is a shared renderer that will land future `arcgis-day-layers` rows too. `18-REVIEW.md` provides the exact one-line fix (route both fields through `validHazardColor()`/`escapeHtml()`); not addressed by any of the 4 gap-closure plans, correctly out of their scope. |
+| `node_helper.js` | ~2895 (the `Math.min(lastGridDay, GRID_DAY_COUNT)` clamp) | The fourteen-day bound-overflow path in `_addHazardsOutlookGridEntries` has zero probe coverage (18-13's M3 mutation produced 0 RED scenarios) | ⚠ Warning | The clamp itself is present and correct (confirmed by direct read); this is a coverage gap, not a code defect. Deliberately disclosed rather than closed, per the 18-13 plan's own explicit instruction not to add a scenario for it in that plan. |
+| `node_helper.js` | 3115, 3216, 3301 (per 18-REVIEW.md) | `sources[].reportedDays` fetch-FAILURE half of WR-01 still records a hard fetch failure as "the source answered no risk" for `wpc-ero`/`wpc-wssi`/`spc-convective`/`spc-fire` | ⚠ Warning | Diagnostic-accuracy issue (`summary.reportingSourceCount` can over-count on a fetch failure), not a display/precedence-correctness issue — no ROADMAP criterion or requirement wording depends on this field's failure-vs-answered distinction. 18-16 closed the TOGGLE-OFF half (18-11) and the runner-REJECTION half (18-16); the FETCH-FAILURE half is explicitly tracked open in `deferred-items.md` with a named future fix. |
 
 ### Human Verification Required
 
-None. All findings above were resolved by direct source inspection (I independently re-read every
-cited line myself rather than trusting `18-REVIEW.md`'s narrative) and by running the probe suite
-directly. No visual, real-time, or external-service behavior is in question — Phase 18 does not yet
-render anything new to a human.
+### 1. Cold-cache latency measurement on target Raspberry Pi hardware (PERF-03 / ROADMAP criterion 6)
+
+**Test:** Start the module on the target Raspberry Pi hardware from a fresh process (no
+in-memory cache — this module's only cache, per `node_helper.js:186`, is cleared by any process
+restart) with every product toggle enabled. Let the instrumentation already shipped in Phase 18
+(18-06) log its once-per-cold-start figures: the backend interval (`GET_SPC_DATA` received →
+`SPC_DATA_RESULT` emitted, with the per-product breakdown naming the slowest fetch) and the
+frontend wall-clock figure (module start → first populated render).
+
+**Expected:** A measured cold-cache latency figure from the actual target hardware, recorded
+somewhere durable (STATE.md, a UAT record, or a phase artifact) before the v2.0 milestone closes.
+
+**Why human:** No Raspberry Pi is reachable from this verification environment. This is not a
+code gap — the instrumentation exists, is wired correctly, and was exercised against a local cold
+start (18-06-SUMMARY.md: backend interval 4004ms, slowest source spc-inline 2914ms). But that
+local figure is explicitly NOT the target-hardware figure ROADMAP criterion 6 requires, and the
+project's own locked decision D-19 (18-CONTEXT.md) deliberately scoped the real Pi measurement to
+milestone close rather than phase close, with the open item still tracked verbatim in
+`.planning/STATE.md` ("Phase 18 PERF-03 requires a real cold-cache latency measurement on target
+Raspberry Pi hardware before the milestone can close."). This can only be resolved by a human with
+physical access to the target hardware.
 
 ### Gaps Summary
 
-Three blocking gaps, all confirmed by direct source inspection against the exact line numbers
-cited, none covered by the 119-scenario probe suite:
+No blocking gaps remain. All three gaps the prior verification found (MERGE-01/criterion 1,
+MERGE-03/criterion 3, RPT-07/criterion 5) are closed and independently re-confirmed at the exact
+source lines by direct inspection, not by trusting the SUMMARYs. The probe suite grew from 119 to
+123 passing scenarios with zero regressions, and each of the four fixes carries its own mutation
+proof recorded verbatim in the relevant SUMMARY and spot-checked here.
 
-1. **MERGE-01 / criterion 1** — the recorded PASS covers only the single-day case; a multi-day
-   inclusive Precipitation span still loses its last day (CR-03), and the grid anchor can accept
-   an already-elapsed `EXPIRE_ISO` and shift the whole grid a day early for users in an active
-   severe-weather polygon (CR-04).
-2. **MERGE-03 / grid completeness** — HeatRisk's 7th day is silently dropped from the unified grid
-   for half of every UTC day due to a day-numbering unit mismatch (CR-02), a heat-safety false
-   negative.
-3. **RPT-07 / the payload's own documented resilience contract** — three unguarded reads convert
-   any single rejected product fetch into a total payload failure rendered as `"Error: ..."`,
-   destroying every other product's data in the same poll (CR-01).
+One item is routed to human verification rather than silently passed or failed: criterion 6 /
+PERF-03's actual target-hardware measurement, which genuinely cannot be produced from this
+environment and does not yet exist as recorded evidence, though it is correctly and deliberately
+scoped to milestone close (not phase close) per the project's own D-19 decision.
 
-All three have narrow, already-identified fixes (a few lines each, matching `18-REVIEW.md`'s
-proposed patches, which I independently re-derived rather than copied verbatim) and are well
-suited to a Phase 18 gap-closure plan (18-13) before Phase 19 begins, since Phase 19's own plan
-explicitly assumes "the payload Phase 18 already validated" and performs no new-product or
-correctness work of its own.
+Two non-blocking, disclosed items remain open by design and are carried forward rather than
+re-litigated here: `renderDayBlock`'s missing defense-in-depth guards (WR-02, not currently
+exploitable), and the fourteen-day bound-overflow coverage hole in `_addHazardsOutlookGridEntries`
+(a correct clamp with no probe scenario exercising it). Neither blocks the phase goal; both are
+candidates for a future backlog item if the team wants closure before Phase 19 removes the legacy
+code paths they're adjacent to.
 
 ---
 
-_Verified: 2026-09-06T02:00:00Z_
+_Verified: 2026-09-06T15:10:00Z_
 _Verifier: Claude (gsd-verifier)_
