@@ -102,3 +102,40 @@ under the same clamp. Pinned by two mutation-proven scenarios:
 convention regression guard). Full arithmetic and mutation table: `18-10-SUMMARY.md`. Re-validated
 against this same live capture in `18-LIVE-CAPTURE.md`'s "Re-validation after the 18-10 fix"
 subsection (plan 18-12).
+
+## Legacy `heatRisk.day1..day7` block drops day 7 for 12 of every 24 hours (pre-existing, not a Phase 18 regression)
+
+**Found during:** 18-12 Task 3, operator's live MagicMirror display check on the deployed mirror,
+2026-09-05 19:46 CDT (`2026-09-06T00:46Z`).
+
+**What's wrong:** the operator observed the module rendering only HeatRisk days 1-6 when 7 days of
+data exist. `_runHeatRiskProduct` (node_helper.js:1153) filters `_todayUtcMs()`-relative day
+offsets with `if (d < 1 || d > row.days) continue;` before bucketing into the legacy
+`heatRisk.day1..day7` fields. HeatRisk's `idp_validtime` sits at exactly 12:00Z; `_todayUtcMs()` is
+UTC midnight. During the 00Z-12Z half of a UTC day (roughly 7 PM - 7 AM CDT), the mosaic's oldest
+tile resolves to day offset 0 and is discarded by this filter, and no tile then maps to day 7 —
+so the legacy block carries only 6 days for half of every day. Verified arithmetic at the observed
+instant: tiles `2026-09-05T12:00Z .. 2026-09-11T12:00Z` map to offsets `0(discarded),1,2,3,4,5,6`.
+
+**Why this is NOT a Phase 18 regression:** Phase 18's unified `days[]` grid is unaffected and
+already carries all seven days — `18-LIVE-CAPTURE.md` records
+`"heatrisk": {..., "reportedDays":[1,2,3,4,5,6,7], "activeDays":[1,2,3,4,5,6,7], ...}`. 18-03
+deliberately pushes `gridTuples` onto the unified path BEFORE this same filter, specifically to
+avoid this loss (node_helper.js:1136-1145's own comment names the exact mechanism). `git blame`
+attributes the filter itself to `feat(17-04)`, which predates Phase 18 entirely. Neither 18-10 nor
+18-11 touches this function or writes the legacy `heatRisk` block — both write only `gridDays`.
+
+**Severity note:** node_helper.js:1141's comment justifies the grid-side handling by calling a
+dropped tile "a false negative on a heat-safety product this project's value statement forbids
+outright." This legacy-path defect is the mirror image of that same failure mode (loses day 7
+instead of day 1), on the path Phase 19 is about to remove.
+
+**Why it's out of scope for 18-12:** 18-12's `files_modified` are documentation-only; the plan
+explicitly performs no production source change. The operator's routing decision (see below) also
+makes a standalone code fix unwarranted here regardless of scope.
+
+**Routing decision (operator, at the 18-12 Task 3 checkpoint):** log it, let Phase 19 fix it.
+Phase 19 rewrites the display onto the unified payload, which already carries all seven days
+correctly, so no separate code fix is warranted on a legacy path Phase 19 removes. Tracked via
+`.planning/todos/pending/` (see the todo carrying `resolves_phase: 19`) so it auto-surfaces until
+Phase 19 closes, and is not a Phase 18 blocker.

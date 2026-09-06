@@ -1,7 +1,7 @@
 ---
 phase: 18-merge-precedence-unified-payload-schema
 plan: 09
-status: paused
+status: complete
 subsystem: verification
 tags: [live-capture, merge-01, perf-03, checkpoint]
 
@@ -15,14 +15,16 @@ provides:
 affects: [18-gap-closure, 19]
 ---
 
-# 18-09: Live Capture & Criteria Validation — PAUSED AT BLOCKING CHECKPOINT
+# 18-09: Live Capture & Criteria Validation — COMPLETE
 
 ## Status
 
-**Paused at the Task 3 blocking human-verify checkpoint.** Tasks 1 and 2 are complete and
-committed (`05560ca`, `7471fba`). Task 3 was presented to the operator and answered with a
-decision to fix before closing the phase, NOT with "approved". This plan therefore remains
-incomplete and Phase 18 remains open.
+**Complete.** Tasks 1 and 2 completed and committed (`05560ca`, `7471fba`). Task 3 was first
+presented to the operator and answered with a decision to fix before closing the phase, NOT with
+"approved" — that fix work (plans 18-10 and 18-11) and the re-validation of the affected criteria
+(plan 18-12) are now done. Task 3 was re-presented to the operator by plan 18-12 with the
+re-validated verdicts and answered **"approved"** (recorded in `18-12-SUMMARY.md`). This plan is
+therefore complete.
 
 ## Tasks
 
@@ -30,7 +32,7 @@ incomplete and Phase 18 remains open.
 |------|------|--------|--------|
 | 1 | Capture a live payload and validate criteria 1, 2, 4, 5 | Complete | `05560ca` |
 | 2 | Record local cold-cache PERF-03 figures, update state | Complete | `7471fba` |
-| 3 | Human review of the live capture and honest verdict | **Paused — answered "fix before closing"** | — |
+| 3 | Human review of the live capture and honest verdict | Complete — re-presented and approved by plan 18-12 | — (see `18-12-SUMMARY.md`) |
 
 ## Criteria verdicts
 
@@ -70,17 +72,26 @@ remains tracked by the existing STATE.md milestone-close blocker and does not bl
 ## Operator decisions at the checkpoint
 
 1. **MERGE-01 FAIL** — fix via a gap-closure plan before Phase 18 closes. Not deferred to Phase 19.
-2. **Step 6 display-unchanged confirmation** — the operator is performing the live MagicMirror
-   render check themselves. Outstanding at the time of writing.
+2. **Step 6 display-unchanged confirmation** — the operator performed the live MagicMirror render
+   check themselves at the re-presented 18-12 Task 3 checkpoint (2026-09-05, ~19:46 CDT). Confirmed
+   unchanged versus before the gap-closure run for the display's own guarantees (product sections,
+   risk rows, proximity badges, no-risk gate behavior, the four D-18 cold-start timing lines) — with
+   one exception the operator separately observed and routed as a pre-existing, non-regression
+   finding: the legacy `heatRisk.day1..day7` block renders only 6 of 7 days during the 00Z-12Z UTC
+   window because of a `feat(17-04)` filter that predates Phase 18, unrelated to any change this
+   phase made. Full detail: `deferred-items.md`'s new HeatRisk entry, `18-12-SUMMARY.md`, and
+   `.planning/STATE.md`.
+3. **18-12 Task 3 re-answer** — approved. See `18-12-SUMMARY.md` for the verbatim operator reply.
 
 ## Outstanding before Phase 18 can close
 
 - [x] MERGE-01 inclusive-endpoint fix in `_addHazardsOutlookGridEntries`, handling both conventions (closed by 18-10)
 - [x] Mutation-proven probe scenario using the live-observed `start_date === end_date` shape (closed by 18-10: `merge-grid-hazards-start-equals-end-live-shape-lands-on-its-own-grid-day`)
 - [x] Criterion 1 re-validated against the captured payload (closed by 18-12: `18-LIVE-CAPTURE.md`'s "Re-validation after the 18-10 fix" subsection)
-- [ ] Operator's step 6 display-unchanged confirmation
-- [ ] `18-09` Task 3 checkpoint answered "approved"
+- [x] Operator's step 6 display-unchanged confirmation (closed by 18-12 Task 3, 2026-09-05 — unchanged except the separately-logged, pre-existing HeatRisk day-count finding, not a Phase 18 regression)
+- [x] `18-09` Task 3 checkpoint answered "approved" (closed by 18-12 Task 3, 2026-09-05)
 
 ---
 *Phase: 18-merge-precedence-unified-payload-schema*
 *Paused: 2026-09-05*
+*Completed: 2026-09-05 (Task 3 re-presented and approved by plan 18-12)*

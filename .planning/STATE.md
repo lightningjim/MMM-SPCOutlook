@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: WPC & CPC Integration + Unified Day Report
 status: executing
-stopped_at: 18-12 paused at blocking checkpoint (Task 3) — criterion 1 re-validated PASS, MERGE-04 over-merge re-decided NOT OBSERVABLE, awaiting operator confirmation
-last_updated: "2026-09-06T00:43:23Z"
-last_activity: 2026-09-06 -- Phase 18 gap-closure plan 18-12 Tasks 1-2 complete; Task 3 checkpoint pending
+stopped_at: 18-12 complete — Task 3 checkpoint re-presented and approved by the operator; all 12 Phase 18 plans complete; phase-level close (code review, verification) still owned by the orchestrator
+last_updated: "2026-09-06T01:02:23Z"
+last_activity: 2026-09-06 -- Phase 18 gap-closure plan 18-12 complete (Task 3 approved); 18-09 checkpoint re-answered and closed; legacy HeatRisk day-7 finding logged and routed to Phase 19
 progress:
   total_phases: 7
   completed_phases: 4
   total_plans: 45
-  completed_plans: 44
-  percent: 57
+  completed_plans: 45
+  percent: 58
 ---
 
 # Project State
@@ -26,9 +26,9 @@ See: .planning/PROJECT.md (updated 2026-08-15 after v2.0 scoping)
 ## Current Position
 
 Phase: 18 (merge-precedence-unified-payload-schema) — EXECUTING
-Plan: 12 of 12
-Status: Paused at 18-12 Task 3 blocking checkpoint (operator confirmation required)
-Last activity: 2026-09-06 -- Phase 18 gap-closure plan 18-12 Tasks 1-2 complete; Task 3 checkpoint pending
+Plan: 12 of 12 (complete)
+Status: All 12 plans complete; phase-level close (code review, verification) is the orchestrator's next step
+Last activity: 2026-09-06 -- Phase 18 gap-closure plan 18-12 complete (Task 3 approved); 18-09 checkpoint re-answered and closed; legacy HeatRisk day-7 finding logged and routed to Phase 19
 
 Progress: [██████████] 98%
 
@@ -80,10 +80,12 @@ Decisions are logged in PROJECT.md Key Decisions table. Recent decisions affecti
 - [Phase 18-11]: _buildSourceHealth's reporting-gated-on-enabled mitigation from 18-05 is kept in place unchanged, now redundant defense-in-depth rather than load-bearing, since the reportedDays over-population it worked around is fixed at its source in _addRegistryDayGridEntries
 - [Phase 18-10]: The emission bound became Math.max(gridStart, gridEnd - 1) rather than a narrower start_date === end_date special case, because the upstream feed is not internally consistent about the end_date endpoint convention -- both shapes (inclusive/zero-duration and exclusive) were observed in the same 2026-09-05 poll, Precipitation ("Heavy Rain") inclusive and Temperature ("High Winds") exclusive.
 - [Phase 18-11]: _addRegistryDayGridEntries now takes the request's productToggles snapshot as a sixth parameter and skips notes.noteReported (and the whole day loop) when the product's own toggle reads off, mirroring _runHeatRiskProduct's toggle-off path, so reportedDays no longer claims an answer that was never asked for.
+- [Phase 18-12]: Operator approved the re-presented 18-09 Task 3 checkpoint (criteria verdicts as re-validated: 1 PASS/replay, 2 NOT OBSERVABLE(payload)/PASS(code), 4 PASS(under-merge)/NOT OBSERVABLE(over-merge), 5 PASS, 6 deferred to milestone per D-19), without requesting a fresh live poll. The operator separately observed a pre-existing, non-regression HeatRisk display defect during the same live check and routed it to Phase 19 rather than a Phase 18 code fix -- see deferred-items.md and the resolves_phase:19 todo.
 
 ### Pending Todos
 
 - Phase 14 IN-01..IN-08 (8 Info/CONVENTION findings) left unfixed — ERO palette sourcing, unused `dayNValidTime`, unescaped `innerHTML` (traced: no live XSS, bounded by the `includesFeat` filter), mutable registry exports, loose vs strict equality, duplicated day-indexed idioms, and two places the ERO day span is declared outside the registry. See 14-REVIEW.md.
+- `.planning/todos/pending/2026-09-05-fix-legacy-heatrisk-day1-7-block-dropping-day-7-during-00z-1.md` (`resolves_phase: 19`) — legacy `heatRisk.day1..day7` block drops day 7 for ~12h/day (00Z-12Z window); pre-existing `feat(17-04)` defect, not a Phase 18 regression, does not block Phase 18. Auto-closes when Phase 19 completes.
 
 ### Blockers/Concerns
 
@@ -93,6 +95,7 @@ Decisions are logged in PROJECT.md Key Decisions table. Recent decisions affecti
 - Phase 14 introduced two helper-global fields sampled per run (`_unusableFeatureCount`, `_oldestStaleAt`) rather than threading values through ~25 call sites. They are safe only because CR-03's `_inFlight` guard makes chain overlap unreachable. If that guard is removed or bypassed in Phase 17's `Promise.all` parallelization, these must be revisited — PERF-01 is exactly the requirement that touches this.
 - Phase 18 MERGE-01 (UTC valid-time window attribution) will consume `excessiveRain.dayNValidTime`, which has no consumer today. WR-07 made its winning-polygon scan correct, but the field is unexercised end-to-end until Phase 18.
 - Phase 19 carries the milestone's highest regression risk (getDom() rewrite with no legacy fallback, no automated tests) — requires a full per-requirement-ID behavior-parity checklist per research's Display-Rewrite Risk finding.
+- **NOT a Phase 18 blocker (found at 18-12 Task 3, operator live check 2026-09-05): legacy HeatRisk day-7 drop.** The legacy `heatRisk.day1..day7` block (distinct from Phase 18's unified `days[]` grid, which is unaffected) drops day 7 for roughly 12 of every 24 hours (the 00Z-12Z UTC window) due to a `feat(17-04)` filter in `_runHeatRiskProduct` that predates Phase 18. Confirmed by the operator's live display check to be pre-existing, not introduced by this phase's fixes. Routed to Phase 19 (which removes the legacy path entirely) via `.planning/todos/pending/2026-09-05-fix-legacy-heatrisk-day1-7-block-dropping-day-7-during-00z-1.md` (`resolves_phase: 19`) and `deferred-items.md`. Does not block Phase 18 close.
 - **RESOLVED (18-10, gap closure): MERGE-01 near-boundary drop.** A live `wpc-hazards` Precipitation-group feature with `start_date === end_date` (a genuine zero-duration single-day shape), captured 2026-09-05 near Kotzebue, AK, was silently dropped from the unified `days[]` grid by `_addHazardsOutlookGridEntries`'s exclusive-end assumption (node_helper.js:2874-2919), while still reaching the legacy `hazardsOutlook` block correctly. Root-caused and traced in `18-LIVE-CAPTURE.md`'s Criterion 1 section and `deferred-items.md`. Fixed by 18-10: `lastGridDay` changed to `Math.max(gridStart, gridEnd - 1)`, tolerating both the inclusive/zero-duration and exclusive `end_date` conventions the live feed mixes, pinned by two mutation-proven scenarios (`merge-grid-hazards-start-equals-end-live-shape-lands-on-its-own-grid-day`, `merge-grid-hazards-multi-day-exclusive-span-still-ends-on-its-last-covered-day`). Criterion 1 re-validated PASS against this same live capture in `18-LIVE-CAPTURE.md`'s "Re-validation after the 18-10 fix" subsection (18-12).
 
 ## Deferred Items
@@ -123,6 +126,7 @@ Items acknowledged and carried forward from previous milestone close:
 | Quality | Phase 15 F3: `wssi-zero-features-out-of-season` structurally-proven, not mutation-proven (no threshold exists to break) | Accepted, disclosed | Phase 15 close |
 | Verification | Live confirmation of MERGE-02's payload half (SPC convective + `wpc-hazards` "Severe Weather" both reporting the `convective` dimension on the same day) | Deferred — zero features nationwide carry the label "Severe Weather" across all six live Hazards Outlook layers, 2026-09-05; `merge-precedence-spc-suppresses-wpc-severe-weather` and its siblings (18-08-SUMMARY.md) stand as mutation-proven evidence; the code-path half (inspecting `_resolveGridDayPrecedence`) was completed live and independently confirmed dimension-keyed, never label-matched | Phase 18-09 |
 | Verification | Live confirmation of MERGE-04's over-merge half (a `flash-flood` entry and a `heavy-precip` entry on the same day, neither suppressing the other) | Deferred, re-decided at 18-12 after the 18-10 fix — the MERGE-01 blocker is resolved and Capture 2's `heavy-precip` entry now reaches the grid, but no live day carries both dimensions simultaneously: `wpc-ero` (CONUS-only) has no coverage at Capture 2's Alaska coordinate, and Capture 1's CONUS coordinate has no live `wpc-hazards` feature. See `18-LIVE-CAPTURE.md`'s Criterion 4 re-check. `merge-flash-flood-and-heavy-precip-never-cross-suppress` (18-08-SUMMARY.md) stands as mutation-proven evidence | Phase 18-09, re-decided 18-12 |
+| Correctness | Legacy `heatRisk.day1..day7` block drops day 7 for ~12h/24h (00Z-12Z UTC window) — pre-existing `feat(17-04)` defect in `_runHeatRiskProduct`'s day-offset filter, confirmed NOT a Phase 18 regression (Phase 18's unified `days[]` grid is unaffected and already carries all 7 days) | Deferred to Phase 19, which removes the legacy path entirely; does not block Phase 18 close | Phase 18-12 (operator live check, 2026-09-05) |
 | Phase 18 P01 | 15min | 2 tasks | 1 files |
 | Phase 18 P02 | ~15min | 3 tasks | 1 files |
 | Phase 18 P04 | ~20min | 3 tasks | 1 files |

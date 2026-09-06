@@ -289,7 +289,7 @@ Plans:
 
 **Wave 7** *(blocked on Wave 6 completion)*
 
-- [ ] 18-09-PLAN.md — live payload capture, per-criterion validation, local PERF-03 figures, human checkpoint (wave 7)
+- [x] 18-09-PLAN.md — live payload capture, per-criterion validation, local PERF-03 figures, human checkpoint (wave 7)
 
 **Wave 8** *(gap closure — blocked on Wave 7 completion)*
 
@@ -301,7 +301,7 @@ Plans:
 
 **Wave 10** *(gap closure — blocked on Wave 9 completion)*
 
-- [ ] 18-12-PLAN.md — criterion 1 re-validation, MERGE-04 re-check, tracking propagation, operator checkpoints (wave 10)
+- [x] 18-12-PLAN.md — criterion 1 re-validation, MERGE-04 re-check, tracking propagation, operator checkpoints (wave 10)
 
 ### Phase 19: Unified Day Report — getDom() Rewrite
 
@@ -344,7 +344,7 @@ Phases execute in numeric order: 14 → 15 → 16 → 17 → 18 → 19
 | 15. WPC Winter Storm Severity & Mesoscale Precipitation Discussion | v2.0 | 6/9 | In Progress|  |
 | 16. WPC Day 3–7 / CPC Day 8–14 Hazards Outlook | v2.0 | 8/8 | Complete    | 2026-08-27 |
 | 17. NWS/WPC HeatRisk & Parallelized Fetching | v2.0 | 9/9 | Complete    | 2026-09-01 |
-| 18. Merge, Precedence & Unified Payload Schema | v2.0 | 10/12 | In Progress|  |
+| 18. Merge, Precedence & Unified Payload Schema | v2.0 | 12/12 | In Progress|  |
 | 19. Unified Day Report — getDom() Rewrite | v2.0 | 0/? | Not started | - |
 
 ## Backlog
