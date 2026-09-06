@@ -297,7 +297,7 @@ Plans:
 
 **Wave 9** *(gap closure — blocked on Wave 8 completion)*
 
-- [ ] 18-11-PLAN.md — sources[].reportedDays toggle-off hygiene fix plus its mutation-proven scenario (wave 9)
+- [x] 18-11-PLAN.md — sources[].reportedDays toggle-off hygiene fix plus its mutation-proven scenario (wave 9)
 
 **Wave 10** *(gap closure — blocked on Wave 9 completion)*
 
@@ -344,7 +344,7 @@ Phases execute in numeric order: 14 → 15 → 16 → 17 → 18 → 19
 | 15. WPC Winter Storm Severity & Mesoscale Precipitation Discussion | v2.0 | 6/9 | In Progress|  |
 | 16. WPC Day 3–7 / CPC Day 8–14 Hazards Outlook | v2.0 | 8/8 | Complete    | 2026-08-27 |
 | 17. NWS/WPC HeatRisk & Parallelized Fetching | v2.0 | 9/9 | Complete    | 2026-09-01 |
-| 18. Merge, Precedence & Unified Payload Schema | v2.0 | 9/12 | In Progress|  |
+| 18. Merge, Precedence & Unified Payload Schema | v2.0 | 10/12 | In Progress|  |
 | 19. Unified Day Report — getDom() Rewrite | v2.0 | 0/? | Not started | - |
 
 ## Backlog

@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: WPC & CPC Integration + Unified Day Report
 status: executing
-stopped_at: Completed 18-10-PLAN.md
-last_updated: "2026-09-06T00:27:15.340Z"
+stopped_at: Completed 18-11-PLAN.md
+last_updated: "2026-09-06T00:36:32.673Z"
 last_activity: 2026-09-06 -- Phase 18 execution started
 progress:
   total_phases: 7
   completed_phases: 4
   total_plans: 45
-  completed_plans: 43
+  completed_plans: 44
   percent: 57
 ---
 
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-08-15 after v2.0 scoping)
 ## Current Position
 
 Phase: 18 (merge-precedence-unified-payload-schema) — EXECUTING
-Plan: 2 of 12
+Plan: 3 of 12
 Status: Executing Phase 18
 Last activity: 2026-09-06 -- Phase 18 execution started
 
-Progress: [██████████] 96%
+Progress: [██████████] 98%
 
 ## Performance Metrics
 
@@ -76,6 +76,8 @@ Decisions are logged in PROJECT.md Key Decisions table. Recent decisions affecti
 - [Phase 18-08]: Two mutation-testing generic descriptions were adapted to the code's actual structure -- the heatrisk-null path is protected by three independent layered guards (a type gate, the floor predicate's own null check, and a hardcoded dimension:null branch for out-of-range categories), not one, so the plan's literal NO_RISK_FLOOR.heatrisk mutation cannot reach it; hazardTaxonomy.js's own assertTaxonomyIntegrity() also throws at load time on a single-line Heavy Rain -> flash-flood remap unless PRECEDENCE.flash-flood is updated to match, so that mutation needed a companion edit to exercise the resolver rather than the integrity check.
 - [Phase 18-09] (D-18): Phase 18 ships a permanent, always-on cold-start timing instrument, logged once per process with no config flag (D-18 in 18-CONTEXT.md); the local baseline figure (backend interval 4004ms, slowest source spc-inline at 2914ms, measured on a development workstation, not the target Pi) lives in `18-LIVE-CAPTURE.md`.
 - [Phase ?]: [Phase 18-10]: _addHazardsOutlookGridEntries's lastGridDay bound changed to Math.max(gridStart, gridEnd - 1) to tolerate both the inclusive/zero-duration and exclusive end_date conventions the live wpc-hazards feed mixes -- MERGE-01's live-observed silent-drop defect closed and mutation-proven with two new probe scenarios (116 to 118 passing).
+- [Phase 18-11]: _addRegistryDayGridEntries's toggle gate is a bare early return before the whole day loop, mirroring _runHeatRiskProduct's empty-gridTuples-when-off shape rather than a per-day skip or a second, differently-shaped gate
+- [Phase 18-11]: _buildSourceHealth's reporting-gated-on-enabled mitigation from 18-05 is kept in place unchanged, now redundant defense-in-depth rather than load-bearing, since the reportedDays over-population it worked around is fixed at its source in _addRegistryDayGridEntries
 
 ### Pending Todos
 
@@ -127,9 +129,10 @@ Items acknowledged and carried forward from previous milestone close:
 | Phase 18 P07 | ~35min | 2 tasks | 1 files |
 | Phase 18 P08 | ~2h10min | 3 tasks | 1 files |
 | Phase 18 P10 | ~1h | 3 tasks | 2 files |
+| Phase 18 P11 | ~35min | 2 tasks | 2 files |
 
 ## Session Continuity
 
-Last session: 2026-09-06T00:27:15.307Z
-Stopped at: Completed 18-10-PLAN.md
+Last session: 2026-09-06T00:36:32.664Z
+Stopped at: Completed 18-11-PLAN.md
 Resume file: None
