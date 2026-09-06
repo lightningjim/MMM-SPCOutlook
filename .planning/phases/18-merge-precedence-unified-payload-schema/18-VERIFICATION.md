@@ -1,8 +1,8 @@
 ---
 phase: 18-merge-precedence-unified-payload-schema
 verified: 2026-09-06T15:10:00Z
-status: human_needed
-score: 5/6 roadmap criteria fully verified (1 requires hardware measurement no agent can perform)
+status: passed
+score: 6/6 roadmap criteria verified (criterion 6 measured on target hardware 2026-09-06, after this report was first written)
 has_blocking_gaps: false
 overrides_applied: 0
 re_verification:
@@ -15,6 +15,7 @@ re_verification:
     - "Criterion 5 / RPT-07 (CR-01): three unguarded reads of a nullable Promise.allSettled payload now guarded (node_helper.js:4923, :3293, :5076), closed by 18-16"
   gaps_remaining: []
   regressions: []
+human_verification_resolved: 2026-09-06 — see 18-HUMAN-UAT.md (status complete, passed 1). PERF-03 was measured on the target Raspberry Pi 4 Model B via `ssh mm`: three cold starts with all seven product toggles enabled gave backend intervals 4094 / 2159 / 2303 ms (median 2303 ms), wall clock to first result 4096 / 2161 / 2305 ms, slowest source `spc-inline` every run at ~55% of total. Pi is not slower than the x86 dev baseline (4004 ms). The item below is retained verbatim as the original finding.
 human_verification:
   - test: "Run the module on the target Raspberry Pi hardware with every product toggle enabled, starting from a fresh process (cold in-memory cache), and record the logged backend-interval and wall-clock startup figures (ROADMAP criterion 6 / PERF-03)."
     expected: "A measured cold-cache latency figure from the actual target hardware is recorded (in STATE.md or a UAT record) before the v2.0 milestone closes."

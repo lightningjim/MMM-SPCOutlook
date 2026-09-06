@@ -360,10 +360,50 @@ Phases execute in numeric order: 14 → 15 → 16 → 17 → 18 → 19
 | 15. WPC Winter Storm Severity & Mesoscale Precipitation Discussion | v2.0 | 6/9 | In Progress|  |
 | 16. WPC Day 3–7 / CPC Day 8–14 Hazards Outlook | v2.0 | 8/8 | Complete    | 2026-08-27 |
 | 17. NWS/WPC HeatRisk & Parallelized Fetching | v2.0 | 9/9 | Complete    | 2026-09-01 |
-| 18. Merge, Precedence & Unified Payload Schema | v2.0 | 16/16 | Complete   | 2026-09-06 |
+| 18. Merge, Precedence & Unified Payload Schema | v2.0 | 16/16 | Complete    | 2026-09-06 |
 | 19. Unified Day Report — getDom() Rewrite | v2.0 | 0/? | Not started | - |
 
 ## Backlog
+
+### Phase 999.2: Phase 18 payload-metadata + renderer follow-ups (BACKLOG — feed into Phase 19)
+
+**Goal:** [Captured for future planning] Close two Phase 18 items that Phase 19's getDom()
+rewrite will be the first real consumer of. Both were found after Phase 18's plans closed —
+one by a live run on the target Raspberry Pi, one by the security audit — and neither blocks
+Phase 18's ROADMAP criteria.
+**Requirements:** TBD
+**Plans:** 0 plans
+
+- **`sources['wpc-hazards']` under-reports on live data.** Observed on the target Pi
+  2026-09-06 (OKC coords, all toggles on): the source fetched successfully — `idpFiledate`
+  set, 823-1345 ms — and its `windowBand` carried two real spans (Hazardous Heat
+  2026-09-08→09-11; Severe Drought 2026-09-08→09-12, `mapped: false`), yet the payload
+  reported `reporting: false`, `reportedDays: []`, and `unmappedLabels: []` — the last
+  despite the run logging *"unmapped hazard label rendered verbatim: Severe Drought"*.
+
+  The empty `days[]` for this source is **correct and by design** — RPT-04 (Phase 19
+  criterion 4) routes window-spanning Hazards Outlook entries to a separate band, never into
+  a day block. The defect is narrower: two `sources[]` metadata fields disagree with what the
+  source actually did. `reporting: false` contradicts the suite's own
+  `merge-sources-spc-fire-reporting-tracks-answering-not-finding` invariant, and the empty
+  `unmappedLabels` contradicts `merge-unmapped-label-passes-through-and-is-recorded`.
+
+  **Why it matters for Phase 19:** a display that keys off `sources[id].reporting` to decide
+  whether to show a source would treat `wpc-hazards` as silent while RPT-04's band still
+  renders its entries. Related to — possibly the same root cause as — AR-07/T-18-53, which is
+  the same answered-vs-never-asked ambiguity from the other direction. No probe fixture has a
+  windowBand-only span with empty day arrays, which is why 123 green scenarios and the phase
+  verifier both missed it.
+
+- **WR-02 — `renderDayBlock` lacks the guards every sibling renderer applies.**
+  `MMM-SPCOutlook.js:604-614` interpolates `day{N}Color` / `day{N}Text` into `innerHTML`
+  without `validHazardColor()` / `escapeHtml()`. Not exploitable today: both feeding fields
+  come from closed, module-authored lookup tables. But the security audit confirmed **no
+  threat-model row in any of Phase 18's 16 plans covers this renderer** — T-18-10's `transfer`
+  disposition covers only the new `days[].hazards[].label` path. It is new attack surface with
+  the "closed vocabulary" invariant enforced nowhere locally, in a function explicitly built to
+  generalize across products. **Close this before Phase 19 routes any new row through it** —
+  that is the moment it stops being theoretical.
 
 ### Phase 999.1: Phase 16 code review follow-ups (BACKLOG)
 
