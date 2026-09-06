@@ -3250,9 +3250,24 @@ module.exports = NodeHelper.create({
    * @param row - PRODUCT_REGISTRY.excessiveRain or .winterImpact — WR-16: the row's own
    *   `days` is the sole iteration bound, never a literal 5 or 3
    * @param notes - `{ noteReported, noteActive, noteUnmapped }`
+   * @param productToggles - this request's own toggle snapshot (WR-13); the row's own
+   *   `configFlag` is read from here, never from `this._products`, so this function stays
+   *   pure with respect to helper-global state. Needed because `_runArcGisDayProduct`
+   *   seeds every `day{N}Risk` to the string `"NONE"` BEFORE its own fetch gate (Phase 14
+   *   D-05's payload-shape invariant) — a string tier is present whether or not a fetch
+   *   ever ran, so without this gate `reportedDays` would claim an answer the product was
+   *   never asked for (see `deferred-items.md`'s first entry).
    */
-  _addRegistryDayGridEntries(gridDays, sourceId, payload, row, notes) {
+  _addRegistryDayGridEntries(gridDays, sourceId, payload, row, notes, productToggles) {
     const floor = NO_RISK_FLOOR[sourceId];
+
+    // MERGE-01/deferred-items.md fix: mirror _runArcGisDayProduct's own fetch gate. The
+    // toggle being off never changes payload shape (Phase 14 D-05), but it must mean this
+    // function reports nothing — skipping the whole day loop, including noteReported,
+    // noteActive and entry assembly together, rather than adding a second, differently
+    // shaped gate. Strict `!== true` matches T-18-14/_buildSourceHealth's own `=== true`
+    // idiom so a non-boolean config value can never read as enabled.
+    if (productToggles[row.configFlag] !== true) return;
 
     // ERO's `dayNRisk` payload field carries the short tier ("MRGL"), not the long
     // "outlook" vocabulary hazardTaxonomy.js's wpc-ero map is keyed on ("Marginal (At
@@ -3600,14 +3615,17 @@ module.exports = NodeHelper.create({
       // enabled.
       const enabled = isAlwaysOn ? true : productToggles[configFlagBySource[sourceId]] === true;
 
-      // Rule 1 fix: `wpc-ero`/`wpc-wssi`'s toggle-off default ("NONE" on every day, seeded
-      // by `_runArcGisDayProduct` before its own `productToggles[row.configFlag]` fetch
-      // gate) is a string, so `_addRegistryDayGridEntries` calls `noteReported` for every
-      // day even when the toggle never let a fetch happen — unlike HeatRisk, whose
-      // toggle-off path returns an empty `gridTuples` up front. Gating `reporting` on
-      // `enabled` here (for every source, not only the advisory two) is what keeps a
-      // disabled product from claiming "we got an answer" it never asked for; a reader
-      // must be able to trust `enabled: false` to mean `reporting` is also `false`.
+      // Rule 1 fix (now redundant, kept as defense-in-depth): `wpc-ero`/`wpc-wssi`'s
+      // toggle-off default ("NONE" on every day, seeded by `_runArcGisDayProduct` before
+      // its own `productToggles[row.configFlag]` fetch gate) used to make
+      // `_addRegistryDayGridEntries` call `noteReported` for every day even when the
+      // toggle never let a fetch happen. That over-population is now fixed at its source —
+      // `_addRegistryDayGridEntries` itself skips the whole day loop when its own toggle
+      // reads off, so `reportedDays` is correctly empty before `reporting` is ever derived
+      // from it. Gating `reporting` on `enabled` here (for every source, not only the
+      // advisory two) still stands independently and is the invariant 18-05's own
+      // acceptance criteria pinned; a reader must be able to trust `enabled: false` to
+      // mean `reporting` is also `false` even if a future source's own gate regresses.
       const isAdvisory = ADVISORY_SOURCE_IDS.includes(sourceId);
       const reporting = !enabled ? false : (isAdvisory
         ? staleBySource[sourceId] !== true
@@ -4993,10 +5011,10 @@ module.exports = NodeHelper.create({
       // sources, reading the SAME eroPayload/wssiPayload blocks the legacy
       // excessiveRain/winterImpact keys below are built from.
       this._addRegistryDayGridEntries(
-        gridDays, "wpc-ero", eroPayload, PRODUCT_REGISTRY.excessiveRain, gridNotes
+        gridDays, "wpc-ero", eroPayload, PRODUCT_REGISTRY.excessiveRain, gridNotes, productToggles
       );
       this._addRegistryDayGridEntries(
-        gridDays, "wpc-wssi", wssiPayload, PRODUCT_REGISTRY.winterImpact, gridNotes
+        gridDays, "wpc-wssi", wssiPayload, PRODUCT_REGISTRY.winterImpact, gridNotes, productToggles
       );
 
       // MERGE-02/MERGE-03/MERGE-04/D-14: resolve precedence per grid day, independently —
