@@ -9644,6 +9644,102 @@ const scenarios = [
         turfStub.pointInPolygon = originalPointInPolygon;
       }
     }
+  },
+  {
+    // MERGE-01/deferred-items.md: closes the sources[].reportedDays over-reporting
+    // defect for the two arcgis-day-layers registry products. _runArcGisDayProduct seeds
+    // every day{N}Risk to the string "NONE" before its own fetch gate (Phase 14 D-05's
+    // payload-shape invariant), so _addRegistryDayGridEntries used to call noteReported
+    // for every day even when the toggle never let a fetch happen -- unlike HeatRisk,
+    // whose toggle-off path returns an empty gridTuples up front.
+    // Mutation to prove RED: delete the `productToggles[row.configFlag] !== true` early
+    // return added to _addRegistryDayGridEntries, restoring the pre-fix behaviour exactly.
+    name: "merge-sources-disabled-registry-source-reports-no-days",
+    run: async (helper) => {
+      resetHelper(helper);
+      resetLogs();
+      const originalPointInPolygon = turfStub.pointInPolygon;
+      turfStub.pointInPolygon = () => true;
+      try {
+        // Off-run: both registry day-layer toggles off. Every ERO/WSSI URL is routed
+        // anyway (hazardsRoutes() already lists ERO_URLS[1..5]/WSSI_URLS[1..3] alongside
+        // every hazards layer) so a passing result cannot be explained by an unrouted
+        // fetch throwing rather than by the gate firing.
+        const offToggles = { showExcessiveRain: false, showWinterImpact: false };
+        helper._products = offToggles;
+        installHttp(helper, hazardsRoutes());
+        const offOut = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, offToggles);
+        assertPayloadIntact(offOut);
+
+        // Precondition guard: the legacy blocks still carry their Phase 14 D-05 shape
+        // with the toggle off -- a string tier is present whether or not a fetch ever
+        // ran, which is the entire mechanism this defect exploited. A scenario that did
+        // not confirm the string is there would be testing nothing.
+        if (offOut.excessiveRain.day1Risk !== "NONE") {
+          throw new Error(`precondition failed: excessiveRain.day1Risk is ${JSON.stringify(offOut.excessiveRain.day1Risk)}, expected "NONE"`);
+        }
+        if (offOut.winterImpact.day1Risk !== "NONE") {
+          throw new Error(`precondition failed: winterImpact.day1Risk is ${JSON.stringify(offOut.winterImpact.day1Risk)}, expected "NONE"`);
+        }
+
+        // Primary assertions: a disabled registry source reports and finds nothing at all.
+        const eroOff = offOut.sources["wpc-ero"];
+        const wssiOff = offOut.sources["wpc-wssi"];
+        if (eroOff.reportedDays.length !== 0) {
+          throw new Error(`expected sources['wpc-ero'].reportedDays to be empty, got ${JSON.stringify(eroOff)}`);
+        }
+        if (wssiOff.reportedDays.length !== 0) {
+          throw new Error(`expected sources['wpc-wssi'].reportedDays to be empty, got ${JSON.stringify(wssiOff)}`);
+        }
+        if (eroOff.activeDays.length !== 0) {
+          throw new Error(`expected sources['wpc-ero'].activeDays to be empty, got ${JSON.stringify(eroOff)}`);
+        }
+        if (wssiOff.activeDays.length !== 0) {
+          throw new Error(`expected sources['wpc-wssi'].activeDays to be empty, got ${JSON.stringify(wssiOff)}`);
+        }
+        if (eroOff.enabled !== false || eroOff.reporting !== false) {
+          throw new Error(`expected sources['wpc-ero'].enabled and .reporting both false, got ${JSON.stringify(eroOff)}`);
+        }
+        if (wssiOff.enabled !== false || wssiOff.reporting !== false) {
+          throw new Error(`expected sources['wpc-wssi'].enabled and .reporting both false, got ${JSON.stringify(wssiOff)}`);
+        }
+
+        // control: on-run, both toggles on, each product answering a real above-floor
+        // tier on day 1 and an empty collection on every other day, proving the gate is
+        // not simply always-empty. hazardsRoutes() has no ERO/WSSI override parameter, so
+        // the override entries are PREPENDED before ...hazardsRoutes(), relying on
+        // installHttp taking the first matching route -- mirroring
+        // merge-sources-reporting-true-for-wave2-sources's own HEATRISK_URL composition
+        // alongside hazardsRoutes({4: ...}). A separate poll (resetHelper again), never
+        // the same poll as the off-run.
+        resetHelper(helper);
+        resetLogs();
+        turfStub.pointInPolygon = () => true;
+        const onToggles = { showExcessiveRain: true, showWinterImpact: true };
+        helper._products = onToggles;
+        installHttp(helper, [
+          [ERO_URLS[1], () => httpResponse({ body: ERO_SLGT_BODY, etag: "merge-sources-disabled-registry-ero-v1" })],
+          [WSSI_URLS[1], () => httpResponse({ body: WSSI_MINOR_BODY, etag: "merge-sources-disabled-registry-wssi-v1" })],
+          ...hazardsRoutes()
+        ]);
+        const onOut = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, onToggles);
+        assertPayloadIntact(onOut);
+
+        const eroOn = onOut.sources["wpc-ero"];
+        const wssiOn = onOut.sources["wpc-wssi"];
+        if (JSON.stringify(eroOn.reportedDays) !== JSON.stringify([1, 2, 3, 4, 5])) {
+          throw new Error(`control: expected sources['wpc-ero'].reportedDays to be the full registry-declared span [1,2,3,4,5], got ${JSON.stringify(eroOn)}`);
+        }
+        if (JSON.stringify(wssiOn.reportedDays) !== JSON.stringify([1, 2, 3])) {
+          throw new Error(`control: expected sources['wpc-wssi'].reportedDays to be the full registry-declared span [1,2,3], got ${JSON.stringify(wssiOn)}`);
+        }
+        if (eroOn.reporting !== true || wssiOn.reporting !== true) {
+          throw new Error(`control: expected sources['wpc-ero'].reporting and sources['wpc-wssi'].reporting both true, got ${JSON.stringify({ ero: eroOn.reporting, wssi: wssiOn.reporting })}`);
+        }
+      } finally {
+        turfStub.pointInPolygon = originalPointInPolygon;
+      }
+    }
   }
 ];
 
