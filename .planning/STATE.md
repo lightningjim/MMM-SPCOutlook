@@ -2,13 +2,13 @@
 gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: WPC & CPC Integration + Unified Day Report
-status: verifying
-stopped_at: Completed 18-12-PLAN.md (Task 3 approved; all 12 Phase 18 plans complete)
+status: gaps_found
+stopped_at: Phase 18 verification returned gaps_found (3 blocking) — all 12 plans complete, phase NOT closed
 last_updated: "2026-09-06T01:09:51.351Z"
-last_activity: 2026-09-06 -- Phase 18 gap-closure plan 18-12 complete (Task 3 approved); 18-09 checkpoint re-answered and closed; legacy HeatRisk day-7 finding logged and routed to Phase 19
+last_activity: 2026-09-06 -- Phase 18 deep code review (4 critical) + verification: gaps_found, 3 blocking gaps. Phase remains open pending gap closure
 progress:
   total_phases: 7
-  completed_phases: 5
+  completed_phases: 4
   total_plans: 45
   completed_plans: 45
   percent: 71
@@ -89,6 +89,7 @@ Decisions are logged in PROJECT.md Key Decisions table. Recent decisions affecti
 
 ### Blockers/Concerns
 
+- **NEW (18-VERIFICATION, 2026-09-06): 3 BLOCKING gaps — Phase 18 is NOT closed.** Deep code review (`18-REVIEW.md`, 4 critical) and verification (`18-VERIFICATION.md`, 2/6 criteria verified) both confirmed by independent source reads: (1) MERGE-01/criterion 1 — `node_helper.js:2884` `Math.max(gridStart, gridEnd - 1)` still drops the last day of a multi-day INCLUSIVE hazards span, and `_spcGridAnchor` (`:2532-2547`) accepts an already-elapsed `EXPIRE_ISO`, shifting the whole 14-day grid a day early while reporting `gridAnchor: "observed"`; criterion 1's recorded PASS covers only the zero-duration case. Probe scenario `merge-grid-hazards-multi-day-exclusive-span-still-ends-on-its-last-covered-day` (`probe-payload-resilience.js:9585`) actively pins the wrong behavior. (2) MERGE-03 — `node_helper.js:2986` compares SPC-anchored `gridDay` against UTC-midnight-anchored `row.days`, silently dropping HeatRisk's 7th day from the unified grid for the 00Z-12Z half of every UTC day, before `noteReported`, so precedence reads it as absent: a heat-safety false negative on the NEW grid path (distinct from the Phase 17 legacy defect routed to Phase 19). (3) RPT-07/criterion 5 — three unguarded reads added this phase (`:4887`, `:5013-5017`, `:5035`) turn any single `Promise.allSettled` rejection into a TypeError that collapses the ENTIRE payload to `{error}`, rendering "Error: ..." over healthy products; `:5035` is on every poll. None of the 119 probe scenarios covers any of the three — all 37 merge scenarios pin `now >= 12Z`.
 - RESOLVED (Phase 15 close): WSSI-03 out-of-season handling verified structurally and accepted. Phase 16/17 live seasonal data (fire weather, HeatRisk) still may only be fully UAT-verifiable in-season — structural verification remains the fallback per REQUIREMENTS.md quality notes.
 - Phase 18 PERF-03 requires a real cold-cache latency measurement on target Raspberry Pi hardware before the milestone can close.
 - Phase 14 left two defects deliberately unfixed as DEFERRED-BY-OWNER (single-instance deployment): `_geoJsonCache` is keyed by URL while storing location-resolved risk, and `SPC_DATA_RESULT` carries no instance correlation. Deep review independently confirmed neither is reachable with one instance at one fixed location. **Both become live defects the moment a second module instance or a second location is configured** — revisit before any multi-location work.
