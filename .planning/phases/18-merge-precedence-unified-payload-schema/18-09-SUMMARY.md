@@ -36,7 +36,7 @@ incomplete and Phase 18 remains open.
 
 | Criterion | Verdict | Basis |
 |-----------|---------|-------|
-| 1 — MERGE-01 near-boundary placement | **FAIL** | A live `wpc-hazards` "Heavy Rain" feature near Kotzebue, AK with `start_date === end_date === 2026-09-10T00:00:00.000Z` is silently dropped from the unified `days` grid while the legacy `hazardsOutlook.day5` block places it correctly |
+| 1 — MERGE-01 near-boundary placement | **PASS** (re-validated by 18-12; **FAIL** at 2026-09-05 capture time) | A live `wpc-hazards` "Heavy Rain" feature near Kotzebue, AK with `start_date === end_date === 2026-09-10T00:00:00.000Z` was silently dropped from the unified `days` grid while the legacy `hazardsOutlook.day5` block placed it correctly. Fixed by 18-10 (`Math.max(gridStart, gridEnd - 1)`); re-validated as a deterministic replay of this same capture in `18-LIVE-CAPTURE.md`'s "Re-validation after the 18-10 fix" subsection |
 | 2 — MERGE-02 suppression | NOT OBSERVABLE (payload) / PASS (code path) | No `"Severe Weather"` label present live anywhere in the US across all six Hazards Outlook layers. Standing evidence: `merge-precedence-spc-suppresses-wpc-severe-weather` (18-08) |
 | 4 — MERGE-04 distinct / duplicate | PASS (under-merge) / NOT OBSERVABLE (over-merge) | Florence, SC grid days 1-2 each carry three distinct-dimension entries (`convective`, `flash-flood`, `heat`), all `suppressedBy: null`. Over-merge blocked by the criterion-1 defect. Standing evidence: `merge-flash-flood-and-heavy-precip-never-cross-suppress` (18-08) |
 | 5 — RPT-07 both render levels | **PASS** | Compact and detailed output both derived from the payload alone, no precedence recomputation |
@@ -75,9 +75,9 @@ remains tracked by the existing STATE.md milestone-close blocker and does not bl
 
 ## Outstanding before Phase 18 can close
 
-- [ ] MERGE-01 inclusive-endpoint fix in `_addHazardsOutlookGridEntries`, handling both conventions
-- [ ] Mutation-proven probe scenario using the live-observed `start_date === end_date` shape
-- [ ] Criterion 1 re-validated against the captured payload
+- [x] MERGE-01 inclusive-endpoint fix in `_addHazardsOutlookGridEntries`, handling both conventions (closed by 18-10)
+- [x] Mutation-proven probe scenario using the live-observed `start_date === end_date` shape (closed by 18-10: `merge-grid-hazards-start-equals-end-live-shape-lands-on-its-own-grid-day`)
+- [x] Criterion 1 re-validated against the captured payload (closed by 18-12: `18-LIVE-CAPTURE.md`'s "Re-validation after the 18-10 fix" subsection)
 - [ ] Operator's step 6 display-unchanged confirmation
 - [ ] `18-09` Task 3 checkpoint answered "approved"
 

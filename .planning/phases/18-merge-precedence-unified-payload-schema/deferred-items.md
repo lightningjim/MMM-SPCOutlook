@@ -38,6 +38,18 @@ runner return a `fetched: boolean` alongside its payload so the grid-entry build
 `noteReported` when the underlying fetch never ran — mirroring HeatRisk's
 empty-`gridTuples`-when-off pattern.
 
+**Resolved:** Plan 18-11. `_addRegistryDayGridEntries` gained a sixth `productToggles` parameter
+and a strict `productToggles[row.configFlag] !== true` early return before the whole day loop
+(mirroring `_runHeatRiskProduct`'s empty-`gridTuples`-when-off shape, matching the suggested fix's
+first option above). Pinned by the mutation-proven scenario
+`merge-sources-disabled-registry-source-reports-no-days`. Observed arrays: toggle off
+(`showExcessiveRain: false, showWinterImpact: false`) — `sources['wpc-ero'].reportedDays = []`,
+`sources['wpc-wssi'].reportedDays = []`, both `activeDays = []`, both `reporting = false`; toggle on
+— `sources['wpc-ero'].reportedDays = [1,2,3,4,5]`, `sources['wpc-wssi'].reportedDays = [1,2,3]`,
+both `reporting = true` (the full registry-declared spans, unchanged from pre-fix behavior when the
+product is genuinely enabled). `_buildSourceHealth`'s `reporting`-gated-on-`enabled` mitigation from
+18-05 is kept in place as redundant defense-in-depth.
+
 ## A live `wpc-hazards` single-day feature with `start_date === end_date` is silently dropped from the unified `days[]` grid (MERGE-01)
 
 **Found during:** 18-09 Task 1, live capture against `cpc_weather_hazards/MapServer` layer 4
@@ -78,3 +90,15 @@ treats `offsetStart === offsetEnd` as exactly one day). A mutation-proven probe 
 live-observed `start_date === end_date` shape (rather than
 `merge-grid-hazards-00z-feature-forward-aligns-to-next-grid-day`'s assumed `end = start + 1 day`
 fixture) should accompany the fix.
+
+**Resolved:** Plan 18-10. The target expression is `Math.max(gridStart, gridEnd - 1)` — the
+general form, not this entry's own narrower epoch-equality suggestion (`when match.endDate ===
+match.startDate, compute gridEnd as ... + 1`), because the narrower form would still drop a
+genuine sub-day span (e.g. `end_date` a few hours after `start_date` but before the next 00Z)
+under the same clamp. Pinned by two mutation-proven scenarios:
+`merge-grid-hazards-start-equals-end-live-shape-lands-on-its-own-grid-day` (the live-captured
+`start_date === end_date === 1788998400000` shape, now landing on grid day 6) and
+`merge-grid-hazards-multi-day-exclusive-span-still-ends-on-its-last-covered-day` (the exclusive-
+convention regression guard). Full arithmetic and mutation table: `18-10-SUMMARY.md`. Re-validated
+against this same live capture in `18-LIVE-CAPTURE.md`'s "Re-validation after the 18-10 fix"
+subsection (plan 18-12).

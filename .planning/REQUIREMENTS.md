@@ -131,7 +131,7 @@ Deferred to v2.x. Tracked but not in this roadmap.
 | HEAT-04 | Phase 17 | Complete |
 | PERF-01 | Phase 17 | Complete |
 | DATA-03 | Phase 17 | Complete |
-| MERGE-01 | Phase 18 | In Progress |
+| MERGE-01 | Phase 18 | Complete |
 | MERGE-02 | Phase 18 | Complete |
 | MERGE-03 | Phase 18 | Complete |
 | MERGE-04 | Phase 18 | Complete |

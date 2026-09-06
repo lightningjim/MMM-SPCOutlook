@@ -3,9 +3,9 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: WPC & CPC Integration + Unified Day Report
 status: executing
-stopped_at: Completed 18-11-PLAN.md
-last_updated: "2026-09-06T00:36:32.673Z"
-last_activity: 2026-09-06 -- Phase 18 execution started
+stopped_at: 18-12 paused at blocking checkpoint (Task 3) — criterion 1 re-validated PASS, MERGE-04 over-merge re-decided NOT OBSERVABLE, awaiting operator confirmation
+last_updated: "2026-09-06T00:43:23Z"
+last_activity: 2026-09-06 -- Phase 18 gap-closure plan 18-12 Tasks 1-2 complete; Task 3 checkpoint pending
 progress:
   total_phases: 7
   completed_phases: 4
@@ -26,9 +26,9 @@ See: .planning/PROJECT.md (updated 2026-08-15 after v2.0 scoping)
 ## Current Position
 
 Phase: 18 (merge-precedence-unified-payload-schema) — EXECUTING
-Plan: 3 of 12
-Status: Executing Phase 18
-Last activity: 2026-09-06 -- Phase 18 execution started
+Plan: 12 of 12
+Status: Paused at 18-12 Task 3 blocking checkpoint (operator confirmation required)
+Last activity: 2026-09-06 -- Phase 18 gap-closure plan 18-12 Tasks 1-2 complete; Task 3 checkpoint pending
 
 Progress: [██████████] 98%
 
@@ -78,6 +78,8 @@ Decisions are logged in PROJECT.md Key Decisions table. Recent decisions affecti
 - [Phase ?]: [Phase 18-10]: _addHazardsOutlookGridEntries's lastGridDay bound changed to Math.max(gridStart, gridEnd - 1) to tolerate both the inclusive/zero-duration and exclusive end_date conventions the live wpc-hazards feed mixes -- MERGE-01's live-observed silent-drop defect closed and mutation-proven with two new probe scenarios (116 to 118 passing).
 - [Phase 18-11]: _addRegistryDayGridEntries's toggle gate is a bare early return before the whole day loop, mirroring _runHeatRiskProduct's empty-gridTuples-when-off shape rather than a per-day skip or a second, differently-shaped gate
 - [Phase 18-11]: _buildSourceHealth's reporting-gated-on-enabled mitigation from 18-05 is kept in place unchanged, now redundant defense-in-depth rather than load-bearing, since the reportedDays over-population it worked around is fixed at its source in _addRegistryDayGridEntries
+- [Phase 18-10]: The emission bound became Math.max(gridStart, gridEnd - 1) rather than a narrower start_date === end_date special case, because the upstream feed is not internally consistent about the end_date endpoint convention -- both shapes (inclusive/zero-duration and exclusive) were observed in the same 2026-09-05 poll, Precipitation ("Heavy Rain") inclusive and Temperature ("High Winds") exclusive.
+- [Phase 18-11]: _addRegistryDayGridEntries now takes the request's productToggles snapshot as a sixth parameter and skips notes.noteReported (and the whole day loop) when the product's own toggle reads off, mirroring _runHeatRiskProduct's toggle-off path, so reportedDays no longer claims an answer that was never asked for.
 
 ### Pending Todos
 
@@ -91,7 +93,7 @@ Decisions are logged in PROJECT.md Key Decisions table. Recent decisions affecti
 - Phase 14 introduced two helper-global fields sampled per run (`_unusableFeatureCount`, `_oldestStaleAt`) rather than threading values through ~25 call sites. They are safe only because CR-03's `_inFlight` guard makes chain overlap unreachable. If that guard is removed or bypassed in Phase 17's `Promise.all` parallelization, these must be revisited — PERF-01 is exactly the requirement that touches this.
 - Phase 18 MERGE-01 (UTC valid-time window attribution) will consume `excessiveRain.dayNValidTime`, which has no consumer today. WR-07 made its winning-polygon scan correct, but the field is unexercised end-to-end until Phase 18.
 - Phase 19 carries the milestone's highest regression risk (getDom() rewrite with no legacy fallback, no automated tests) — requires a full per-requirement-ID behavior-parity checklist per research's Display-Rewrite Risk finding.
-- **NEW (18-09 live capture, 2026-09-05): MERGE-01 FAIL.** A live `wpc-hazards` Precipitation-group feature with `start_date === end_date` (a genuine zero-duration single-day shape) is silently dropped from the unified `days[]` grid by `_addHazardsOutlookGridEntries`'s exclusive-end assumption (node_helper.js:2874-2919), while still reaching the legacy `hazardsOutlook` block correctly. Root-caused and traced in `18-LIVE-CAPTURE.md`'s Criterion 1 section and `deferred-items.md`; not fixed by 18-09 (production code out of that plan's scope). Needs a fix plan before this ROADMAP criterion can read PASS.
+- **RESOLVED (18-10, gap closure): MERGE-01 near-boundary drop.** A live `wpc-hazards` Precipitation-group feature with `start_date === end_date` (a genuine zero-duration single-day shape), captured 2026-09-05 near Kotzebue, AK, was silently dropped from the unified `days[]` grid by `_addHazardsOutlookGridEntries`'s exclusive-end assumption (node_helper.js:2874-2919), while still reaching the legacy `hazardsOutlook` block correctly. Root-caused and traced in `18-LIVE-CAPTURE.md`'s Criterion 1 section and `deferred-items.md`. Fixed by 18-10: `lastGridDay` changed to `Math.max(gridStart, gridEnd - 1)`, tolerating both the inclusive/zero-duration and exclusive `end_date` conventions the live feed mixes, pinned by two mutation-proven scenarios (`merge-grid-hazards-start-equals-end-live-shape-lands-on-its-own-grid-day`, `merge-grid-hazards-multi-day-exclusive-span-still-ends-on-its-last-covered-day`). Criterion 1 re-validated PASS against this same live capture in `18-LIVE-CAPTURE.md`'s "Re-validation after the 18-10 fix" subsection (18-12).
 
 ## Deferred Items
 
@@ -120,7 +122,7 @@ Items acknowledged and carried forward from previous milestone close:
 | Quality | Phase 15 F2: dead helpers `kmzToKmlfilename` / `extractKmlFromKmz` (zero call sites) | Remove in a cleanup pass | Phase 15 close |
 | Quality | Phase 15 F3: `wssi-zero-features-out-of-season` structurally-proven, not mutation-proven (no threshold exists to break) | Accepted, disclosed | Phase 15 close |
 | Verification | Live confirmation of MERGE-02's payload half (SPC convective + `wpc-hazards` "Severe Weather" both reporting the `convective` dimension on the same day) | Deferred — zero features nationwide carry the label "Severe Weather" across all six live Hazards Outlook layers, 2026-09-05; `merge-precedence-spc-suppresses-wpc-severe-weather` and its siblings (18-08-SUMMARY.md) stand as mutation-proven evidence; the code-path half (inspecting `_resolveGridDayPrecedence`) was completed live and independently confirmed dimension-keyed, never label-matched | Phase 18-09 |
-| Verification | Live confirmation of MERGE-04's over-merge half (a `flash-flood` entry and a `heavy-precip` entry on the same day, neither suppressing the other) | Deferred — the only live `heavy-precip`-eligible feature today never reaches the unified day grid at all (see the MERGE-01 FAIL blocker above), so no live day currently carries a `heavy-precip` entry to compare; `merge-flash-flood-and-heavy-precip-never-cross-suppress` (18-08-SUMMARY.md) stands as mutation-proven evidence | Phase 18-09 |
+| Verification | Live confirmation of MERGE-04's over-merge half (a `flash-flood` entry and a `heavy-precip` entry on the same day, neither suppressing the other) | Deferred, re-decided at 18-12 after the 18-10 fix — the MERGE-01 blocker is resolved and Capture 2's `heavy-precip` entry now reaches the grid, but no live day carries both dimensions simultaneously: `wpc-ero` (CONUS-only) has no coverage at Capture 2's Alaska coordinate, and Capture 1's CONUS coordinate has no live `wpc-hazards` feature. See `18-LIVE-CAPTURE.md`'s Criterion 4 re-check. `merge-flash-flood-and-heavy-precip-never-cross-suppress` (18-08-SUMMARY.md) stands as mutation-proven evidence | Phase 18-09, re-decided 18-12 |
 | Phase 18 P01 | 15min | 2 tasks | 1 files |
 | Phase 18 P02 | ~15min | 3 tasks | 1 files |
 | Phase 18 P04 | ~20min | 3 tasks | 1 files |

@@ -251,10 +251,10 @@ Plans:
 **Requirements**: MERGE-01, MERGE-02, MERGE-03, MERGE-04, RPT-07, PERF-03
 **Success Criteria** (what must be TRUE):
 
-  1. A hazard near a day boundary is placed using strict UTC time-window overlap — reconciling SPC's 12Z–12Z, the Hazards Outlook's 00Z–00Z, and ERO Day 1's partial 01Z–12Z conventions — verified against at least one real near-boundary case captured from live payloads (MERGE-01).
+  1. A hazard near a day boundary is placed using strict UTC time-window overlap — reconciling SPC's 12Z–12Z, the Hazards Outlook's 00Z–00Z, and ERO Day 1's partial 01Z–12Z conventions — verified against at least one real near-boundary case captured from live payloads (MERGE-01) (re-validated PASS after the 18-10 fix; see 18-LIVE-CAPTURE.md "Re-validation after the 18-10 fix").
   2. When SPC's convective outlook and WPC's derived Severe Weather flag both cover the same day/location, only SPC's granular tier displays — confirmed by inspecting the suppression code path against a captured live payload to verify it keys off the hazard dimension, not a label string match (MERGE-02).
   3. When HeatRisk and WPC's binary Hazardous Heat flag overlap, only HeatRisk's 5-level category displays (MERGE-03).
-  4. Two genuinely distinct concurrent hazards on the same day both appear, and a hazard reported by two products under overlapping vocabulary appears only once — validated against captured live payloads, not assumed synthetic cases (MERGE-04).
+  4. Two genuinely distinct concurrent hazards on the same day both appear, and a hazard reported by two products under overlapping vocabulary appears only once — validated against captured live payloads, not assumed synthetic cases (MERGE-04) (under-merge PASS live; over-merge re-checked NOT OBSERVABLE after the 18-10 fix — no live coordinate carries both a flash-flood and a heavy-precip entry, see 18-LIVE-CAPTURE.md's Criterion 4 re-check).
   5. The backend emits a single `days`/`summary`/`sources`/`advisories`-shaped payload; compact and detailed output can both be produced by reading that one payload, with no precedence logic left to be recomputed downstream (RPT-07).
   6. A cold-cache run on the target Raspberry Pi hardware, with every product toggle enabled, produces a measured startup latency figure recorded before the milestone closes (PERF-03).
 
