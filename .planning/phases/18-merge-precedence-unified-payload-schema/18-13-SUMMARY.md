@@ -135,3 +135,13 @@ None - no external service configuration required.
 ---
 *Phase: 18-merge-precedence-unified-payload-schema*
 *Completed: 2026-09-06*
+
+## Self-Check: PASSED
+
+- FOUND: node_helper.js
+- FOUND: scripts/probe-payload-resilience.js
+- FOUND: .planning/phases/18-merge-precedence-unified-payload-schema/18-13-SUMMARY.md
+- FOUND commit: 443f977
+- FOUND commit: 6161c23
+- FOUND commit: 160fcb0
+- Final `node scripts/probe-payload-resilience.js` re-run: `PROBE RESULT: 120 passed, 0 failed, 0 skipped`
