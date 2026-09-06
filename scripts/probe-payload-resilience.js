@@ -9479,6 +9479,171 @@ const scenarios = [
         turfStub.pointInPolygon = originalPointInPolygon;
       }
     }
+  },
+  {
+    // MERGE-01 gap closure: this fixture is the live feature captured 2026-09-05 at
+    // 65.936,-163.443 -- objectid 7917, label "Heavy Rain", start_date === end_date ===
+    // 1788998400000 (2026-09-10T00:00:00.000Z), idp_filedate 1788639319000, layer 4
+    // (Prcp_D3_7_Clip / PRCP_D3_7). This zero-duration/inclusive shape is the one every
+    // pre-existing hazards fixture in this file failed to model -- see
+    // 18-LIVE-CAPTURE.md's "Criterion 1 (MERGE-01, near-boundary)" section for the full
+    // trace. Mutation to prove RED (Task 3's mutation M1): replace
+    // `Math.max(gridStart, gridEnd - 1)` with `gridEnd - 1` in
+    // _addHazardsOutlookGridEntries, restoring the exact pre-fix expression.
+    name: "merge-grid-hazards-start-equals-end-live-shape-lands-on-its-own-grid-day",
+    run: async (helper) => {
+      const NOW_MS = Date.UTC(2026, 8, 5, 21, 41);
+      const originalPointInPolygon = turfStub.pointInPolygon;
+      const runWithFeature = async (feature) => {
+        resetHelper(helper);
+        resetLogs();
+        turfStub.pointInPolygon = () => true;
+        helper._nowMs = () => NOW_MS;
+        helper._products = { showHazardsOutlook: true };
+        const layer4Fixture = () => httpResponse({
+          body: hazardsCollection([feature]),
+          etag: "merge-grid-hazards-start-equals-end-layer4-v1"
+        });
+        installHttp(helper, hazardsRoutes({ 4: layer4Fixture }));
+        const out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showHazardsOutlook: true });
+        assertPayloadIntact(out);
+        assertHazardsBlockIntact(out);
+        return out;
+      };
+
+      try {
+        const liveFeature = hazardsFeature({
+          label: "Heavy Rain", startDate: 1788998400000, endDate: 1788998400000, filedate: 1788639319000
+        });
+        const out = await runWithFeature(liveFeature);
+
+        // Precondition guard: the label actually reached the legacy hazardsOutlook day
+        // grid, so a missing Phase 18 grid entry cannot be attributed to the feature
+        // being filtered out upstream of the grid-entry builder.
+        let reachedLegacy = false;
+        for (let d = 3; d <= 14; d++) {
+          if (out.hazardsOutlook[`day${d}`].hazards.some((h) => h.label === "Heavy Rain")) {
+            reachedLegacy = true;
+            break;
+          }
+        }
+        if (!reachedLegacy) {
+          throw new Error(
+            "precondition failed: \"Heavy Rain\" never reached the legacy hazardsOutlook day grid (searched day3..day14), so a missing Phase 18 grid entry cannot be attributed to _addHazardsOutlookGridEntries"
+          );
+        }
+        if (!out.hazardsOutlook.day5.hazards.some((h) => h.label === "Heavy Rain") ||
+            out.hazardsOutlook.day5.date !== "2026-09-10") {
+          throw new Error(`precondition failed: expected the live capture's own legacy placement (hazardsOutlook.day5, date 2026-09-10, label "Heavy Rain"), got day5=${JSON.stringify(out.hazardsOutlook.day5)}`);
+        }
+
+        const day6Entries = out.days["6"].hazards.filter((h) => h.source === "wpc-hazards" && h.label === "Heavy Rain");
+        if (day6Entries.length !== 1 || day6Entries[0].dimension !== "heavy-precip" || day6Entries[0].color !== "267300") {
+          throw new Error(`MERGE-01: expected exactly one wpc-hazards "Heavy Rain" entry on grid day 6 with dimension heavy-precip and color 267300, got ${JSON.stringify(out.days["6"].hazards)}`);
+        }
+        if (out.days["6"].date !== "2026-09-10" || out.days["6"].windowStart !== "2026-09-10T12:00:00.000Z") {
+          throw new Error(`MERGE-01: expected grid day 6 to be date 2026-09-10 with windowStart 2026-09-10T12:00:00.000Z, got date=${JSON.stringify(out.days["6"].date)} windowStart=${JSON.stringify(out.days["6"].windowStart)}`);
+        }
+        const day5Smear = out.days["5"].hazards.filter((h) => h.source === "wpc-hazards" && h.label === "Heavy Rain");
+        const day7Smear = out.days["7"].hazards.filter((h) => h.source === "wpc-hazards" && h.label === "Heavy Rain");
+        if (day5Smear.length !== 0 || day7Smear.length !== 0) {
+          throw new Error(`MERGE-01: expected NO wpc-hazards "Heavy Rain" entry on grid day 5 or 7, got day5=${JSON.stringify(day5Smear)} day7=${JSON.stringify(day7Smear)}`);
+        }
+        const wpcHazardsHealth = out.sources["wpc-hazards"];
+        if (!wpcHazardsHealth.reportedDays.includes(6) || !wpcHazardsHealth.activeDays.includes(6) || wpcHazardsHealth.reporting !== true) {
+          throw new Error(`MERGE-01: expected sources['wpc-hazards'].reportedDays and .activeDays to include grid day 6 and .reporting to be true, got ${JSON.stringify(wpcHazardsHealth)}`);
+        }
+
+        // control: the same calendar day expressed under the EXCLUSIVE convention this
+        // suite's other hazards fixtures already use, run in a SEPARATE poll so
+        // _addHazardsOutlookGridEntries' (source, label) dedupe within a grid day cannot
+        // collapse the two features and make this control vacuous. The fix must carry
+        // both conventions -- a control that only exercised the new inclusive shape
+        // could not catch a regression that breaks the exclusive path.
+        const exclusiveFeature = hazardsFeature({
+          label: "Heavy Rain", startDate: Date.UTC(2026, 8, 10), endDate: Date.UTC(2026, 8, 11)
+        });
+        const controlOut = await runWithFeature(exclusiveFeature);
+        const controlDay6 = controlOut.days["6"].hazards.filter((h) => h.source === "wpc-hazards" && h.label === "Heavy Rain");
+        const controlDay5 = controlOut.days["5"].hazards.filter((h) => h.source === "wpc-hazards" && h.label === "Heavy Rain");
+        const controlDay7 = controlOut.days["7"].hazards.filter((h) => h.source === "wpc-hazards" && h.label === "Heavy Rain");
+        if (controlDay6.length !== 1 || controlDay5.length !== 0 || controlDay7.length !== 0) {
+          throw new Error(`control: expected the exclusive-convention Sep 10-11 feature on grid day 6 only, got day5=${JSON.stringify(controlDay5)} day6=${JSON.stringify(controlDay6)} day7=${JSON.stringify(controlDay7)}`);
+        }
+      } finally {
+        turfStub.pointInPolygon = originalPointInPolygon;
+      }
+    }
+  },
+  {
+    // Regression guard for the OTHER direction from
+    // merge-grid-hazards-start-equals-end-live-shape-lands-on-its-own-grid-day: this
+    // scenario exists so that a fix which switches wholesale to inclusive-end semantics
+    // cannot pass. Mutation to prove RED (Task 3's mutation M2): replace
+    // `Math.max(gridStart, gridEnd - 1)` with `Math.max(gridStart, gridEnd)` in
+    // _addHazardsOutlookGridEntries.
+    name: "merge-grid-hazards-multi-day-exclusive-span-still-ends-on-its-last-covered-day",
+    run: async (helper) => {
+      const NOW_MS = Date.UTC(2026, 8, 5, 21, 41);
+      resetHelper(helper);
+      resetLogs();
+      const originalPointInPolygon = turfStub.pointInPolygon;
+      turfStub.pointInPolygon = () => true;
+      try {
+        helper._nowMs = () => NOW_MS;
+        helper._products = { showHazardsOutlook: true };
+        const feature = hazardsFeature({
+          label: "Heavy Rain", startDate: Date.UTC(2026, 8, 10), endDate: Date.UTC(2026, 8, 12)
+        });
+        const layer4Fixture = () => httpResponse({
+          body: hazardsCollection([feature]),
+          etag: "merge-grid-hazards-multi-day-exclusive-layer4-v1"
+        });
+        installHttp(helper, hazardsRoutes({ 4: layer4Fixture }));
+        const out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showHazardsOutlook: true });
+        assertPayloadIntact(out);
+        assertHazardsBlockIntact(out);
+
+        // Precondition guard: same legacy-reach guard as the sibling scenario.
+        let reachedLegacy = false;
+        for (let d = 3; d <= 14; d++) {
+          if (out.hazardsOutlook[`day${d}`].hazards.some((h) => h.label === "Heavy Rain")) {
+            reachedLegacy = true;
+            break;
+          }
+        }
+        if (!reachedLegacy) {
+          throw new Error(
+            "precondition failed: \"Heavy Rain\" never reached the legacy hazardsOutlook day grid (searched day3..day14), so a missing Phase 18 grid entry cannot be attributed to _addHazardsOutlookGridEntries"
+          );
+        }
+
+        const day6 = out.days["6"].hazards.filter((h) => h.source === "wpc-hazards" && h.label === "Heavy Rain");
+        const day7 = out.days["7"].hazards.filter((h) => h.source === "wpc-hazards" && h.label === "Heavy Rain");
+        const day5 = out.days["5"].hazards.filter((h) => h.source === "wpc-hazards" && h.label === "Heavy Rain");
+        const day8 = out.days["8"].hazards.filter((h) => h.source === "wpc-hazards" && h.label === "Heavy Rain");
+        if (day6.length !== 1) {
+          throw new Error(`expected exactly one wpc-hazards "Heavy Rain" entry on grid day 6, got ${JSON.stringify(out.days["6"].hazards)}`);
+        }
+        if (day7.length !== 1) {
+          throw new Error(`expected exactly one wpc-hazards "Heavy Rain" entry on grid day 7, got ${JSON.stringify(out.days["7"].hazards)}`);
+        }
+        if (day5.length !== 0) {
+          throw new Error(`expected NO wpc-hazards "Heavy Rain" entry on grid day 5, got ${JSON.stringify(day5)}`);
+        }
+        if (day8.length !== 0) {
+          throw new Error(`expected NO wpc-hazards "Heavy Rain" entry on grid day 8 (an always-inclusive bound would populate this day), got ${JSON.stringify(day8)}`);
+        }
+
+        // control: the two populated days are the two calendar days the span actually
+        // covers, not an arbitrary adjacent pair.
+        if (out.days["6"].date !== "2026-09-10" || out.days["7"].date !== "2026-09-11") {
+          throw new Error(`control: expected grid day 6 date 2026-09-10 and grid day 7 date 2026-09-11, got day6.date=${JSON.stringify(out.days["6"].date)} day7.date=${JSON.stringify(out.days["7"].date)}`);
+        }
+      } finally {
+        turfStub.pointInPolygon = originalPointInPolygon;
+      }
+    }
   }
 ];
 
