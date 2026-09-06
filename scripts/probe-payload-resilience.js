@@ -7799,6 +7799,10 @@ const scenarios = [
     run: async (helper) => {
       resetHelper(helper);
       resetLogs();
+      // Pinned strictly before EXPIRE_ISO below (18-14's elapsed-EXPIRE_ISO guard reads
+      // real time via _nowMs; an unpinned clock makes this scenario's "observed" outcome
+      // decay to "estimated" once real time passes 2026-09-06T12:00:00Z).
+      helper._nowMs = () => Date.UTC(2026, 8, 5, 13, 0);
       const originalPointInPolygon = turfStub.pointInPolygon;
       turfStub.pointInPolygon = () => true;
       try {

@@ -2526,12 +2526,19 @@ module.exports = NodeHelper.create({
    *     it is finite and falls inside [nominalStartMs, day1EndMs], else nominalStartMs),
    *   day1EndMs: epoch ms of grid day 1's end (EXPIRE_ISO, or nominalStartMs + 24h),
    *   anchor: "observed" when EXPIRE_ISO was usable, "estimated" when it fell back to
-   *     the clock rule
+   *     the clock rule — which fires when EXPIRE_ISO was absent, unparseable, OR already
+   *     elapsed (its window has already ended)
    * }
    */
   _spcGridAnchor(validIso, expireIso) {
     const expireMs = typeof expireIso === "string" && expireIso ? new Date(expireIso).getTime() : NaN;
-    if (Number.isFinite(expireMs)) {
+    // D-11/T-18-03: an EXPIRE_ISO in the past is a stale or not-yet-reissued outlook (SPC's
+    // 12Z replacement is not instantaneous — live 2026-09-05 ISSUE was 12:54Z — and this
+    // module serves cached bodies for up to 2 * _updateInterval). Accepting it anchors the
+    // entire fourteen-day grid one day early while still reporting anchor: "observed". The
+    // clock fallback below is already correct for this case, so rejecting it here is the
+    // whole fix.
+    if (Number.isFinite(expireMs) && expireMs > this._nowMs()) {
       const nominalStartMs = expireMs - MS_PER_DAY;
       const day1EndMs = expireMs;
       const validMs = typeof validIso === "string" && validIso ? new Date(validIso).getTime() : NaN;
@@ -4281,8 +4288,9 @@ module.exports = NodeHelper.create({
       }
       const gridAnchorInfo = this._spcGridAnchor(day1ValidIso, day1ExpireIso);
       if (gridAnchorInfo.anchor === "estimated" && !this._loggedGridAnchorFallback) {
-        Log.info("MMM-SPCOutlook: SPC grid anchor unavailable (no VALID_ISO/EXPIRE_ISO from " +
-                 "the day-1 categorical outlook); falling back to the clock-derived estimate.");
+        Log.info("MMM-SPCOutlook: SPC grid anchor unavailable (VALID_ISO/EXPIRE_ISO from the " +
+                 "day-1 categorical outlook were absent/unparseable, or EXPIRE_ISO had already " +
+                 "elapsed); falling back to the clock-derived estimate.");
         this._loggedGridAnchorFallback = true;
       }
   
