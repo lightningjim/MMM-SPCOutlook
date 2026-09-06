@@ -2871,17 +2871,25 @@ module.exports = NodeHelper.create({
       const gridStart = this._gridDayOf(match.startDate, anchorInfo.nominalStartMs);
       const gridEnd = this._gridDayOf(match.endDate, anchorInfo.nominalStartMs);
 
-      // The upstream feed is NOT internally consistent about the `end_date` endpoint
-      // convention: a live 2026-09-05 poll returned a Precipitation feature (objectid
-      // 7917, "Heavy Rain") with `start_date === end_date` (inclusive/zero-duration)
-      // alongside a Temperature feature ("High Winds") with `end_date = start_date +
-      // 86400000` (exclusive) — see 18-LIVE-CAPTURE.md's "Criterion 1" section. The
-      // clamp below reads correctly under both: a span confined to one grid day emits on
-      // that day, while `gridEnd - 1` still governs a later-ending span, mirroring
-      // `_bucketHazardMatch`'s own inclusive-endpoint loop. Clamp stays at the loop
-      // header (T-18-03/T-16-05), never in the body, so a hostile span cannot iterate
-      // unbounded.
-      const lastGridDay = Math.max(gridStart, gridEnd - 1);
+      // D-21 (supersedes 18-10's `Math.max(gridStart, gridEnd - 1)`): the Hazards
+      // Outlook `end_date` endpoint is read INCLUSIVELY, matching `_bucketHazardMatch`'s
+      // own day loop (`d <= Math.min(offsetEnd, lastDay)`, both ends inclusive). The
+      // upstream feed is not internally consistent about this endpoint — a live
+      // 2026-09-05 poll returned a Precipitation feature (objectid 7917, "Heavy Rain")
+      // with `start_date === end_date` (inclusive/zero-duration) alongside a Temperature
+      // feature ("High Winds") with `end_date = start_date + 86400000` (exclusive) — see
+      // 18-LIVE-CAPTURE.md's "Criterion 1" section. Only the Precipitation group reaches
+      // this grid (every other group routes to the window band above), and Precipitation
+      // is the group observed using the inclusive form, so inclusive reading matches the
+      // one live sample that actually exercises this code path. 18-10's exclusive-leaning
+      // expression tolerated both conventions only for a span confined to a single grid
+      // day; for any longer span it silently lost the final day, which is the defect
+      // MERGE-01/D-01 parity with the legacy block (whose loop is inclusive on both ends)
+      // exists to close, and which this project's no-false-negative rule breaks the tie
+      // toward. Clamp stays at the loop header (T-18-03/T-16-05), never in the body, so a
+      // hostile span still cannot iterate past fourteen days — widening this bound to
+      // `gridEnd` does not touch that clamp.
+      const lastGridDay = gridEnd;
       const clampedStart = Math.max(gridStart, 1);
       const clampedEnd = Math.min(lastGridDay, GRID_DAY_COUNT);
       if (clampedEnd < clampedStart) continue; // clamped range is empty; skip entirely
