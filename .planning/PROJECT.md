@@ -58,7 +58,7 @@ Accurately and efficiently tell the user if they're in a weather risk zone right
 *Display restructure:*
 - [ ] Unified day report replacing per-product sections — one block per day merging severe, fire, rainfall, winter, and extended hazards
 - [ ] Detail toggle — off (default): compact single line per day; on: per-day block expanded into source-labeled sub-rows
-- [ ] Cross-source deduplication via precedence table (better source supersedes coarser one on same hazard/day)
+- [x] Cross-source deduplication via precedence table (better source supersedes coarser one on same hazard/day) — validated in Phase 18 (MERGE-02/03/04); the backend now emits one precomputed `days`/`summary`/`sources`/`advisories` payload with precedence already resolved, so Phase 19's display work recomputes nothing
 
 ### Out of Scope
 
@@ -146,4 +146,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-09-01 — Phase 17 complete: all six v2.0 data sources shipped; display restructure (Phase 18) remains*
+*Last updated: 2026-09-06 — Phase 18 complete: merge, precedence and the unified payload schema shipped and verified 6/6 (PERF-03 measured on the target Pi: median 2303 ms cold-cache backend interval). Only the Phase 19 getDom() rewrite remains for v2.0.*
