@@ -305,7 +305,7 @@ Plans:
 
 **Wave 11** *(gap closure — blocked on Wave 10 completion)*
 
-- [ ] 18-13-PLAN.md — D-21 inclusive end_date endpoint, three re-pointed assertions, multi-day legacy-parity scenario (wave 11)
+- [x] 18-13-PLAN.md — D-21 inclusive end_date endpoint, three re-pointed assertions, multi-day legacy-parity scenario (wave 11)
 
 **Wave 12** *(gap closure — blocked on Wave 11 completion)*
 
@@ -360,7 +360,7 @@ Phases execute in numeric order: 14 → 15 → 16 → 17 → 18 → 19
 | 15. WPC Winter Storm Severity & Mesoscale Precipitation Discussion | v2.0 | 6/9 | In Progress|  |
 | 16. WPC Day 3–7 / CPC Day 8–14 Hazards Outlook | v2.0 | 8/8 | Complete    | 2026-08-27 |
 | 17. NWS/WPC HeatRisk & Parallelized Fetching | v2.0 | 9/9 | Complete    | 2026-09-01 |
-| 18. Merge, Precedence & Unified Payload Schema | v2.0 | 12/12 | In Progress|  |
+| 18. Merge, Precedence & Unified Payload Schema | v2.0 | 13/16 | In Progress|  |
 | 19. Unified Day Report — getDom() Rewrite | v2.0 | 0/? | Not started | - |
 
 ## Backlog
