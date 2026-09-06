@@ -3269,7 +3269,9 @@ module.exports = NodeHelper.create({
    * grid day N. This function never calls `_gridDayOf`.
    * @param gridDays - the fourteen-key `days` skeleton from `_buildGridDays`, mutated in place
    * @param sourceId - "wpc-ero" or "wpc-wssi"
-   * @param payload - eroPayload or wssiPayload, the existing flat day{N}Risk/Text/Color block
+   * @param payload - eroPayload or wssiPayload, the existing flat day{N}Risk/Text/Color
+   *   block; `null` is a legitimate value meaning this product's `Promise.allSettled`
+   *   member rejected (CR-01) — it degrades to reporting nothing for the whole day loop.
    * @param row - PRODUCT_REGISTRY.excessiveRain or .winterImpact — WR-16: the row's own
    *   `days` is the sole iteration bound, never a literal 5 or 3
    * @param notes - `{ noteReported, noteActive, noteUnmapped }`
@@ -3282,6 +3284,14 @@ module.exports = NodeHelper.create({
    *   never asked for (see `deferred-items.md`'s first entry).
    */
   _addRegistryDayGridEntries(gridDays, sourceId, payload, row, notes, productToggles) {
+    // CR-01: a rejected `Promise.allSettled` member substitutes `payload: null` per the
+    // batch's own documented contract (see getSpcOutlook's settle-loop comment), and this
+    // function's day loop below reads `payload[\`day${d}Risk\`]`. The guard sits at the
+    // head of the function, ahead of both the floor lookup and the toggle gate, so both of
+    // this function's call sites are covered by one check — matching the reason 18-11 put
+    // the toggle gate here rather than duplicating it at each call site.
+    if (!payload || typeof payload !== "object") return;
+
     const floor = NO_RISK_FLOOR[sourceId];
 
     // MERGE-01/deferred-items.md fix: mirror _runArcGisDayProduct's own fetch gate. The
@@ -4905,10 +4915,12 @@ module.exports = NodeHelper.create({
       // unexercised end-to-end until this read — a single sample logged once per process
       // catches a null/malformed field now. D-11 makes ERO straight-through and
       // `valid_time` is a composite display string, not a machine anchor, so day
-      // attribution is never built on it.
+      // attribution is never built on it. This fires on the first poll of every process, so
+      // it must tolerate the settle loop's documented `payload: null` substitution on a
+      // rejected excessiveRain runner (CR-01).
       if (!this._loggedEroValidTimeSample) {
         Log.info("MMM-SPCOutlook: excessiveRain.day1ValidTime sample: " +
-                 JSON.stringify(eroPayload.day1ValidTime));
+                 JSON.stringify(eroPayload && eroPayload.day1ValidTime));
         this._loggedEroValidTimeSample = true;
       }
 
@@ -5055,8 +5067,13 @@ module.exports = NodeHelper.create({
         productToggles, reportedDays, activeDays, unmappedLabels, staleBySource,
         gridAnchorInfo, results
       );
+      // CR-01: hazardsPayload is `null` when the hazardsOutlook runner rejects (the
+      // settle loop's documented `payload: null` substitution). `_buildGridSummary`'s own
+      // `Array.isArray(windowBand)` guard already turns a falsy value into a zero count, but
+      // that guard runs INSIDE the function — the read at this call site, ahead of it, is
+      // what must not throw first.
       const gridSummary = this._buildGridSummary(
-        gridDays, hazardsPayload.windowBand, advisories, sourceHealth, gridAnchorInfo
+        gridDays, hazardsPayload && hazardsPayload.windowBand, advisories, sourceHealth, gridAnchorInfo
       );
 
       // PERF-03/D-17: name the slowest source explicitly (the key with the maximum
