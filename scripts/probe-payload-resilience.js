@@ -10131,6 +10131,167 @@ const scenarios = [
         turfStub.pointInPolygon = originalPointInPolygon;
       }
     }
+  },
+  {
+    // CR-01/18-VERIFICATION.md gap 3: this is the scenario that actually forces
+    // Promise.allSettled's REJECTION branch, not merely a failed fetch. Every other
+    // scenario in this file that exercises a degraded product does so via a hard-failing
+    // fetch (a 503, a malformed body) — the runner itself still resolves, per its own
+    // internal try/catch. None of them reaches the getSpcOutlook settle loop's
+    // `{ payload: null, entries: [], anyStale: true }` substitution, so none of them could
+    // have caught the three unguarded reads this plan's Task 1 fixed.
+    //
+    // assertPayloadIntact is deliberately NOT called on runs A and B — see its own comment
+    // block above (line ~1029): it requires every registry product's payload block to be a
+    // non-null object, and a genuinely rejected member makes that block `null` BY DESIGN
+    // (the documented degrade), not a regression. The narrower CR-01 contract is asserted
+    // directly instead: `out.error === undefined` (no total collapse), the REJECTED
+    // product's block is exactly `null`, and every OTHER product's block still passes its
+    // own targeted intactness helper with real fetched values. `assertPayloadIntact` is
+    // then applied in full to run C, the no-rejection control, proving the fixture is
+    // otherwise healthy and that the nulls in A/B are attributable to the forced rejection
+    // rather than to a fixture that never produced those blocks at all.
+    //
+    // Guarded sites this scenario mutation-proves (Task 1 of 18-16):
+    //   SITE 1  JSON.stringify(eroPayload && eroPayload.day1ValidTime)
+    //   SITE 2  _addRegistryDayGridEntries's head-of-function `!payload` guard
+    //   SITE 3  hazardsPayload && hazardsPayload.windowBand, the _buildGridSummary call site
+    // MMM-SPCOutlook.js:421-422 (`wrapper.textContent = "Error: " + this.spcrisk.error`) is
+    // the blast radius a rejection with no guard reaches; not modified by this plan.
+    name: "rpt07-rejected-runner-degrades-alone-not-the-whole-payload",
+    run: async (helper) => {
+      // The toggles matter and are not decoration: _addRegistryDayGridEntries's toggle
+      // gate returns early when a product is off, so SITE 2 is only reachable with
+      // showExcessiveRain/showWinterImpact enabled. Leaving them off would exercise the
+      // head guard on a path the toggle gate already covered, proving nothing about the
+      // rejection case.
+      const toggles = { showExcessiveRain: true, showWinterImpact: true, showHazardsOutlook: true };
+
+      const runWith = async (stubName) => {
+        resetHelper(helper);
+        resetLogs();
+        const originalPointInPolygon = turfStub.pointInPolygon;
+        turfStub.pointInPolygon = () => true;
+        helper._nowMs = () => MERGE_NOW_MS;
+        helper._products = toggles;
+        installHttp(helper, [
+          ["day1otlk_cat.lyr.geojson", () => httpResponse({ body: SPC_SLGT_BODY, etag: "rpt07-spc-v1" })],
+          ...hazardsRoutes()
+        ]);
+        // AFTER resetHelper, because resetHelper restores every seam from ORIGINAL_SEAMS —
+        // a stub installed before it would be undone before ever being exercised.
+        if (stubName) {
+          helper[stubName] = async () => { throw new Error("probe: forced runner rejection"); };
+        }
+        try {
+          return await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, toggles);
+        } finally {
+          turfStub.pointInPolygon = originalPointInPolygon;
+        }
+      };
+
+      // Run A — _runArcGisDayProduct rejects. This single stub rejects BOTH the
+      // excessiveRain and winterImpact members, because both route through that one
+      // function, so run A covers SITE 1 and both of SITE 2's call sites at once.
+      const outA = await runWith("_runArcGisDayProduct");
+
+      // Precondition guard: without this, the runner merely failed its FETCH (a path a
+      // dozen scenarios already cover) rather than REJECTING, and the allSettled rejection
+      // branch under test was never entered.
+      if (!logCalls.some((line) => line.includes("excessiveRain: runner rejected unexpectedly"))) {
+        throw new Error(
+          "precondition failed: no \"excessiveRain: runner rejected unexpectedly\" log line — the " +
+          "runner merely failed its fetch rather than rejecting, so the allSettled rejection branch " +
+          `under test was never entered. Captured: ${JSON.stringify(logCalls)}`
+        );
+      }
+
+      if (outA.error !== undefined) {
+        throw new Error(`run A: payload collapsed to { error }: ${outA.error}`);
+      }
+      if (outA.excessiveRain !== null) {
+        throw new Error(`run A: expected excessiveRain === null, got ${JSON.stringify(outA.excessiveRain)}`);
+      }
+      if (outA.winterImpact !== null) {
+        throw new Error(`run A: expected winterImpact === null, got ${JSON.stringify(outA.winterImpact)}`);
+      }
+      // The healthy sibling survived, by VALUE not by shape.
+      if (outA.day1.risk !== "SLGT") {
+        throw new Error(`run A: a rejected ERO/WSSI runner destroyed the SPC day1 value: expected SLGT, got ${outA.day1.risk}`);
+      }
+      const survivorEntry = outA.days["1"].hazards.find((h) => h.source === "spc-convective");
+      if (!survivorEntry) {
+        throw new Error(`run A: expected a spc-convective entry on day 1, got ${JSON.stringify(outA.days["1"].hazards)}`);
+      }
+      // The unified block was still assembled.
+      if (Object.keys(outA.days).length !== 14) {
+        throw new Error(`run A: expected 14 grid days, got ${Object.keys(outA.days).length}`);
+      }
+      if (typeof outA.summary !== "object" || outA.summary === null) {
+        throw new Error("run A: summary missing or not an object");
+      }
+      if (typeof outA.sources !== "object" || outA.sources === null) {
+        throw new Error("run A: sources missing or not an object");
+      }
+      // The products that did NOT reject are untouched.
+      assertHazardsBlockIntact(outA);
+      assertHeatRiskBlockIntact(outA);
+      // The degrade is visible rather than silent.
+      if (outA.sources["wpc-ero"].reporting === true || outA.sources["wpc-ero"].reportedDays.length !== 0) {
+        throw new Error(`run A: expected sources['wpc-ero'] to report nothing after its runner rejected, got ${JSON.stringify(outA.sources["wpc-ero"])}`);
+      }
+      if (outA.sources["wpc-wssi"].reporting === true || outA.sources["wpc-wssi"].reportedDays.length !== 0) {
+        throw new Error(`run A: expected sources['wpc-wssi'] to report nothing after its runner rejected, got ${JSON.stringify(outA.sources["wpc-wssi"])}`);
+      }
+
+      // Run B — _runArcGisHazardWindowProduct rejects. Covers SITE 3, which fires on every
+      // poll because _buildGridSummary is called unconditionally.
+      const outB = await runWith("_runArcGisHazardWindowProduct");
+
+      if (!logCalls.some((line) => line.includes("hazardsOutlook: runner rejected unexpectedly"))) {
+        throw new Error(
+          "precondition failed: no \"hazardsOutlook: runner rejected unexpectedly\" log line — the " +
+          `runner merely failed its fetch rather than rejecting. Captured: ${JSON.stringify(logCalls)}`
+        );
+      }
+
+      if (outB.error !== undefined) {
+        throw new Error(`run B: payload collapsed to { error }: ${outB.error}`);
+      }
+      if (outB.hazardsOutlook !== null) {
+        throw new Error(`run B: expected hazardsOutlook === null, got ${JSON.stringify(outB.hazardsOutlook)}`);
+      }
+      if (outB.day1.risk !== "SLGT") {
+        throw new Error(`run B: a rejected hazardsOutlook runner destroyed the SPC day1 value: expected SLGT, got ${outB.day1.risk}`);
+      }
+      if (typeof outB.summary !== "object" || outB.summary === null) {
+        throw new Error("run B: summary missing or not an object");
+      }
+      // The guarded windowBand read degraded to the empty-band answer rather than throwing.
+      if (outB.summary.bandDiagnostics.windowBandCount !== 0) {
+        throw new Error(`run B: expected summary.bandDiagnostics.windowBandCount === 0, got ${outB.summary.bandDiagnostics.windowBandCount}`);
+      }
+      if (Object.keys(outB.days).length !== 14) {
+        throw new Error(`run B: expected 14 grid days, got ${Object.keys(outB.days).length}`);
+      }
+      // The sibling that did NOT reject still has its block.
+      if (typeof outB.excessiveRain !== "object" || outB.excessiveRain === null) {
+        throw new Error(`run B: expected excessiveRain (the non-rejected sibling) to be a non-null object, got ${JSON.stringify(outB.excessiveRain)}`);
+      }
+
+      // Run C — control, no stub. The identical fixture with nothing rejecting proves the
+      // nulls in runs A and B are attributable to the forced rejection and not to a
+      // fixture that never produced those blocks in the first place, and that this
+      // scenario does not simply pass because the payload is degenerate.
+      const outC = await runWith(null);
+      assertPayloadIntact(outC);
+      if (typeof outC.excessiveRain !== "object" || outC.excessiveRain === null) {
+        throw new Error(`control: expected excessiveRain to be a non-null object, got ${JSON.stringify(outC.excessiveRain)}`);
+      }
+      if (outC.day1.risk !== "SLGT") {
+        throw new Error(`control: expected day1.risk to be SLGT, got ${outC.day1.risk}`);
+      }
+    }
   }
 ];
 

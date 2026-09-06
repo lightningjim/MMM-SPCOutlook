@@ -139,3 +139,43 @@ Phase 19 rewrites the display onto the unified payload, which already carries al
 correctly, so no separate code fix is warranted on a legacy path Phase 19 removes. Tracked via
 `.planning/todos/pending/` (see the todo carrying `resolves_phase: 19`) so it auto-surfaces until
 Phase 19 closes, and is not a Phase 18 blocker.
+
+## `sources[].reportedDays` records a fetch FAILURE as "the source answered no risk" (WR-01, fetch-failure half)
+
+**Found during:** 18-REVIEW.md code review, section WR-01 (`node_helper.js:3115`, `:3216`,
+`:3301` per the review).
+
+**What's wrong:** `sources[].reportedDays` is documented as the field distinguishing "the
+source never covered that day" from "the source reported and fell below its floor". For
+`wpc-ero`, `wpc-wssi`, `spc-convective` and `spc-fire` it is instead derived from a seeded
+default rather than a real fetch-success signal, so a hard fetch FAILURE reads as "answered,
+no risk" — `_runArcGisDayProduct` seeds every `day{N}Risk` to `"NONE"` before any fetch
+(`wpc-ero`/`wpc-wssi`), and the SPC inline chain seeds `day1Risk`/`day1FireRisk` the same way
+(`spc-convective`/`spc-fire`) — and `_addRegistryDayGridEntries`/`_addSpcGridEntries` call
+`noteReported` unconditionally against that seeded string, so `summary.reportingSourceCount`
+over-counts. `stale: true` is set in parallel so the degrade is not invisible, but the one
+field that exists to make the answered-vs-never-asked distinction still reports the wrong
+answer.
+
+**Status of the three halves of WR-01:** 18-11 closed the TOGGLE-OFF half (a disabled
+product's `reportedDays` is now empty — see the first entry in this file). This plan (18-16)
+closed the runner-REJECTION half: `_addRegistryDayGridEntries`'s new head-of-function
+`!payload || typeof payload !== "object"` guard means a rejected `Promise.allSettled` member
+now reports no days at all, for `wpc-ero` and `wpc-wssi`. The FETCH-FAILURE half — a hard
+fetch failure that still leaves the seeded `"NONE"`/`0` string/number in place, for all four
+of `wpc-ero`, `wpc-wssi`, `spc-convective` and `spc-fire` — is NOT closed by either fix and
+remains open.
+
+**Why it's out of scope for 18-16:** the fix threads an `answeredDays` side-channel out of
+`_runArcGisDayProduct` and an `answered` flag through the SPC inline chain into
+`_addSpcGridEntries` — three functions, two products and a runner signature change, none of
+which 18-VERIFICATION.md's gap-3 `missing:` list requires and none of which this plan is
+otherwise touching (this plan's own `files_modified` are `node_helper.js`,
+`scripts/probe-payload-resilience.js` and this file).
+
+**Suggested fix (future plan):** per 18-REVIEW.md's own proposal — have `_runArcGisDayProduct`
+return an `answeredDays: Set<number>` side-channel alongside `payload`, populated only where
+the `try` block completed without `fetchResult.failed`, and gate
+`_addRegistryDayGridEntries`'s `noteReported` on it; for the SPC inline chain, add an
+`answered: boolean` field per day to `spcLocals.categorical[d]`/`.fire[d]`, set from the same
+branch that already calls `noteStale`, and gate `_addSpcGridEntries`'s `noteReported` on it.
