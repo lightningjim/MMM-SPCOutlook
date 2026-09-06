@@ -2994,9 +2994,17 @@ module.exports = NodeHelper.create({
       }
 
       const gridDay = this._gridDayOf(tuple.idpValidtime, anchorInfo.nominalStartMs);
-      // WR-16: the span bound is read from the registry row, never a literal, so this
-      // product's declared span has exactly one declaration.
-      if (gridDay < 1 || gridDay > GRID_DAY_COUNT || gridDay > row.days) continue;
+      // CR-02: GRID_DAY_COUNT is the only bound here expressed in grid-day units.
+      // `row.days` states HeatRisk's span in its own UTC-midnight-anchored product-day
+      // numbering, and cannot be compared against a grid day: the two numbering systems
+      // differ by exactly one for the whole 00Z-12Z half of every UTC day, because
+      // `_spcGridAnchor`'s `getUTCHours() < 12` clock fallback resolves `nominalStartMs`
+      // to YESTERDAY 12Z during that half. Comparing against `row.days` dropped the
+      // outermost tile BEFORE `noteReported` ran below, which also erased that day from
+      // `sources['heatrisk'].reportedDays` and collapsed D-14's absent-versus-below-floor
+      // distinction. `_addHazardsOutlookGridEntries` clamps the same grid the same way,
+      // by GRID_DAY_COUNT alone.
+      if (gridDay < 1 || gridDay > GRID_DAY_COUNT) continue;
 
       const dayEntry = gridDays[String(gridDay)];
       if (!dayEntry) continue; // defensive; unreachable given the range check above

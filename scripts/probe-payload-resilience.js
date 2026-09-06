@@ -331,6 +331,14 @@ const HAZARDS_NOW_MS = Date.UTC(2026, 7, 26, 13, 0);
 // pinned-clock precedent, applied to a fourth product.
 const HEATRISK_NOW_MS = Date.UTC(2026, 7, 31, 13, 0);
 
+// The first clock in this suite that sits inside the 00Z-12Z half of a UTC day (06:00Z,
+// vs. HEATRISK_NOW_MS's 13:00Z). _spcGridAnchor's clock fallback resolves nominalStartMs
+// to YESTERDAY 12Z whenever now.getUTCHours() < 12, so grid-day numbering runs one ahead
+// of every product's own day numbering for this whole half of the day. WR-09 flagged that
+// all 37 pre-existing merge-* scenarios pin now >= 12:00Z, so this branch was entirely
+// absent from the suite before this constant.
+const HEATRISK_MORNING_NOW_MS = Date.UTC(2026, 7, 31, 6, 0);
+
 // idp_validtime sits at exactly 12:00:00.000Z on every live-observed feature
 // (17-RESEARCH.md's Day-Offset Arithmetic section) — half a day past UTC midnight, so
 // Math.round(0.5) === 1 places day 1's tile at that exact instant. This is the single place
@@ -1286,10 +1294,12 @@ function assertGoldenPinsSomething(name, goldenJson) {
 
 // The pinned "now" for every merge-precedence-*/merge-flash-flood-*/merge-distinct-*/
 // merge-unmapped-*/merge-summary-*/merge-sources-*/merge-parity-* scenario below:
-// 2026-09-05T13:00Z, inside the 00Z-12Z-past window so _spcGridAnchor's clock fallback
-// (no VALID_ISO/EXPIRE_ISO routed) resolves a nominal 12Z start of
-// 2026-09-05T12:00:00Z -- the SAME anchor arithmetic 18-07's merge-grid-* family already
-// exercises, reused here rather than re-derived.
+// 2026-09-05T13:00Z, in the POST-12Z half of the UTC day (getUTCHours() 13 >= 12), so
+// _spcGridAnchor's clock fallback (no VALID_ISO/EXPIRE_ISO routed) resolves a nominal 12Z
+// start of 2026-09-05T12:00:00Z -- the SAME anchor arithmetic 18-07's merge-grid-* family
+// already exercises, reused here rather than re-derived. Every scenario built on this
+// constant is therefore blind to the 00Z-12Z anchor branch (WR-09); see
+// HEATRISK_MORNING_NOW_MS for the suite's first scenario inside that branch.
 const MERGE_NOW_MS = Date.UTC(2026, 8, 5, 13, 0);
 const MERGE_NOMINAL_MS = Date.UTC(2026, 8, 5, 12, 0);
 
@@ -8234,6 +8244,138 @@ const scenarios = [
       // not a broadcast across the window.
       if (out.days["3"].hazards.some((h) => h.source === "heatrisk")) {
         throw new Error(`control: expected no heatrisk entry on grid day 3, got ${JSON.stringify(out.days["3"].hazards)}`);
+      }
+    }
+  },
+  {
+    // CR-02: `_addHeatRiskGridEntries`'s range check compared the SPC-anchored gridDay
+    // against `row.days`, HeatRisk's own UTC-midnight-anchored product-day count -- the
+    // two numbering systems differ by exactly one for the whole 00Z-12Z half of every UTC
+    // day, silently dropping HeatRisk's seventh, outermost tile before `noteReported` ran.
+    // This is the suite's first scenario to reach that sub-12Z anchor branch (WR-09); all
+    // 37 pre-existing merge-* scenarios pin now >= 12:00Z. Measured at HEAD, removing the
+    // bad `|| gridDay > row.days` term changes NOTHING in the pre-existing 119-scenario
+    // suite -- this scenario is the whole proof the fix works.
+    // Mutation to prove RED: restore `|| gridDay > row.days` in _addHeatRiskGridEntries's
+    // range check (M1) -- the morning half must go red while the control stays green.
+    name: "merge-grid-heatrisk-all-seven-tiles-land-under-a-sub-12z-clock",
+    run: async (helper) => {
+      const originalPointInPolygon = turfStub.pointInPolygon;
+      try {
+        turfStub.pointInPolygon = () => true;
+
+        const runAtClock = async (nowMs) => {
+          resetHelper(helper);
+          resetLogs();
+          helper._nowMs = () => nowMs;
+          helper._products = { showHeatRisk: true };
+          // Both pinned clocks (06:00Z and 13:00Z on the same UTC date) sit after this
+          // filedate, so neither run trips maxDataAgeHours for a reason unrelated to this
+          // scenario's subject.
+          const fixtureFiledate = Date.UTC(2026, 7, 31, 5, 0);
+          const items = [];
+          for (let d = 1; d <= 7; d++) {
+            items.push(heatRiskCatalogItem({
+              name: `HeatRisk_${d}_Mercator`,
+              validtime: heatRiskValidtimeForDay(d),
+              filedate: fixtureFiledate
+            }));
+          }
+          // Category "4" (Extreme) puts every tile above D-13's floor so it produces a
+          // real entry -- a below-floor fixture would make the primary assertion pass on
+          // shape alone.
+          const values = items.map(() => "4");
+          installHttp(helper, heatRiskRoutes({
+            heatRisk: () => httpResponse({ body: heatRiskIdentifyResponse({ items, values }), etag: "merge-grid-heatrisk-sub12z-v1" })
+          }));
+          const runOut = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showHeatRisk: true });
+          assertPayloadIntact(runOut);
+          return runOut;
+        };
+
+        const morningOut = await runAtClock(HEATRISK_MORNING_NOW_MS);
+
+        // Precondition guard -- the load-bearing one: a day-1 date of 2026-08-31 means
+        // the pinned clock did not reach _spcGridAnchor's sub-12Z branch, so this
+        // scenario would silently duplicate the existing post-12Z coverage and prove
+        // nothing about CR-02.
+        if (morningOut.days["1"].date !== "2026-08-30") {
+          throw new Error(`precondition failed: expected days["1"].date "2026-08-30" under the 06:00Z clock (sub-12Z anchor branch), got ${JSON.stringify(morningOut.days["1"].date)} -- the pinned clock never reached _spcGridAnchor's sub-12Z fallback`);
+        }
+
+        // Primary assertions: grid days 2 through 8 each carry exactly one heatrisk
+        // entry. Collect every mismatch so a failure names every day that vanished, not
+        // just the first.
+        const badDays = [];
+        for (let gd = 2; gd <= 8; gd++) {
+          const entries = morningOut.days[String(gd)].hazards.filter((h) => h.source === "heatrisk");
+          if (entries.length !== 1) badDays.push({ gridDay: gd, count: entries.length });
+        }
+        if (badDays.length > 0) {
+          throw new Error(`CR-02: expected exactly one heatrisk entry on each of grid days 2-8, got mismatches ${JSON.stringify(badDays)} out of 7 tiles supplied`);
+        }
+
+        // The outermost (seventh) tile specifically -- the one CR-02 dropped.
+        const day8 = morningOut.days["8"];
+        const day8Heat = day8.hazards.find((h) => h.source === "heatrisk");
+        if (!day8Heat) {
+          throw new Error("CR-02: expected the seventh HeatRisk tile to land on grid day 8 (the outermost day) under a sub-12Z clock, but no heatrisk entry is present -- this is the unit-mismatch drop this plan closes");
+        }
+        if (day8.date !== "2026-09-06") {
+          throw new Error(`CR-02: expected grid day 8's date to be 2026-09-06 for the recovered seventh tile, got ${JSON.stringify(day8.date)}`);
+        }
+
+        // sources['heatrisk'].reportedDays/.reporting -- the half of the defect that
+        // makes a genuine Extreme reading indistinguishable from HeatRisk never having
+        // covered that day; asserting only days[] would leave it uncovered.
+        const heatSource = morningOut.sources["heatrisk"];
+        const missingReported = [];
+        for (let gd = 2; gd <= 8; gd++) {
+          if (!heatSource.reportedDays.includes(gd)) missingReported.push(gd);
+        }
+        if (missingReported.length > 0) {
+          throw new Error(`CR-02: expected sources['heatrisk'].reportedDays to include grid days 2-8, missing ${JSON.stringify(missingReported)} -- got ${JSON.stringify(heatSource.reportedDays)}`);
+        }
+        if (heatSource.reporting !== true) {
+          throw new Error(`CR-02: expected sources['heatrisk'].reporting true, got ${JSON.stringify(heatSource.reporting)}`);
+        }
+
+        // Grid days 1 and 9 carry no heatrisk entry -- the seven tiles are proven not to
+        // be smeared across an unbounded range.
+        if (morningOut.days["1"].hazards.some((h) => h.source === "heatrisk")) {
+          throw new Error(`CR-02: expected no heatrisk entry on grid day 1, got ${JSON.stringify(morningOut.days["1"].hazards)}`);
+        }
+        if (morningOut.days["9"].hazards.some((h) => h.source === "heatrisk")) {
+          throw new Error(`CR-02: expected no heatrisk entry on grid day 9, got ${JSON.stringify(morningOut.days["9"].hazards)}`);
+        }
+
+        // Control run: the same seven tiles, under a post-12Z clock.
+        const controlOut = await runAtClock(HEATRISK_NOW_MS);
+        if (controlOut.days["1"].date !== "2026-08-31") {
+          throw new Error(`control precondition failed: expected days["1"].date "2026-08-31" under the post-12Z clock, got ${JSON.stringify(controlOut.days["1"].date)}`);
+        }
+        const controlBadDays = [];
+        for (let gd = 1; gd <= 7; gd++) {
+          const entries = controlOut.days[String(gd)].hazards.filter((h) => h.source === "heatrisk");
+          if (entries.length !== 1) controlBadDays.push({ gridDay: gd, count: entries.length });
+        }
+        if (controlBadDays.length > 0) {
+          throw new Error(`control: expected exactly one heatrisk entry on each of grid days 1-7, got mismatches ${JSON.stringify(controlBadDays)}`);
+        }
+        if (controlOut.days["8"].hazards.some((h) => h.source === "heatrisk")) {
+          throw new Error(`control: expected no heatrisk entry on grid day 8 under the post-12Z clock, got ${JSON.stringify(controlOut.days["8"].hazards)}`);
+        }
+        // The point of the control: the tile dated 2026-09-06 is present in BOTH runs --
+        // on grid day 8 in the morning run and grid day 7 in the afternoon run -- proving
+        // the seven tiles are identical across both runs and only the grid INDEX moves,
+        // so the morning run's seventh entry is a genuinely recovered reading rather than
+        // an artifact of a different fixture.
+        const day7Heat = controlOut.days["7"].hazards.find((h) => h.source === "heatrisk");
+        if (!day7Heat || controlOut.days["7"].date !== "2026-09-06") {
+          throw new Error(`control: expected grid day 7's heatrisk entry dated 2026-09-06 under the post-12Z clock, got date=${JSON.stringify(controlOut.days["7"].date)} entry=${JSON.stringify(day7Heat)}`);
+        }
+      } finally {
+        turfStub.pointInPolygon = originalPointInPolygon;
       }
     }
   },
