@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: WPC & CPC Integration + Unified Day Report
-status: gaps_found
-stopped_at: Phase 18 verification returned gaps_found (3 blocking) — all 12 plans complete, phase NOT closed
+status: planning
+stopped_at: Phase 18 gap-closure planned — 4 new plans (18-13..18-16), plan-checker PASSED, ready to execute
 last_updated: "2026-09-06T01:09:51.351Z"
-last_activity: 2026-09-06 -- Phase 18 deep code review (4 critical) + verification: gaps_found, 3 blocking gaps. Phase remains open pending gap closure
+last_activity: 2026-09-06 -- Phase 18 gap closure planned: 18-13..18-16 (waves 11-14) close the 3 blocking gaps; D-21 supersedes 18-10's end_date bound
 progress:
   total_phases: 7
   completed_phases: 4
-  total_plans: 45
+  total_plans: 49
   completed_plans: 45
   percent: 71
 ---
