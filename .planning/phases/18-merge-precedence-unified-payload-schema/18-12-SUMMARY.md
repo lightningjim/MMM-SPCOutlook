@@ -1,7 +1,7 @@
 ---
 phase: 18-merge-precedence-unified-payload-schema
 plan: 12
-status: paused
+status: complete
 subsystem: verification
 tags: [live-capture, merge-01, merge-04, gap-closure, checkpoint]
 
@@ -15,19 +15,24 @@ provides:
   - "18-LIVE-CAPTURE.md's Criterion 4 over-merge half re-decided (still NOT OBSERVABLE, on stated coverage reasoning, not silently carried forward)"
   - "Both deferred-items.md entries closed with Resolved lines naming their closing plans"
   - "STATE.md's MERGE-01 blocker flipped to RESOLVED; ROADMAP.md and REQUIREMENTS.md updated to match"
-affects: [18-09, phase-18-close]
+  - "Operator approval of the re-presented 18-09 Task 3 checkpoint, closing 18-09-SUMMARY.md"
+  - "A new pre-existing (non-Phase-18) HeatRisk legacy-display defect, found by the operator during the display check, logged and routed to Phase 19"
+affects: [18-09, phase-18-close, 19]
 ---
 
-# 18-12: Gap Closure Verdict Propagation — PAUSED AT BLOCKING CHECKPOINT
+# 18-12: Gap Closure Verdict Propagation — COMPLETE
 
 ## Status
 
-**Paused at the Task 3 blocking human-verify checkpoint.** Tasks 1 and 2 are complete and
-committed (`29198e0`, `95bcf62`). Task 3 — the operator's live-display confirmation and the
-re-answered 18-09 Task 3 checkpoint — has **not** been presented to or answered by the operator
-in this session. This plan therefore remains incomplete, `18-09-SUMMARY.md`'s `status: paused`
-is unchanged, and Phase 18 remains open. **This SUMMARY does not claim the plan or the phase is
-complete.**
+**Complete.** All three tasks are done and committed. Tasks 1 and 2 (`29198e0`, `95bcf62`)
+re-validated criterion 1 PASS and re-decided MERGE-04's over-merge half NOT OBSERVABLE, and
+propagated both outcomes across every tracking document. Task 3, the blocking human-verify
+checkpoint, was presented to the operator and answered: the live MagicMirror display is confirmed
+unchanged (with one separately-logged, pre-existing, non-regression exception — see below), and
+the re-presented 18-09 Task 3 checkpoint is **approved**. `18-09-SUMMARY.md`'s `status: paused` has
+been flipped to `status: complete` and its Outstanding checklist is fully ticked. All 12 Phase 18
+plans are now complete. **Phase-level close (code review, verification, `phase.complete`) remains
+the orchestrator's responsibility and has not run.**
 
 ## Tasks
 
@@ -35,7 +40,7 @@ complete.**
 |------|------|--------|--------|
 | 1 | Re-validate criterion 1 and re-evaluate MERGE-04's over-merge half | Complete | `29198e0` |
 | 2 | Propagate the outcome to every tracking document | Complete | `95bcf62` |
-| 3 | Operator confirmations — live display unchanged, and the 18-09 checkpoint re-answered | **Not yet presented — awaiting operator** | — |
+| 3 | Operator confirmations — live display unchanged, and the 18-09 checkpoint re-answered | Complete — approved | (this plan's closing commit) |
 
 ## Task 1 — Criterion 1 and Criterion 4 verdicts
 
@@ -99,13 +104,68 @@ kept, with its rationale text updated to this coverage reasoning in place of the
   paused` and the final two Outstanding boxes (operator's display confirmation, Task 3 answered
   "approved") are left untouched — they are Task 3's to close, and Task 3 has not run.
 
-## Task 3 — not yet run
+## Task 3 — operator confirmations (verbatim)
 
-Task 3 is `checkpoint:human-verify gate="blocking"`. It has **not** been presented to the operator
-in this session. No operator reply has been recorded. Per this plan's `<action>`, only after the
-operator answers both items (the live MagicMirror display confirmation, and the re-answered 18-09
-Task 3 criteria checkpoint) should `18-09-SUMMARY.md`'s `status: paused` flip to `status: complete`
-and the remaining ROADMAP/Outstanding-checklist boxes be ticked. None of that has happened.
+Task 3 (`checkpoint:human-verify gate="blocking"`) was presented to the operator with both items
+from the plan's `<how-to-verify>`. The operator's real, interactively-given reply, recorded here
+verbatim:
+
+> **Item 1 — live display:** Unchanged, with ONE observed difference that the operator and
+> orchestrator jointly diagnosed as PRE-EXISTING and NOT caused by this phase (details below).
+> Apart from that, the display is confirmed unchanged: same product sections, risk rows, proximity
+> badges, no-risk gate behavior, and the cold-start timing block still logs its four D-18 lines once
+> at startup.
+>
+> **Item 2 — criteria verdicts: APPROVED.** The operator accepts, as honestly recorded: criterion 1
+> PASS (re-validated by replay, explicitly not a fresh live poll); criterion 2 NOT OBSERVABLE
+> (payload) / PASS (code path); criterion 4 PASS (under-merge) / NOT OBSERVABLE (over-merge, on
+> coverage reasoning); criterion 5 PASS; criterion 6 deferred to the milestone per D-19. The
+> operator did NOT request fresh live confirmation.
+
+**Recorded accurately per item, not as a blanket "no differences observed":** Item 1's answer is
+"unchanged, except for one separately-routed pre-existing finding" — not "unchanged" alone. The
+exception is detailed in the next section.
+
+**Outcome:** Both items answered, item 2 is an unconditional approval. Per the plan's `<action>`,
+`18-09-SUMMARY.md`'s `status: paused` is flipped to `status: complete`, its `## Status` heading and
+body record that Task 3 was re-presented after the 18-10/18-11 gap-closure fixes and answered
+"approved", its task-table row 3 is updated to Complete, its remaining two Outstanding boxes are
+ticked, and `18-09-PLAN.md` is ticked `[x]` in `ROADMAP.md`'s Phase 18 Wave 7 block.
+
+## New finding surfaced during Item 1 — legacy HeatRisk day-7 drop (pre-existing, routed to Phase 19)
+
+While answering Item 1, the operator observed the module rendering only HeatRisk days 1-6 when 7
+days of data exist (observed 2026-09-05 19:46 CDT / `2026-09-06T00:46Z` on the deployed mirror).
+The orchestrator diagnosed and confirmed the root cause before this plan resumed:
+
+- `_runHeatRiskProduct` (node_helper.js:1153) discards any tuple whose day offset falls outside
+  `1..row.days`: `if (d < 1 || d > row.days) continue;`.
+- HeatRisk's `idp_validtime` sits at exactly 12:00Z; `_todayUtcMs()` is UTC midnight. During the
+  00Z-12Z half of a UTC day, the mosaic's oldest tile resolves to offset 0 and is discarded, and
+  nothing then maps to day 7 — the legacy `heatRisk.day1..day7` block carries only 6 days for ~12
+  of every 24 hours.
+- Verified arithmetic at the observed instant: tiles `2026-09-05T12:00Z .. 2026-09-11T12:00Z` map
+  to offsets `0(discarded),1,2,3,4,5,6`.
+- **NOT a Phase 18 regression.** Phase 18's unified `days[]` grid is unaffected and already carries
+  all seven days — `18-LIVE-CAPTURE.md` line 69 records
+  `"heatrisk": {..., "reportedDays":[1,2,3,4,5,6,7], "activeDays":[1,2,3,4,5,6,7], ...}`. 18-03
+  deliberately pushes `gridTuples` before this same filter for exactly this reason. `git blame`
+  attributes the filter to `feat(17-04)`, which predates Phase 18. Neither 18-10 nor 18-11 writes
+  the legacy HeatRisk block — both write only `gridDays`.
+- Severity note preserved from node_helper.js:1141's own comment: it justifies the grid-side
+  handling by calling a dropped tile "a false negative on a heat-safety product this project's
+  value statement forbids outright." The legacy path's day-7 loss is the mirror image of that.
+
+**Operator's routing decision: log it, let Phase 19 fix it.** No production code fix was written
+for this in this plan — Phase 19 rewrites the display onto the unified payload, which already
+carries all seven days, so a fix on a legacy path Phase 19 removes is not warranted. Recorded in:
+- `deferred-items.md`'s new "Legacy `heatRisk.day1..day7` block drops day 7" entry (symptom, root
+  cause, the 00Z-12Z window, and the pre-existing/non-regression evidence, in full).
+- `.planning/todos/pending/2026-09-05-fix-legacy-heatrisk-day1-7-block-dropping-day-7-during-00z-1.md`,
+  carrying `resolves_phase: 19` frontmatter so it auto-closes when Phase 19 completes and surfaces
+  in `/bm:progress` until then.
+- `.planning/STATE.md`'s Blockers/Concerns (explicitly marked "NOT a Phase 18 blocker") and Deferred
+  Items table.
 
 ## Deviations from Plan
 
@@ -113,19 +173,55 @@ and the remaining ROADMAP/Outstanding-checklist boxes be ticked. None of that ha
 
 None — no bugs, missing functionality, or blocking issues were found during Tasks 1-2.
 
-**Total deviations:** 0
-**Impact on plan:** Tasks 1 and 2 executed exactly as specified; Task 3 correctly halted for
-operator input per its `gate="blocking"` designation.
+**1. [Rule 3 - GSD mechanics] ROADMAP.md plan/phase progress updated by direct edit, not the
+`roadmap.update-plan-progress` SDK call, to avoid an unintended phase-level completion side effect**
+- **Found during:** Task 3 close-out (this continuation).
+- **Issue:** `roadmap.update-plan-progress 18` scans every summary in the phase directory and ticks
+  the phase-level checkbox (`- [ ] **Phase 18: ...**`) plus sets the phase's summary-table row to
+  `Complete` with today's date whenever `summaryCount >= planCount`. Once this plan flips both
+  `18-09-SUMMARY.md` and `18-12-SUMMARY.md` to non-paused status, the phase directory holds 12/12
+  complete summaries, so that call would have marked Phase 18 itself complete — directly
+  contradicting the explicit instruction that phase-level close (code review, verification,
+  `phase.complete`) remains the orchestrator's responsibility and has not run.
+- **Fix:** Ticked `18-09-PLAN.md` and `18-12-PLAN.md` individually in `ROADMAP.md`'s Wave 7/10
+  blocks by direct edit, and updated the Phase 18 summary-table row's plan count to `12/12` while
+  leaving its Status column `In Progress` and its Date column blank, and leaving the top-level
+  `- [ ] **Phase 18: ...**` milestone checkbox unticked. No `roadmap.update-plan-progress` or
+  `phase.complete` call was run for Phase 18 in this session.
+- **Files modified:** `.planning/ROADMAP.md`
+- **Commit:** (this plan's closing commit)
+
+**Total deviations:** 1 (Rule 3, GSD mechanics — no product code affected)
+**Impact on plan:** Tasks 1 and 2 executed exactly as specified; Task 3 was presented, answered, and
+closed per its `gate="blocking"` action; the one deviation is a documentation-tooling safeguard, not
+a change to any success criterion or artifact this plan is required to produce.
 
 ## Threat Flags
 
 None — this plan modified no source file and introduced no new network endpoint, auth path, file
-access pattern, or schema change at a trust boundary. `git diff --name-only` for Tasks 1-2 lists
-only files under `.planning/`.
+access pattern, or schema change at a trust boundary. `git diff --name-only` across all three tasks
+lists only files under `.planning/`.
 
 ## Known Stubs
 
 None.
+
+## Assumption Drift (advisory)
+
+- **Found during:** Task 3.
+- **Planned:** The plan's Task 3 `<action>` anticipated three outcomes for Item 1 — display
+  unchanged, a reported regression, or a request for fresh live confirmation — each with its own
+  handling.
+- **Actual:** The operator's Item 1 answer was a fourth shape: display unchanged for everything
+  Phase 18 touches, but with a newly-observed, separately-diagnosed pre-existing defect on a legacy
+  path Phase 18 does not touch. This is neither "unchanged" (a blanket claim would misrepresent what
+  was seen) nor "regression" (root-caused as predating Phase 18 entirely) nor a request for fresh
+  live confirmation of the criterion-1 replay.
+- **Why:** Treated as an unchanged-display confirmation for Phase 18's own guarantees (D-01), with
+  the new finding logged and routed separately per the operator's own routing decision, rather than
+  forcing it into one of the plan's three anticipated buckets or blocking on it. No plan action or
+  acceptance criterion is affected — this plan's own `files_modified` never included any legacy
+  HeatRisk code, and D-01's byte-for-byte guarantee for what Phase 18 actually changed still holds.
 
 ## Outstanding before Phase 18 can close
 
@@ -133,12 +229,17 @@ None.
 - [x] Mutation-proven probe scenario using the live-observed `start_date === end_date` shape (18-10)
 - [x] Criterion 1 re-validated against the captured payload (18-12, this plan)
 - [x] MERGE-04's over-merge half re-decided on the evidence, not silently carried forward (18-12, this plan)
-- [ ] Operator's step 6 display-unchanged confirmation — **awaiting operator (Task 3)**
-- [ ] `18-09` Task 3 checkpoint answered "approved" — **awaiting operator (Task 3)**
+- [x] Operator's step 6 display-unchanged confirmation (18-12 Task 3 — approved, with the HeatRisk finding logged separately, not blocking)
+- [x] `18-09` Task 3 checkpoint answered "approved" (18-12 Task 3)
+
+All items on this checklist are closed. Plan-level work for Phase 18 (12/12 plans) is complete.
+Phase-level close (code review, verification, `phase.complete`) is the orchestrator's next step and
+has not run.
 
 ---
 *Phase: 18-merge-precedence-unified-payload-schema*
-*Paused: 2026-09-06*
+*Paused: 2026-09-06 (Tasks 1-2)*
+*Completed: 2026-09-06 (Task 3 presented, answered "approved", and closed)*
 
 ## Self-Check: PASSED
 
@@ -148,6 +249,8 @@ None.
 - FOUND: .planning/ROADMAP.md
 - FOUND: .planning/REQUIREMENTS.md
 - FOUND: .planning/phases/18-merge-precedence-unified-payload-schema/18-09-SUMMARY.md
+- FOUND: .planning/todos/pending/2026-09-05-fix-legacy-heatrisk-day1-7-block-dropping-day-7-during-00z-1.md
 - FOUND: 29198e0 (Task 1 commit)
 - FOUND: 95bcf62 (Task 2 commit)
+- FOUND: cf96e6a (paused-checkpoint SUMMARY commit)
 - Re-ran suite: `node scripts/probe-payload-resilience.js` → PROBE RESULT: 119 passed, 0 failed, 0 skipped
