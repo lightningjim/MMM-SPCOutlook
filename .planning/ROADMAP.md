@@ -251,14 +251,14 @@ Plans:
 **Requirements**: MERGE-01, MERGE-02, MERGE-03, MERGE-04, RPT-07, PERF-03
 **Success Criteria** (what must be TRUE):
 
-  1. A hazard near a day boundary is placed using strict UTC time-window overlap — reconciling SPC's 12Z–12Z, the Hazards Outlook's 00Z–00Z, and ERO Day 1's partial 01Z–12Z conventions — verified against at least one real near-boundary case captured from live payloads (MERGE-01) (re-validated PASS after the 18-10 fix; see 18-LIVE-CAPTURE.md "Re-validation after the 18-10 fix").
+  1. A hazard near a day boundary is placed using strict UTC time-window overlap — reconciling SPC's 12Z–12Z, the Hazards Outlook's 00Z–00Z, and ERO Day 1's partial 01Z–12Z conventions — verified against at least one real near-boundary case captured from live payloads (MERGE-01) (**REOPENED — FAILED** by 18-VERIFICATION.md 2026-09-06: the earlier PASS rests on a replay covering only the zero-duration `start_date === end_date` case. CR-03 — a multi-day INCLUSIVE span still loses its last day from `days[]` while the legacy block renders it — and CR-04 — `_spcGridAnchor` accepts an already-elapsed `EXPIRE_ISO` and shifts the whole fourteen-day grid a day early while reporting `gridAnchor: "observed"` — both falsify this for cases the replay never exercised. Closed by 18-13 and 18-14.)
   2. When SPC's convective outlook and WPC's derived Severe Weather flag both cover the same day/location, only SPC's granular tier displays — confirmed by inspecting the suppression code path against a captured live payload to verify it keys off the hazard dimension, not a label string match (MERGE-02).
-  3. When HeatRisk and WPC's binary Hazardous Heat flag overlap, only HeatRisk's 5-level category displays (MERGE-03).
+  3. When HeatRisk and WPC's binary Hazardous Heat flag overlap, only HeatRisk's 5-level category displays (MERGE-03). (**FAILED** by 18-VERIFICATION.md 2026-09-06: the precedence rule is correct and probe-verified, but CR-02 drops HeatRisk's outermost tile from `days[]` for the 00Z-12Z half of every UTC day, so the rule has nothing to suppress WPC's flag with on that day. Closed by 18-15.)
   4. Two genuinely distinct concurrent hazards on the same day both appear, and a hazard reported by two products under overlapping vocabulary appears only once — validated against captured live payloads, not assumed synthetic cases (MERGE-04) (under-merge PASS live; over-merge re-checked NOT OBSERVABLE after the 18-10 fix — no live coordinate carries both a flash-flood and a heavy-precip entry, see 18-LIVE-CAPTURE.md's Criterion 4 re-check).
-  5. The backend emits a single `days`/`summary`/`sources`/`advisories`-shaped payload; compact and detailed output can both be produced by reading that one payload, with no precedence logic left to be recomputed downstream (RPT-07).
+  5. The backend emits a single `days`/`summary`/`sources`/`advisories`-shaped payload; compact and detailed output can both be produced by reading that one payload, with no precedence logic left to be recomputed downstream (RPT-07). (**FAILED** by 18-VERIFICATION.md 2026-09-06: CR-01 — three unguarded reads added this phase turn any single `Promise.allSettled` rejection into a TypeError that collapses the whole payload to `{ error }`, rendering "Error: ..." over healthy products. Closed by 18-16.)
   6. A cold-cache run on the target Raspberry Pi hardware, with every product toggle enabled, produces a measured startup latency figure recorded before the milestone closes (PERF-03).
 
-**Plans**: 12 plans in 10 waves
+**Plans**: 16 plans in 14 waves
 
 Plans:
 **Wave 1**
@@ -302,6 +302,22 @@ Plans:
 **Wave 10** *(gap closure — blocked on Wave 9 completion)*
 
 - [x] 18-12-PLAN.md — criterion 1 re-validation, MERGE-04 re-check, tracking propagation, operator checkpoints (wave 10)
+
+**Wave 11** *(gap closure — blocked on Wave 10 completion)*
+
+- [ ] 18-13-PLAN.md — D-21 inclusive end_date endpoint, three re-pointed assertions, multi-day legacy-parity scenario (wave 11)
+
+**Wave 12** *(gap closure — blocked on Wave 11 completion)*
+
+- [ ] 18-14-PLAN.md — reject an already-elapsed EXPIRE_ISO in _spcGridAnchor, plus its degrade scenario (wave 12)
+
+**Wave 13** *(gap closure — blocked on Wave 12 completion)*
+
+- [ ] 18-15-PLAN.md — bound the HeatRisk grid loop by GRID_DAY_COUNT alone, plus the suite's first sub-12Z scenario (wave 13)
+
+**Wave 14** *(gap closure — blocked on Wave 13 completion)*
+
+- [ ] 18-16-PLAN.md — allSettled per-member null guards, forced-rejection scenario, WR-01 residual recorded (wave 14)
 
 ### Phase 19: Unified Day Report — getDom() Rewrite
 
