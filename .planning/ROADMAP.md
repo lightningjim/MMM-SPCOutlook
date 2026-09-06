@@ -54,7 +54,7 @@ Full details: `.planning/milestones/v1.2-ROADMAP.md`
 - [x] **Phase 15: WPC Winter Storm Severity & Mesoscale Precipitation Discussion** - Ship WSSI Overall Impact and MPD advisories
 - [x] **Phase 16: WPC Day 3–7 / CPC Day 8–14 Hazards Outlook** - Ship per-day and window-spanning hazard entries with weekday-aware staleness (completed 2026-08-27)
 - [x] **Phase 17: NWS/WPC HeatRisk & Parallelized Fetching** - Ship the raster-identify HeatRisk product and parallelize all new fetches (completed 2026-09-01)
-- [ ] **Phase 18: Merge, Precedence & Unified Payload Schema** - Build the cross-source dedup/precedence logic and single backend payload; measure cold-cache latency
+- [x] **Phase 18: Merge, Precedence & Unified Payload Schema** - Build the cross-source dedup/precedence logic and single backend payload; measure cold-cache latency (completed 2026-09-06)
 - [ ] **Phase 19: Unified Day Report — getDom() Rewrite** - Replace per-product sections with the merged per-day report, with full behavior-parity verification
 
 ## Phase Details
@@ -317,7 +317,7 @@ Plans:
 
 **Wave 14** *(gap closure — blocked on Wave 13 completion)*
 
-- [ ] 18-16-PLAN.md — allSettled per-member null guards, forced-rejection scenario, WR-01 residual recorded (wave 14)
+- [x] 18-16-PLAN.md — allSettled per-member null guards, forced-rejection scenario, WR-01 residual recorded (wave 14)
 
 ### Phase 19: Unified Day Report — getDom() Rewrite
 
@@ -360,7 +360,7 @@ Phases execute in numeric order: 14 → 15 → 16 → 17 → 18 → 19
 | 15. WPC Winter Storm Severity & Mesoscale Precipitation Discussion | v2.0 | 6/9 | In Progress|  |
 | 16. WPC Day 3–7 / CPC Day 8–14 Hazards Outlook | v2.0 | 8/8 | Complete    | 2026-08-27 |
 | 17. NWS/WPC HeatRisk & Parallelized Fetching | v2.0 | 9/9 | Complete    | 2026-09-01 |
-| 18. Merge, Precedence & Unified Payload Schema | v2.0 | 15/16 | In Progress|  |
+| 18. Merge, Precedence & Unified Payload Schema | v2.0 | 16/16 | Complete   | 2026-09-06 |
 | 19. Unified Day Report — getDom() Rewrite | v2.0 | 0/? | Not started | - |
 
 ## Backlog
