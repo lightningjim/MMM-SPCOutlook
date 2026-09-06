@@ -41,7 +41,7 @@
 
 ### Cross-Source Merge and Precedence
 
-- [ ] **MERGE-01**: User sees each hazard placed on the day its valid-time window actually covers, via a normalization layer that reconciles SPC's 12Z–12Z, the Hazards Outlook's 00Z–00Z, and ERO Day 1's 01Z–12Z conventions
+- [x] **MERGE-01**: User sees each hazard placed on the day its valid-time window actually covers, via a normalization layer that reconciles SPC's 12Z–12Z, the Hazards Outlook's 00Z–00Z, and ERO Day 1's 01Z–12Z conventions
 - [x] **MERGE-02**: User sees SPC's granular convective risk instead of WPC's derived Severe Weather flag, suppressed by a hazard-dimension-scoped rule validated against live payloads — never by label-string matching
 - [x] **MERGE-03**: User sees HeatRisk's 5-level scale instead of WPC's binary Hazardous Heat flag
 - [x] **MERGE-04**: User does not lose a distinct hazard to over-merging, nor see the same hazard twice from under-merging
