@@ -333,6 +333,48 @@ Plans:
   5. With every product disabled or reporting no active hazard, the module renders the correct empty state — a "no risk anywhere" manual test run passes with no error and no stray rows (RPT-05).
   6. Two mandatory manual test runs — "no risk anywhere" and "everything active at once" — both reproduce every previously shipped behavior from BUG-01..04, FWXT-01..05, PROX-01..06, PROXUI-01..05 (the combinatorial no-risk gate and all proximity badge modes), checked off against a per-requirement-ID checklist before this phase is considered done (RPT-06). This phase does not interleave any new-product work — it is strictly a display rewrite against the payload Phase 18 already validated.
 
+
+**Carried-in scope (folded from backlog 2026-09-06 — all three are SECONDARY to the rewrite):**
+
+These land in Phase 19 because Phase 19 is the first real consumer of each. They are explicitly
+droppable: if the RPT-01..06 rewrite is at risk, cut these back to the backlog rather than
+letting them compete with behavior parity. Ordered by how much Phase 19 depends on them.
+
+1. **WR-02 — `renderDayBlock` missing the guards its siblings apply** (from `18-REVIEW.md`,
+   confirmed unregistered by `18-SECURITY.md`'s threat cross-check). `MMM-SPCOutlook.js:604-614`
+   interpolates `day{N}Color` / `day{N}Text` into `innerHTML` without `validHazardColor()` /
+   `escapeHtml()`. Not exploitable today — both fields come from closed, module-authored lookup
+   tables — and **no threat-model row in any of Phase 18's 16 plans covers this renderer**
+   (T-18-10's `transfer` covers only the new `days[].hazards[].label` path). **Close this before
+   routing any new row through `renderDayBlock`** — that is the moment it stops being theoretical,
+   and it happens inside this phase.
+
+2. **`sources['wpc-hazards']` under-reports on live data.** Observed on the target Pi 2026-09-06
+   (OKC coords, all toggles on): the source fetched successfully — `idpFiledate` set, 823-1345 ms
+   — and its `windowBand` carried two real spans (Hazardous Heat 2026-09-08→09-11; Severe Drought
+   2026-09-08→09-12, `mapped: false`), yet the payload reported `reporting: false`,
+   `reportedDays: []` and `unmappedLabels: []` — the last despite the run logging *"unmapped hazard
+   label rendered verbatim: Severe Drought"*.
+
+   The empty `days[]` for this source is **correct by design** — RPT-04 routes window-spanning
+   entries to the band, never into a day block. The defect is only that two `sources[]` metadata
+   fields disagree with what the source actually did: `reporting: false` contradicts the suite's
+   `merge-sources-spc-fire-reporting-tracks-answering-not-finding` invariant, and the empty
+   `unmappedLabels` contradicts `merge-unmapped-label-passes-through-and-is-recorded`. **Matters
+   here because** a display keying off `sources[id].reporting` to decide whether to show a source
+   would treat `wpc-hazards` as silent while RPT-04's band still renders its entries. Related to
+   AR-07 / T-18-53 (`18-SECURITY.md`) — the same answered-vs-never-asked ambiguity from the other
+   side. No probe fixture has a windowBand-only span with empty day arrays, which is why 123 green
+   scenarios and the phase verifier both missed it.
+
+3. **IN-01 — window-band dedupe key collision** (from `16-REVIEW.md`, the sole surviving finding
+   of that review). `node_helper.js:939` builds `entry.label + "|" + entry.offsetStart + "|" +
+   entry.offsetEnd` from a remote-controlled label, so a label containing `|` can collide with a
+   different triple and silently drop one entry from the band. Growth is already bounded by Phase
+   18's `HAZARDS_MAX_WINDOW_ENTRIES = 40`, so this is key hygiene, not a resource risk. Folded here
+   because RPT-04's band is where a dropped entry would actually be seen. Lowest priority of the
+   three.
+
 **Plans**: TBD
 **UI hint**: yes
 
@@ -365,91 +407,7 @@ Phases execute in numeric order: 14 → 15 → 16 → 17 → 18 → 19
 
 ## Backlog
 
-### Phase 999.2: Phase 18 payload-metadata + renderer follow-ups (BACKLOG — feed into Phase 19)
+*Empty. The two prior entries were cleared on 2026-09-06 via `/bm:review-backlog`:*
 
-**Goal:** [Captured for future planning] Close two Phase 18 items that Phase 19's getDom()
-rewrite will be the first real consumer of. Both were found after Phase 18's plans closed —
-one by a live run on the target Raspberry Pi, one by the security audit — and neither blocks
-Phase 18's ROADMAP criteria.
-**Requirements:** TBD
-**Plans:** 0 plans
-
-- **`sources['wpc-hazards']` under-reports on live data.** Observed on the target Pi
-  2026-09-06 (OKC coords, all toggles on): the source fetched successfully — `idpFiledate`
-  set, 823-1345 ms — and its `windowBand` carried two real spans (Hazardous Heat
-  2026-09-08→09-11; Severe Drought 2026-09-08→09-12, `mapped: false`), yet the payload
-  reported `reporting: false`, `reportedDays: []`, and `unmappedLabels: []` — the last
-  despite the run logging *"unmapped hazard label rendered verbatim: Severe Drought"*.
-
-  The empty `days[]` for this source is **correct and by design** — RPT-04 (Phase 19
-  criterion 4) routes window-spanning Hazards Outlook entries to a separate band, never into
-  a day block. The defect is narrower: two `sources[]` metadata fields disagree with what the
-  source actually did. `reporting: false` contradicts the suite's own
-  `merge-sources-spc-fire-reporting-tracks-answering-not-finding` invariant, and the empty
-  `unmappedLabels` contradicts `merge-unmapped-label-passes-through-and-is-recorded`.
-
-  **Why it matters for Phase 19:** a display that keys off `sources[id].reporting` to decide
-  whether to show a source would treat `wpc-hazards` as silent while RPT-04's band still
-  renders its entries. Related to — possibly the same root cause as — AR-07/T-18-53, which is
-  the same answered-vs-never-asked ambiguity from the other direction. No probe fixture has a
-  windowBand-only span with empty day arrays, which is why 123 green scenarios and the phase
-  verifier both missed it.
-
-- **WR-02 — `renderDayBlock` lacks the guards every sibling renderer applies.**
-  `MMM-SPCOutlook.js:604-614` interpolates `day{N}Color` / `day{N}Text` into `innerHTML`
-  without `validHazardColor()` / `escapeHtml()`. Not exploitable today: both feeding fields
-  come from closed, module-authored lookup tables. But the security audit confirmed **no
-  threat-model row in any of Phase 18's 16 plans covers this renderer** — T-18-10's `transfer`
-  disposition covers only the new `days[].hazards[].label` path. It is new attack surface with
-  the "closed vocabulary" invariant enforced nowhere locally, in a function explicitly built to
-  generalize across products. **Close this before Phase 19 routes any new row through it** —
-  that is the moment it stops being theoretical.
-
-### Phase 999.1: Phase 16 code review follow-ups (BACKLOG)
-
-**Goal:** [Captured for future planning] Close the ten findings from `16-REVIEW.md` that were
-left open when Phase 16 shipped. CR-01 (critical) and WR-04 were fixed in `0f58b5e`; these are
-the remainder. Full detail, with reproduction and suggested fixes, lives in
-`.planning/phases/16-wpc-day-3-7-cpc-day-8-14-hazards-outlook/16-REVIEW.md`.
-**Requirements:** TBD
-**Plans:** 0 plans
-
-Highest value first:
-
-- **WR-05** — `_isWithinStaleWindow` and the three cache-hit timestamp refreshes call
-  `Date.now()` directly instead of the `_nowMs()` seam. Already live: the probe harness pins
-  `HAZARDS_NOW_MS` to `Date.UTC(2026,7,26,13,0)`, now more than a day behind the real clock, so
-  a warm-cache-plus-failure hazards scenario would take a different branch today than when it
-  was authored. It passes only because no hazards scenario reaches `_isWithinStaleWindow`.
-
-- **WR-02** — D-09's "hard exclusion with no config override" is exact-string `.includes()`, so
-  `"Flooding Likely "` with a trailing space renders. `winterImpact.toValue` one row above
-  already folds before lookup and calls this exact trap WSSI-02.
-
-- **WR-01** — `showDrought` is baked into the URL-keyed cache on the miss path only, with no
-  toggle dimension and no frontend-side drought term. Reachable via the shared-`node_helper`
-  multi-instance case this file documents at length.
-
-- **WR-03** — `_bucketHazardMatch` hardcodes the day span `3`/`14` while the payload loop reads
-  `row.dayRangeTotal`; the bucketer isn't even passed `row`. This is the two-places-declare-one-span
-  defect `daySpanOf`'s own 20-line comment condemns.
-
-- **WR-06** — remote-controlled unbounded growth in the unmapped-label ledger
-  (`_loggedUnmappedHazardLabels`) and the window-band entry count. Runs on a Raspberry Pi.
-
-- **WR-07** — `fetchGeoJsonCached` reads an unbounded response body; Phase 16 added six new URLs
-  to that path.
-
-- **IN-01** — the window-band dedupe key concatenates a remote-controlled label with `|`.
-
-Operator helper `scripts/hazards-at.js` (added during the Phase 16 UAT, not a production path):
-
-- **WR-08** — reports "per-day grid" for Precipitation features that D-04 routes to the band.
-- **WR-09** — prints `fresh (no warning)` when `idp_filedate` is missing, because `NaN > 84` is
-  `false`.
-
-- **IN-02** — diverges from the codebase's transport and naming conventions.
-
-Plans:
-
-- [ ] TBD (promote with /bm:review-backlog when ready)
+- *999.1 (Phase 16 follow-ups) — nine of its ten findings were verified closed in current source by Phases 17/18 (evidence is in the `/bm:review-backlog` commit message and each fix's own source comments); the surviving finding, IN-01, was folded into Phase 19's carried-in scope.*
+- *999.2 (Phase 18 payload-metadata + renderer follow-ups) — folded into Phase 19's carried-in scope, since Phase 19 is the first consumer of both items.*
