@@ -2871,13 +2871,17 @@ module.exports = NodeHelper.create({
       const gridStart = this._gridDayOf(match.startDate, anchorInfo.nominalStartMs);
       const gridEnd = this._gridDayOf(match.endDate, anchorInfo.nominalStartMs);
 
-      // `endDate` is the exclusive end of the source's own 00Z-00Z span, so a
-      // single-calendar-day feature has `gridEnd = gridStart + 1`. Emit on grid days
-      // `gridStart`..`gridEnd - 1` inclusive — this reproduces 16 D-04's "a 2-day Heavy
-      // Rain renders on both days" behaviour on the new grid. Clamp at the loop header
-      // (T-18-03, the same discipline T-16-05 closed in `_bucketHazardMatch`), never by
-      // filtering inside the body, so a hostile span cannot produce unbounded iteration.
-      const lastGridDay = gridEnd - 1;
+      // The upstream feed is NOT internally consistent about the `end_date` endpoint
+      // convention: a live 2026-09-05 poll returned a Precipitation feature (objectid
+      // 7917, "Heavy Rain") with `start_date === end_date` (inclusive/zero-duration)
+      // alongside a Temperature feature ("High Winds") with `end_date = start_date +
+      // 86400000` (exclusive) — see 18-LIVE-CAPTURE.md's "Criterion 1" section. The
+      // clamp below reads correctly under both: a span confined to one grid day emits on
+      // that day, while `gridEnd - 1` still governs a later-ending span, mirroring
+      // `_bucketHazardMatch`'s own inclusive-endpoint loop. Clamp stays at the loop
+      // header (T-18-03/T-16-05), never in the body, so a hostile span cannot iterate
+      // unbounded.
+      const lastGridDay = Math.max(gridStart, gridEnd - 1);
       const clampedStart = Math.max(gridStart, 1);
       const clampedEnd = Math.min(lastGridDay, GRID_DAY_COUNT);
       if (clampedEnd < clampedStart) continue; // clamped range is empty; skip entirely
