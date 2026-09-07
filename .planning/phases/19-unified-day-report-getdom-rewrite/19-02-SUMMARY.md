@@ -114,3 +114,12 @@ None - no external service configuration required.
 ---
 *Phase: 19-unified-day-report-getdom-rewrite*
 *Completed: 2026-09-06*
+
+## Self-Check: PASSED
+
+- FOUND: `node_helper.js`
+- FOUND: `scripts/probe-payload-resilience.js`
+- FOUND: `.planning/phases/19-unified-day-report-getdom-rewrite/19-02-SUMMARY.md`
+- FOUND commit `895ee48` (Task 1)
+- FOUND commit `321fe91` (Task 2)
+- FOUND commit `b42efa9` (metadata)
