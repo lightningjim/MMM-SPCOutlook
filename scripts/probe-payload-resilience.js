@@ -4816,6 +4816,67 @@ const scenarios = [
     }
   },
   {
+    // RPT-04 (19-06 Task 1): the top-level `windowBand` key is a promotion of the SAME array
+    // `hazardsOutlook.windowBand` already carries — not a second derivation — so the unified
+    // renderer never has to read the legacy block. Layer 7 (Wildfire/Drought, group !==
+    // "precipitation") routes unconditionally to the window band per `_bucketHazardMatch`,
+    // giving a real end-to-end window-band entry without touching the day grid at all.
+    name: "rpt04-window-band-is-promoted-to-a-top-level-payload-key",
+    run: async (helper) => {
+      const layer7Body = hazardsCollection([
+        hazardsFeature({ label: "Critical Wildfire Risk", startDate: Date.UTC(2026, 7, 29), endDate: Date.UTC(2026, 8, 2) })
+      ]);
+
+      resetHelper(helper);
+      resetLogs();
+      helper._nowMs = () => HAZARDS_NOW_MS;
+      const toggles = { showHazardsOutlook: true };
+      helper._products = toggles;
+      const originalPointInPolygon = turfStub.pointInPolygon;
+      turfStub.pointInPolygon = () => true;
+      let out;
+      try {
+        installHttp(helper, hazardsRoutes({ 7: () => httpResponse({ body: layer7Body, etag: "rpt04-windowband-v1" }) }));
+        out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, toggles);
+      } finally {
+        turfStub.pointInPolygon = originalPointInPolygon;
+      }
+      assertPayloadIntact(out);
+      assertHazardsBlockIntact(out);
+      if (!Array.isArray(out.windowBand)) {
+        throw new Error(`out.windowBand is not an array (got ${JSON.stringify(out.windowBand)})`);
+      }
+      if (out.windowBand.length === 0) {
+        throw new Error("precondition failed: fixture produced zero window-band entries — nothing to promote");
+      }
+      if (JSON.stringify(out.windowBand) !== JSON.stringify(out.hazardsOutlook.windowBand)) {
+        throw new Error(
+          `out.windowBand does not deep-equal out.hazardsOutlook.windowBand: ` +
+          `${JSON.stringify(out.windowBand)} vs ${JSON.stringify(out.hazardsOutlook.windowBand)}`
+        );
+      }
+      if (!out.windowBand.some((e) => e.label === "Critical Wildfire Risk")) {
+        throw new Error(`expected Critical Wildfire Risk in out.windowBand, got ${JSON.stringify(out.windowBand)}`);
+      }
+
+      // Control: Hazards Outlook toggled off — the promoted key must still be an array,
+      // never undefined, matching D-02's always-present invariant for `days`.
+      resetHelper(helper);
+      resetLogs();
+      helper._nowMs = () => HAZARDS_NOW_MS;
+      const offToggles = { showHazardsOutlook: false };
+      helper._products = offToggles;
+      const off = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, offToggles);
+      assertPayloadIntact(off);
+      if (typeof off.windowBand === "undefined") {
+        throw new Error("control: out.windowBand is undefined on a toggle-off fixture, expected []");
+      }
+      if (!Array.isArray(off.windowBand) || off.windowBand.length !== 0) {
+        throw new Error(`control: expected an empty array on toggle-off, got ${JSON.stringify(off.windowBand)}`);
+      }
+    }
+  },
+  {
     // HAZ-04, end to end: CR-01's lesson — the suite asserted on the payload and stopped
     // there, which is how a total outage came to render as a confident all-clear while a
     // payload assertion reported the guarantee as met. HAZ-04 is a *display* requirement;

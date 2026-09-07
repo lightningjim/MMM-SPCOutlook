@@ -4144,6 +4144,12 @@ module.exports = NodeHelper.create({
    *   never be conflated (D-14). `idpFiledate` is non-null only for `wpc-hazards` and
    *   `heatrisk`, the two products that publish one (16 D-13); `gridAnchor` appears only
    *   on `spc-convective` (D-12);
+   *   windowBand: [{ label, color, mapped, startDate, endDate, offsetStart, offsetEnd }] —
+   *   the SAME array `hazardsOutlook.windowBand` carries, promoted to a top-level key so
+   *   the unified renderer never has to read a legacy block (RPT-04). Always an array,
+   *   never undefined, even when the Hazards Outlook toggle is off or the run degraded
+   *   (D-02's always-present invariant, extended to this key). `summary.bandDiagnostics.
+   *   windowBandCount` is this array's count;
    *   and optional _stale (boolean) and _staleAsOf (timestamp) when serving cached data.
    *
    *   D-01 invariant, for this phase only: the eight legacy blocks above and this
@@ -5275,7 +5281,15 @@ module.exports = NodeHelper.create({
         advisories: advisories,
         days: gridDays,
         summary: gridSummary,
-        sources: sourceHealth
+        sources: sourceHealth,
+        // RPT-04: the same array `hazardsOutlook.windowBand` carries, promoted to the top
+        // level so the unified renderer never has to read a legacy block. Always an array
+        // (CR-01: hazardsPayload is null on a rejected run), never undefined, matching D-02's
+        // always-present invariant for `days`. Not re-sorted or re-capped here — the sort and
+        // the HAZARDS_MAX_WINDOW_ENTRIES cap already happened once, at assembly (:955-970).
+        // `summary.bandDiagnostics.windowBandCount` is this array's count.
+        windowBand: (hazardsPayload && Array.isArray(hazardsPayload.windowBand))
+          ? hazardsPayload.windowBand : []
       };
 
     } catch (err) {
