@@ -3105,8 +3105,10 @@ module.exports = NodeHelper.create({
    *
    * @param gridDays - the fourteen-key `days` skeleton from `_buildGridDays`, mutated in place
    * @param spcLocals - { extended, riskToValue, valueToFullRisk, riskToColor,
-   *   fireRiskToValue, fireValueToFull, fireRiskToColor, categorical: { 1..3: {...} },
-   *   probabilistic: { 4..8: {...} }, fire: { 1..8: number } } — see call site
+   *   fireRiskToValue, fireValueToFull, fireRiskToColor, categorical: { 1..3: {...,
+   *   proximity?: {...}} }, probabilistic: { 4..8: {...} }, fire: { 1..8: number } } —
+   *   `categorical[1..3].proximity` is optional, present only when its subtree is
+   *   non-empty (RPT-03/RPT-06); see call site
    * @param notes - `{ noteReported, noteActive, noteUnmapped }`
    */
   _addSpcGridEntries(gridDays, spcLocals, notes) {
@@ -3136,6 +3138,17 @@ module.exports = NodeHelper.create({
       // that is what keeps "SPC forgot to report" distinguishable from "SPC reported
       // below-floor" (D-14's nuance).
       notes.noteReported("spc-convective", d);
+
+      // RPT-03/RPT-06: this is the sole reader path for proximity once the legacy
+      // day1/day2/day3 blocks retire — attach here, above both the unmapped-passthrough
+      // branch below and the floor gate further down, so a day whose convective risk is
+      // NONE or unmapped still carries its proximity subtree (D-08's proximity-only
+      // exception has nothing to render otherwise). Grid day N maps 1:1 to legacy day N
+      // here because this loop pushes to `gridDays[String(d)]` with the same `d` (D-11).
+      if (day.proximity) {
+        const proxDayEntry = gridDays[String(d)];
+        if (proxDayEntry) proxDayEntry.proximity = day.proximity;
+      }
 
       const value = day.risk === "NONE"
         ? 0
@@ -5010,6 +5023,29 @@ module.exports = NodeHelper.create({
       // there is no results.<id>.payload for them — spcLocals is built here from the
       // exact same named locals the legacy day1..day8/fireWeather literals below read,
       // never a second fetch or re-derivation.
+
+      // RPT-03/RPT-06: derive each day's proximity subtree exactly once, from the same
+      // named locals the legacy day1/day2/day3 literals below read. Spread into both
+      // spcLocals.categorical[d] (feeding the unified `days[]` grid via
+      // _addSpcGridEntries) and the legacy day1/day2/day3 literals — never a second
+      // derivation (WR-06 twin-drift rule).
+      const day1ProximitySubtree = buildProximitySubtree({
+        categorical: day1CatProximity,
+        torCig: day1TorCigProximity,
+        hailCig: day1HailCigProximity,
+        windCig: day1WindCigProximity
+      });
+      const day2ProximitySubtree = buildProximitySubtree({
+        categorical: day2CatProximity,
+        torCig: day2TorCigProximity,
+        hailCig: day2HailCigProximity,
+        windCig: day2WindCigProximity
+      });
+      const day3ProximitySubtree = buildProximitySubtree({
+        categorical: day3CatProximity,
+        cig: day3CigProximity
+      });
+
       const spcLocals = {
         extended,
         riskToValue, valueToFullRisk, riskToColor,
@@ -5019,15 +5055,17 @@ module.exports = NodeHelper.create({
             risk: day1Risk, probRisk: day1ProbRisk,
             torRisk: day1TorRisk, torCig: day1TorCig,
             hailRisk: day1HailRisk, hailCig: day1HailCig,
-            windRisk: day1WindRisk, windCig: day1WindCig
+            windRisk: day1WindRisk, windCig: day1WindCig,
+            ...day1ProximitySubtree
           },
           2: {
             risk: day2Risk, probRisk: day2ProbRisk,
             torRisk: day2TorRisk, torCig: day2TorCig,
             hailRisk: day2HailRisk, hailCig: day2HailCig,
-            windRisk: day2WindRisk, windCig: day2WindCig
+            windRisk: day2WindRisk, windCig: day2WindCig,
+            ...day2ProximitySubtree
           },
-          3: { risk: day3Risk, probRisk: day3ProbRisk, cig: day3Cig }
+          3: { risk: day3Risk, probRisk: day3ProbRisk, cig: day3Cig, ...day3ProximitySubtree }
         },
         probabilistic: {
           4: { risk: day4Risk, probRisk: day4ProbRisk, sign: day4Sign },
@@ -5107,12 +5145,7 @@ module.exports = NodeHelper.create({
            "hailCig": day1HailCig,
            "windRisk": day1WindRisk,
            "windCig": day1WindCig,
-           ...buildProximitySubtree({
-             categorical: day1CatProximity,
-             torCig: day1TorCigProximity,
-             hailCig: day1HailCigProximity,
-             windCig: day1WindCigProximity
-           })
+           ...day1ProximitySubtree
           },
           day2: {
             "risk": day2Risk,
@@ -5125,12 +5158,7 @@ module.exports = NodeHelper.create({
             "hailCig": day2HailCig,
             "windRisk": day2WindRisk,
             "windCig": day2WindCig,
-            ...buildProximitySubtree({
-              categorical: day2CatProximity,
-              torCig: day2TorCigProximity,
-              hailCig: day2HailCigProximity,
-              windCig: day2WindCigProximity
-            })
+            ...day2ProximitySubtree
           },
           day3: {
           "risk": day3Risk,
@@ -5138,10 +5166,7 @@ module.exports = NodeHelper.create({
           "color": riskToColor[day3Risk],
           "probRisk": day3ProbRisk,
           "cig": day3Cig,
-          ...buildProximitySubtree({
-            categorical: day3CatProximity,
-            cig: day3CigProximity
-          })
+          ...day3ProximitySubtree
           },
         day4: {
           "risk": day4Risk,
