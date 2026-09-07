@@ -93,3 +93,120 @@ derived from another.
 | 8 | Day 2 windCig | `day2.windCig === 0` | MMM-SPCOutlook.js:559 |
 | 9 | Day 3 categorical | `day3.risk == "NONE"` | MMM-SPCOutlook.js:564 |
 | 10 | Day 3 cig | `day3.cig === 0` | MMM-SPCOutlook.js:565 |
+
+## Intentional Changes (verified-expected, NOT regressions)
+
+These four relocations/exceptions are Phase 19's own roadmap-mandated design, recorded here so a
+parity reviewer files them as verified-intentional rather than investigating them as regressions
+(RESEARCH.md Pitfall 3).
+
+| ID | Change | Authority | Verified expected by |
+|----|--------|-----------|------------------------|
+| RPT-04-RELOC | SPC MD and WPC MPD advisories move from ABOVE the day rows (legacy `MMM-SPCOutlook.js:513-540`) to a band BELOW all day blocks | ROADMAP Phase 19 success criterion 4 / RPT-04 / UI-SPEC "The Band" | 19-08 sign-off, Run B |
+| D-07-RELOC | The categorical proximity badge and the SPC tornado/hail/wind probabilistic breakdown move from the compact (default) line to detail mode only — at default config a user sees neither. This is a relocation, not a removal: both are fully present in detail mode, and D-04's auto-expand surfaces them without reconfiguration | CONTEXT.md D-07 | 19-08 sign-off, Run B (detail mode) |
+| D-03-SKIP | Days with no surviving hazard render no row and no marker, so the rendered day list is non-contiguous (e.g. Day 3, Day 6, Day 9) | CONTEXT.md D-03 | 19-08 sign-off, Run B |
+| D-08-EXC | Deliberate exception to D-03/D-07: with `proximityWeighting: true`, a day with no surviving hazard still renders, badge alone, so the shipped v1.2 PROXUI outside-mode behavior is not lost at default config | CONTEXT.md D-08 | 19-08 sign-off, Run B (`proximityWeighting: true`) |
+
+## Mandatory Manual Runs
+
+Per 15 D-10: the probe suite (`node scripts/probe-payload-resilience.js`) is proof of mechanism —
+each scenario is individually mutation-proven. These two manual runs are proof of live behavior
+against the real rendered mirror. **Neither substitutes for the other.**
+
+### Run A — "no risk anywhere"
+
+```js
+{
+  module: "MMM-SPCOutlook",
+  position: "top_left",
+  config: {
+    lat: <coordinate with no active hazard from any source>,
+    lon: <coordinate with no active hazard from any source>,
+    extended: true,
+    updateInterval: 60,
+    proximityWeighting: false,
+    dayReportDetail: false,
+    showExcessiveRain: true,
+    showWinterImpact: true,
+    showMPD: true,
+    showHazardsOutlook: true,
+    showHeatRisk: true,
+    showSPCMD: true
+  }
+}
+```
+
+How to reach the state: pick a coordinate that today (or over a short observation window) has no
+SPC convective risk, no active fire weather, no ERO/WSSI/HazardsOutlook/HeatRisk hazard, and no
+live SPC MD or WPC MPD covering it. Confirm via the backend's own logged payload before reading
+the display, not by inference from the config alone.
+
+Expected observations:
+
+1. Exactly one line of rendered content.
+2. The literal string `No Severe Weather Risk` if the payload is not stale (row 9's confident
+   all-clear branch), OR the literal string `No Severe Weather Risk (unconfirmed)` if
+   `this.spcrisk._stale` is true (row 9's degraded branch) — record which of the two appeared and
+   whether `_stale` was set.
+3. Zero day rows (rows 12, 15, 17, 18, 19 must all produce nothing).
+4. Zero band lines (row 10, row 26/27 — no advisory line, no `Extended Hazards:` heading).
+5. No bare `⚠` badge with nothing beneath it (row 4, CR-01) — if `_stale` fires, the
+   `(unconfirmed)` string must be present underneath it, never a dangling badge alone.
+
+### Run B — "everything active at once"
+
+```js
+{
+  module: "MMM-SPCOutlook",
+  position: "top_left",
+  config: {
+    lat: <coordinate inside an active SPC convective risk area>,
+    lon: <coordinate inside an active SPC convective risk area>,
+    extended: true,
+    updateInterval: 60,
+    proximityWeighting: true,
+    dayReportDetail: true,
+    showExcessiveRain: true,
+    showWinterImpact: true,
+    showMPD: true,
+    showHazardsOutlook: true,
+    showHeatRisk: true,
+    showSPCMD: true
+  }
+}
+```
+
+How to reach the state: move the coordinate into an active SPC convective outlook polygon during
+a period with a live SPC MD and/or WPC MPD covering the same area (verify with a point-in-polygon
+check against the live KMZ/GeoJSON, not a bounding-box approximation — Phase 15's operating
+procedure documents why a bbox check is insufficient). Restore the real coordinate after the run.
+
+Expected observations, each cross-referenced to a preserved-behavior row above:
+
+1. Compact `Day N (Weekday)` header lines, two literal spaces and ` · ` separators between
+   hazard segments (new unified-report layout; the legacy analog is row 12's Day 1/Day 2 line
+   format, now merged with every other enabled source on the same day).
+2. Dimension sub-rows with `— {Source}` attribution when `dayReportDetail: true` (D-05's grouped
+   sub-row layout; the categorical proximity badge and probabilistic breakdown that appear here
+   are row 12's and row 14's content, relocated per D-07-RELOC).
+3. The tornado/hail/wind icon line present on days 1-2 only, absent on day 3 and days 4-8 (row
+   13's per-hazard-type breakdown, and row 17's "no proximity badges for days 4-8" asymmetry).
+4. A single combined CIG glyph inline in the day-3 label field, no separate breakdown line (row
+   16).
+5. No probabilistic sub-line on days 4-8 (row 17).
+6. The band below all day blocks containing the SPC MD / WPC MPD lines (row 10, row 11's escaping)
+   then the `Extended Hazards:` heading (row 26) with the window-band entries beneath it (row 27,
+   row 28's offset coercion), per RPT-04-RELOC.
+7. The stale badge (row 8) at the very top of all content, before any day block and before the
+   band, if `_stale` is set on the payload during the run.
+8. The noise-floor rounding (row 33, `weight.toFixed(1)`) visible on any rendered proximity badge
+   value — no un-rounded floating point value should ever appear.
+
+## Sign-Off
+
+- [ ] All 35 preserved-behavior rows above have both `Run A` and `Run B` columns ticked.
+- [ ] All 4 intentional-change rows (`RPT-04-RELOC`, `D-07-RELOC`, `D-03-SKIP`, `D-08-EXC`)
+      confirmed observed-and-expected during Run A and/or Run B as applicable.
+- [ ] `node scripts/probe-payload-resilience.js` reports `0 failed, 0 skipped` at time of sign-off.
+- [ ] Operator name: ______________________
+- [ ] Date: ______________________
