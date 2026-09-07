@@ -28,10 +28,12 @@ const { PRODUCT_REGISTRY, MPD_FILENAME_PATTERN, hazardLabelKey } = require("./pr
 // actually reads: dimensionOf resolves a (source, label) pair to D-05's dimension roster;
 // NO_RISK_FLOOR is read directly by the HeatRisk and registry-day grid-entry builders to
 // decide whether a reading is an active claim or a quiet one; FLOOR_PREBAKED is the
-// sentinel _addRegistryDayGridEntries checks against rather than hardcoding the comparison.
+// sentinel _addRegistryDayGridEntries checks against rather than hardcoding the comparison;
+// SIGNIFICANCE_FLOOR/SIGNIFICANCE_NEVER are read by _resolveGridDayAutoExpand to decide
+// D-04's per-day auto-expand trigger.
 const {
   dimensionOf, NO_RISK_FLOOR, FLOOR_PREBAKED, PRECEDENCE, DIMENSION_ORDER,
-  SOURCE_IDS, ADVISORY_SOURCE_IDS
+  SOURCE_IDS, ADVISORY_SOURCE_IDS, SIGNIFICANCE_FLOOR, SIGNIFICANCE_NEVER
 } = require("./hazardTaxonomy");
 // WR-16 / D-10: `showDrought` is NOT a product flag in the `configFlag` sense — it does
 // not gate a fetch, it gates which labels within an already-fetched product (Hazards
@@ -3502,6 +3504,44 @@ module.exports = NodeHelper.create({
   },
 
   /**
+   * RPT-02/RPT-03/D-04: resolve whether this grid day is significant enough to auto-expand
+   * without the user setting `dayReportDetail: true`. This boolean travels in the payload,
+   * rather than the SIGNIFICANCE_FLOOR table travelling to the frontend, for the same reason
+   * `ADVISORY_SOURCES` is a stated frontend map rather than a derived one: `MMM-SPCOutlook.js`
+   * runs in the browser and cannot `require("./hazardTaxonomy")`.
+   *
+   * The rule reads only each surviving entry's OWN source ladder — never another dimension's
+   * — so this creates no cross-dimension severity ranking (18 D-15's rejection of one stays
+   * intact). `dimension: null` entries (D-07 unmapped pass-throughs) never contribute: they
+   * have no resolved taxonomy meaning to be significant about. A `SIGNIFICANCE_NEVER` source
+   * (currently only `wpc-hazards`) is skipped without ever consulting `entry.value`. An
+   * unknown `entry.source` (no `SIGNIFICANCE_FLOOR` key) is treated as not-significant rather
+   * than throwing, matching this method's own containment posture just above for an
+   * unresolvable dimension.
+   *
+   * @param day - one entry of `gridDays`, already precedence-resolved by
+   *   `_resolveGridDayPrecedence`; mutated in place to add `autoExpand`
+   */
+  _resolveGridDayAutoExpand(day) {
+    let autoExpand = false;
+    for (const entry of day.hazards) {
+      if (entry.suppressedBy !== null) continue; // only a winning entry may trigger
+      if (entry.dimension === null) continue; // D-07: no resolved taxonomy meaning
+      if (!Object.prototype.hasOwnProperty.call(SIGNIFICANCE_FLOOR, entry.source)) continue;
+      const significance = SIGNIFICANCE_FLOOR[entry.source];
+      if (significance === SIGNIFICANCE_NEVER) continue;
+      // A wpc-hazards-shaped `null` value (or any other non-numeric value) must never reach
+      // a predicate — T-19-07's guard, mutation-proven in the probe suite.
+      if (typeof entry.value !== "number") continue;
+      if (significance(entry.value)) {
+        autoExpand = true;
+        break;
+      }
+    }
+    day.autoExpand = autoExpand;
+  },
+
+  /**
    * D-16/D-20/RPT-05: roll up the fourteen already-resolved grid days, the Hazards
    * Outlook window band, and the two advisory arrays into the single `summary` object
    * Phase 19 reads to decide the empty state in one read. This is a ROLLUP of
@@ -5097,6 +5137,7 @@ module.exports = NodeHelper.create({
       // nothing downstream (including `_buildGridSummary`) ever needs a second pass.
       for (let d = 1; d <= GRID_DAY_COUNT; d++) {
         this._resolveGridDayPrecedence(gridDays[String(d)], d, reportedDays);
+        this._resolveGridDayAutoExpand(gridDays[String(d)]);
       }
 
       // D-04: sourceHealth first — _buildGridSummary counts over it (`enabledSourceCount`/
