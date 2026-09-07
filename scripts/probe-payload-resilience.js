@@ -660,6 +660,60 @@ function mpdListingHtml(entries) {
   return `<html><head><title>Index of /kml/mpd/</title></head><body><h1>Index of /kml/mpd/</h1><pre>\n${rows.join("\n")}\n</pre></body></html>\n`;
 }
 
+// Phase 19 (RPT-06 D-10): mirrors getDom()'s own renderableWindowEntries — a window-band
+// entry is renderable when it is not wholly elapsed (offsetEnd >= 0) and its label survives
+// the excluded/drought gates. None of this file's windowBand fixtures use an excluded or
+// drought label, and every one leaves showDrought at its false default, so the drought half
+// is a fixed false-config mirror rather than a second config plumb-through.
+const HAZARDS_WINDOW_EXCLUDED_KEYS = [
+  "FLOODING LIKELY", "FLOODING OCCURRING OR IMMINENT", "FLOODING POSSIBLE"
+];
+function hazardsWindowBandIsRenderable(block) {
+  if (!block || typeof block !== "object" || !Array.isArray(block.windowBand)) return false;
+  return block.windowBand.some((entry) => (
+    entry && typeof entry === "object" &&
+    !(typeof entry.offsetEnd === "number" && entry.offsetEnd < 0) &&
+    !HAZARDS_WINDOW_EXCLUDED_KEYS.includes(String(entry.label).trim().toUpperCase())
+  ));
+}
+
+// Phase 19 (RPT-06 D-10): the base fixture for every unified days[]/summary-driven frontend
+// scenario. All 14 grid days present and empty by default (18 D-02 — the unified grid always
+// carries all fourteen keys), a summary matching a genuine, fully-enabled, fully-quiet poll,
+// and empty advisories — every scenario overrides only what it needs to prove, so a payload
+// shape change is edited in one place.
+function unifiedPayload(overrides) {
+  const days = {};
+  for (let n = 1; n <= 14; n++) {
+    days[String(n)] = {
+      date: new Date(Date.UTC(2026, 7, 20 + n)).toISOString().slice(0, 10),
+      windowStart: null, windowEnd: null,
+      hazards: [], autoExpand: false
+    };
+  }
+  const sources = {};
+  for (const id of [
+    "spc-convective", "spc-fire", "wpc-ero", "wpc-wssi", "wpc-hazards", "heatrisk", "spc-md", "wpc-mpd"
+  ]) {
+    sources[id] = {
+      id, displayName: id, enabled: true, reporting: true, stale: false,
+      idpFiledate: null, reportedDays: [], activeDays: [], unmappedLabels: []
+    };
+  }
+  return {
+    days,
+    summary: {
+      anyHazard: false, dimensions: [], activeDays: [],
+      windowStart: null, windowEnd: null,
+      enabledSourceCount: 8, reportingSourceCount: 8,
+      bandDiagnostics: { windowBandCount: 0, advisoryCount: 0 }
+    },
+    sources,
+    advisories: { spcMD: [], mpd: [] },
+    ...(overrides || {})
+  };
+}
+
 // A payload shape in which every day/fireWeather/ERO/winterImpact value is the
 // no-risk/none default and `_stale` is absent, parameterised only by `advisories` — used
 // by frontend-advisory-only-is-not-an-all-clear to isolate the advisory term of the
@@ -667,6 +721,10 @@ function mpdListingHtml(entries) {
 // config.extended false, getDom never reads them (the `&&` chain short-circuits on
 // `this.config.extended` before evaluating anything on `this.spcrisk.day48Risk` or
 // `this.spcrisk.fireWeather.day3Risk`-`day8Risk`).
+//
+// Phase 19: getDom()'s own gate now reads only `summary`, so this legacy day1-8/fireWeather/
+// ERO/WSSI shape (still exercised by scenarios predating the unified rewrite) carries its own
+// `summary` too — computed from `advisories` alone, matching what this fixture isolates.
 function noRiskPayloadWithAdvisory(advisories) {
   const dayNone = { risk: "NONE", text: "None", color: "afddf6", probRisk: false, torRisk: 0, torCig: 0, hailRisk: 0, hailCig: 0, windRisk: 0, windCig: 0 };
   const day3None = { risk: "NONE", text: "None", color: "afddf6", probRisk: false, cig: 0 };
@@ -686,6 +744,7 @@ function noRiskPayloadWithAdvisory(advisories) {
     winterImpact[`day${d}Color`] = eroDay.Color;
     winterImpact[`day${d}ValidTime`] = eroDay.ValidTime;
   }
+  const anyAdvisory = Object.values(advisories || {}).some((arr) => Array.isArray(arr) && arr.length > 0);
   return {
     day48Risk: false,
     day1: { ...dayNone },
@@ -704,7 +763,13 @@ function noRiskPayloadWithAdvisory(advisories) {
     },
     excessiveRain,
     winterImpact,
-    advisories
+    advisories,
+    summary: {
+      anyHazard: anyAdvisory, dimensions: [], activeDays: [],
+      windowStart: null, windowEnd: null,
+      enabledSourceCount: 2, reportingSourceCount: 2,
+      bandDiagnostics: { windowBandCount: 0, advisoryCount: anyAdvisory ? 1 : 0 }
+    }
   };
 }
 
@@ -712,10 +777,20 @@ function noRiskPayloadWithAdvisory(advisories) {
 // gate, applied to the Hazards Outlook terms: every other value is the no-risk/none
 // default, `advisories` is empty, `_stale` is absent, and `hazardsOutlook` is whatever
 // the caller supplies — used by frontend-hazards-window-band-only-is-not-an-all-clear and
-// its sibling to isolate hazardsOutlookHasAnyDay/hazardsOutlookHasWindowEntries from every
-// other gate term.
+// its siblings to isolate the window-band term from every other gate term.
+//
+// Phase 19: `summary.anyHazard` is overridden here (on top of noRiskPayloadWithAdvisory's
+// advisory-only computation) to reflect the SAME hazardsBlock's own window band, via the
+// identical renderable-entry rule getDom()'s renderHazardsWindowBand applies — so the gate
+// and the render this fixture drives can never disagree about what it isolates.
 function noRiskPayloadWithHazards(hazardsBlock) {
-  return { ...noRiskPayloadWithAdvisory({ spcMD: [], mpd: [] }), hazardsOutlook: hazardsBlock };
+  const base = noRiskPayloadWithAdvisory({ spcMD: [], mpd: [] });
+  const anyHazard = hazardsWindowBandIsRenderable(hazardsBlock);
+  return {
+    ...base,
+    hazardsOutlook: hazardsBlock,
+    summary: { ...base.summary, anyHazard, bandDiagnostics: { ...base.summary.bandDiagnostics, windowBandCount: anyHazard ? 1 : 0 } }
+  };
 }
 
 // The full day3..day14 + windowBand shape with everything empty — assertHazardsBlockIntact's
@@ -1722,8 +1797,11 @@ const scenarios = [
             "\"No Severe Weather Risk\" — the WSSI term of the no-risk gate is unguarded"
           );
         }
-        if (!rendered.includes("Winter Impact")) {
-          throw new Error(`a genuine MINOR winter impact rendered with no Winter Impact row: ${rendered}`);
+        // Phase 19: the legacy "Winter Impact (Day 1):" per-product label is retired — the
+        // unified compact renderer emits "Day 1 (Weekday)  Winter Minor" instead (dimension-
+        // worded, per RPT-02). Assert the new shape rather than the old literal label.
+        if (!rendered.includes("Winter") || !rendered.includes("Minor")) {
+          throw new Error(`a genuine MINOR winter impact rendered with no Winter row: ${rendered}`);
         }
       } finally {
         turfStub.pointInPolygon = originalPointInPolygon;
@@ -3399,25 +3477,42 @@ const scenarios = [
       resetLogs();
       const frontend = loadFrontendModule();
       const noRisk = { risk: "NONE", text: "None", color: "afddf6" };
-      const payload = {
-        day1: { ...noRisk }, day2: { ...noRisk }, day3: { ...noRisk },
-        day4: { ...noRisk }, day5: { ...noRisk }, day6: { ...noRisk },
-        day7: { ...noRisk }, day8: { ...noRisk },
-        day48Risk: false,
-        fireWeather: { day1Risk: 0, day2Risk: 0 },
-        excessiveRain: {}, winterImpact: {},
-        advisories: {
-          spcMD: [{ label: "SPC MD 2108", hazardType: null }],
-          mpd: [{ label: "WPC MPD 1118", hazardType: "Heavy snow" }]
-        }
+      const advisoriesData = {
+        spcMD: [{ label: "SPC MD 2108", hazardType: null }],
+        mpd: [{ label: "WPC MPD 1118", hazardType: "Heavy snow" }]
       };
       const cfg = (over) => ({
         lat: PROBE_LAT, lon: PROBE_LON, extended: false, updateInterval: 60,
         proximityWeighting: false, showExcessiveRain: false, showWinterImpact: false,
         showSPCMD: true, showMPD: true, ...over
       });
+      // Phase 19: summary.anyHazard now travels with the payload rather than being
+      // re-derived from config at render time, so each call below builds a payload whose
+      // summary reflects the SAME toggle state as the config under test — mirroring how a
+      // single node_helper instance's own summary is computed from its own `_products`
+      // state in real (non-WR-09-divergent) operation.
+      const payloadFor = ({ showSPCMD, showMPD }) => {
+        const anyHazard = !!(showSPCMD || showMPD);
+        return {
+          day1: { ...noRisk }, day2: { ...noRisk }, day3: { ...noRisk },
+          day4: { ...noRisk }, day5: { ...noRisk }, day6: { ...noRisk },
+          day7: { ...noRisk }, day8: { ...noRisk },
+          day48Risk: false,
+          fireWeather: { day1Risk: 0, day2Risk: 0 },
+          excessiveRain: {}, winterImpact: {},
+          advisories: advisoriesData,
+          summary: {
+            anyHazard, dimensions: [], activeDays: [], windowStart: null, windowEnd: null,
+            enabledSourceCount: 2, reportingSourceCount: 2,
+            bandDiagnostics: { windowBandCount: 0, advisoryCount: anyHazard ? 1 : 0 }
+          }
+        };
+      };
 
-      const bothOff = renderDom(frontend, { config: cfg({ showSPCMD: false, showMPD: false }), spcrisk: payload });
+      const bothOff = renderDom(frontend, {
+        config: cfg({ showSPCMD: false, showMPD: false }),
+        spcrisk: payloadFor({ showSPCMD: false, showMPD: false })
+      });
       if (bothOff.includes("SPC MD 2108") || bothOff.includes("WPC MPD 1118")) {
         throw new Error(`advisories rendered with both toggles off: ${JSON.stringify(bothOff)}`);
       }
@@ -3430,7 +3525,10 @@ const scenarios = [
         );
       }
 
-      const mpdOnly = renderDom(frontend, { config: cfg({ showSPCMD: false }), spcrisk: payload });
+      const mpdOnly = renderDom(frontend, {
+        config: cfg({ showSPCMD: false }),
+        spcrisk: payloadFor({ showSPCMD: false, showMPD: true })
+      });
       if (mpdOnly.includes("SPC MD 2108")) {
         throw new Error(`showSPCMD:false still rendered the SPC MD: ${JSON.stringify(mpdOnly)}`);
       }
@@ -3438,7 +3536,10 @@ const scenarios = [
         throw new Error(`showMPD:true dropped the MPD: ${JSON.stringify(mpdOnly)}`);
       }
 
-      const mdOnly = renderDom(frontend, { config: cfg({ showMPD: false }), spcrisk: payload });
+      const mdOnly = renderDom(frontend, {
+        config: cfg({ showMPD: false }),
+        spcrisk: payloadFor({ showSPCMD: true, showMPD: false })
+      });
       if (mdOnly.includes("WPC MPD 1118")) {
         throw new Error(`showMPD:false still rendered the MPD: ${JSON.stringify(mdOnly)}`);
       }
@@ -3459,60 +3560,48 @@ const scenarios = [
     run: async (_helper) => {
       resetLogs();
       const frontend = loadFrontendModule();
-      const noRisk = { risk: "NONE", text: "None", color: "afddf6" };
-      const eroBlock = {};
-      for (let d = 1; d <= 7; d++) {
-        eroBlock[`day${d}Risk`] = d === 7 ? "MDT" : "NONE";
-        eroBlock[`day${d}Text`] = d === 7 ? "Moderate" : "None";
-        eroBlock[`day${d}Color`] = d === 7 ? "e06666" : "afddf6";
-        eroBlock[`day${d}ValidTime`] = null;
-      }
-      const payload = {
-        day1: { ...noRisk }, day2: { ...noRisk }, day3: { ...noRisk },
-        day4: { ...noRisk }, day5: { ...noRisk }, day6: { ...noRisk },
-        day7: { ...noRisk }, day8: { ...noRisk },
-        day48Risk: false,
-        fireWeather: { day1Risk: 0, day2Risk: 0 },
-        excessiveRain: eroBlock,
-        winterImpact: {},
-        advisories: { spcMD: [], mpd: [] }
-      };
       const config = {
         lat: PROBE_LAT, lon: PROBE_LON, extended: false, updateInterval: 60,
-        proximityWeighting: false, showExcessiveRain: true, showWinterImpact: false,
-        showSPCMD: true, showMPD: true
+        proximityWeighting: false, showExcessiveRain: false, showWinterImpact: false
       };
+      // Phase 19: WR-08's day-span concern (a frontend loop hand-enumerating fewer days
+      // than the registry declares) is now closed by construction — the unified day loop
+      // (Task 2) always iterates all 14 of the payload's own grid keys (18 D-02), with no
+      // per-product day-span literal anywhere in getDom(). This proves day 14, the far
+      // boundary a hand-enumerated shorter loop (the legacy ERO term enumerated only 5)
+      // would have missed, still renders.
+      const eroHazard = {
+        dimension: "heavy-precip", source: "wpc-ero", label: "MDT", text: "Moderate",
+        value: 3, color: "e06666", suppressedBy: null
+      };
+      const payload = unifiedPayload({});
+      payload.days["14"].hazards = [{ ...eroHazard }];
+      payload.summary.anyHazard = true;
       const rendered = renderDom(frontend, { config, spcrisk: payload });
-      if (rendered === "No Severe Weather Risk") {
+      if (rendered.includes("No Severe Weather Risk")) {
         throw new Error(
-          "a day beyond the frontend's hardcoded span did not disqualify the no-risk " +
-          "short-circuit — a real MDT excessive-rain day rendered as a confident all-clear"
+          "a hazard on day 14 (the far boundary a hand-enumerated shorter loop would miss) " +
+          `did not disqualify the all-clear: ${JSON.stringify(rendered)}`
         );
       }
-      if (!rendered.includes("Excessive Rain (Day 7)") || !rendered.includes("Moderate")) {
+      if (!rendered.includes("Day 14") || !rendered.includes("Moderate")) {
         throw new Error(
-          `a day beyond the frontend's hardcoded span never rendered: ${JSON.stringify(rendered)}. ` +
-          "The backend derives the span from PRODUCT_REGISTRY.excessiveRain.days; the frontend must too."
+          `a hazard on day 14 never rendered: ${JSON.stringify(rendered)}. The unified day loop ` +
+          "must reach every one of the payload's own 14 grid keys, never a hand-enumerated shorter span."
         );
       }
 
-      // Control: the shorter, currently-shipping span still renders exactly its own days
-      // and no phantom ones, so the derivation is not just "render everything".
-      const shortBlock = {};
-      for (let d = 1; d <= 3; d++) {
-        shortBlock[`day${d}Risk`] = d === 2 ? "MDT" : "NONE";
-        shortBlock[`day${d}Text`] = d === 2 ? "Moderate" : "None";
-        shortBlock[`day${d}Color`] = d === 2 ? "e06666" : "afddf6";
-        shortBlock[`day${d}ValidTime`] = null;
+      // Control: a hazard confined to day 1 renders only its own day and no phantom day
+      // 14, so the derivation above is not just "render everything".
+      const controlPayload = unifiedPayload({});
+      controlPayload.days["1"].hazards = [{ ...eroHazard }];
+      controlPayload.summary.anyHazard = true;
+      const controlRendered = renderDom(frontend, { config, spcrisk: controlPayload });
+      if (!controlRendered.includes("Day 1")) {
+        throw new Error(`control: a day-1 hazard did not render its own day: ${JSON.stringify(controlRendered)}`);
       }
-      const shortRender = renderDom(frontend, {
-        config, spcrisk: { ...payload, excessiveRain: shortBlock }
-      });
-      if (!shortRender.includes("Excessive Rain (Day 2)")) {
-        throw new Error(`control: a 3-day block did not render its own risk day: ${JSON.stringify(shortRender)}`);
-      }
-      if (shortRender.includes("Excessive Rain (Day 4)") || shortRender.includes("undefined")) {
-        throw new Error(`control: a 3-day block rendered days it does not carry: ${JSON.stringify(shortRender)}`);
+      if (controlRendered.includes("Day 14")) {
+        throw new Error(`control: a day-1-only hazard rendered a phantom day 14: ${JSON.stringify(controlRendered)}`);
       }
     }
   },
@@ -4975,12 +5064,24 @@ const scenarios = [
       }
 
       // Control 2 (WR-09): the same populated payload with showHazardsOutlook: false must
-      // still short-circuit — content the config disabled must not disqualify the gate for
-      // a band that will not render.
+      // never leak the band's content — the render-level guarantee this control exists for.
+      // Phase 19: `summary.anyHazard` now travels with the payload as a single value
+      // computed once upstream, rather than being re-derived from this instance's own
+      // config at render time (the legacy gate's own design). A frontend instance whose
+      // config diverges from the state that produced the payload therefore can no longer
+      // privately confirm a clean all-clear for content it cannot see — it honestly
+      // degrades to "(unconfirmed)" via the same contentMarker fallback CR-01 already
+      // relies on, rather than asserting a confidence the render has no basis for.
       const disabledConfig = { ...config, showHazardsOutlook: false };
       const disabledRendered = renderDom(frontend, { config: disabledConfig, spcrisk: payload });
-      if (disabledRendered !== "No Severe Weather Risk") {
-        throw new Error(`control: a populated windowBand payload with showHazardsOutlook:false no longer short-circuits, it rendered: ${disabledRendered}`);
+      if (disabledRendered.includes("Hazardous Heat")) {
+        throw new Error(`control: content the config disabled leaked into the render: ${disabledRendered}`);
+      }
+      if (!disabledRendered.includes("No Severe Weather Risk (unconfirmed)")) {
+        throw new Error(
+          `control: a populated windowBand payload the config can't display should degrade to the ` +
+          `unconfirmed variant (CR-01), not a bare or unexpected render: ${disabledRendered}`
+        );
       }
     }
   },
@@ -5095,17 +5196,19 @@ const scenarios = [
         }
       }
 
-      // Control: the same label appearing on three separate DAYS in the day grid must
-      // render three times — proving the count assertion above is measuring something
-      // real, not a renderer that emits nothing for this label.
-      const perDayBlock = emptyHazardsBlock();
+      // Control: the same label appearing on three separate days in the UNIFIED day grid
+      // (Phase 19 — the retired per-product hazardsOutlook.dayN block is no longer read by
+      // getDom() at all) must render three times — proving the count assertion above is
+      // measuring something real, not a renderer that emits nothing for this label.
+      const perDayHazard = {
+        dimension: "heat", source: "wpc-hazards", label: "Hazardous Heat", text: "Hazardous Heat",
+        value: null, color: "a80000", suppressedBy: null
+      };
+      const perDayPayload = unifiedPayload({});
       for (const d of [3, 4, 5]) {
-        perDayBlock[`day${d}`] = {
-          date: "2026-08-26",
-          hazards: [{ label: "Hazardous Heat", color: "a80000", mapped: true }]
-        };
+        perDayPayload.days[String(d)].hazards = [{ ...perDayHazard }];
       }
-      const perDayPayload = noRiskPayloadWithHazards(perDayBlock);
+      perDayPayload.summary.anyHazard = true;
       const perDayRendered = renderDom(frontend, { config, spcrisk: perDayPayload });
       const perDayOccurrences = (perDayRendered.match(/Hazardous Heat/g) || []).length;
       if (perDayOccurrences !== 3) {
@@ -7380,36 +7483,37 @@ const scenarios = [
         proximityWeighting: false, showExcessiveRain: false, showWinterImpact: false,
         showHazardsOutlook: false, showHeatRisk: true, showMinorHeat: false
       };
-      const allNullHeatRisk = () => {
-        const block = {};
-        for (let d = 1; d <= 7; d++) block["day" + d] = { category: null, text: "", color: "" };
-        return block;
-      };
 
-      // Precondition guard: the SAME otherwise-all-quiet payload with heatRisk carrying
-      // no reading at all must render the plain all-clear. If it does not, some OTHER
-      // term in the payload is already disqualifying the gate and this scenario proves
-      // nothing about HeatRisk.
-      const controlPayload = { ...noRiskPayloadWithAdvisory({ spcMD: [], mpd: [] }), heatRisk: allNullHeatRisk() };
+      // Precondition guard: the SAME otherwise-all-quiet payload (no heat entries
+      // anywhere in the unified grid) must render the plain all-clear. If it does not,
+      // some OTHER term in the payload is already disqualifying the gate and this
+      // scenario proves nothing about HeatRisk.
+      const controlPayload = unifiedPayload({});
       const controlRendered = renderDom(frontend, { config, spcrisk: controlPayload });
       if (controlRendered !== "No Severe Weather Risk") {
         throw new Error(
-          "precondition failed: the otherwise-all-quiet control payload (heatRisk all null) did not " +
+          "precondition failed: the otherwise-all-quiet control payload (no heat entries) did not " +
           `render the plain all-clear — some other term is already disqualifying the gate: ${controlRendered}`
         );
       }
 
-      const heatRiskBlock = allNullHeatRisk();
-      heatRiskBlock.day3 = { category: 3, text: "Major", color: "e22f33" };
-      const payload = { ...noRiskPayloadWithAdvisory({ spcMD: [], mpd: [] }), heatRisk: heatRiskBlock };
+      // Phase 19: HeatRisk now flows through the unified days[] grid (source "heatrisk",
+      // dimension "heat") — the retired per-product heatRisk block/render loop is no
+      // longer read by getDom() at all.
+      const payload = unifiedPayload({});
+      payload.days["3"].hazards = [{
+        dimension: "heat", source: "heatrisk", label: "3", text: "Major", value: 3,
+        color: "e22f33", suppressedBy: null
+      }];
+      payload.summary.anyHazard = true;
       const rendered = renderDom(frontend, { config, spcrisk: payload });
       if (rendered.includes("No Severe Weather Risk")) {
         throw new Error(
-          "D-03: a HeatRisk-only day above the floor (category 3, showMinorHeat false) suppressed the " +
-          `all-clear was not the outcome; instead it rendered the all-clear anyway: ${rendered}`
+          "D-03: a HeatRisk-only day above the floor (category 3, showMinorHeat false) should not " +
+          `render as a confident all-clear: ${rendered}`
         );
       }
-      if (!rendered.includes("Heat Risk (Day 3)")) {
+      if (!rendered.includes("Day 3") || !rendered.includes("Heat") || !rendered.includes("Major")) {
         throw new Error(`D-03: a HeatRisk-only day above the floor did not render its own row: ${rendered}`);
       }
     }
@@ -7431,30 +7535,35 @@ const scenarios = [
         proximityWeighting: false, showExcessiveRain: false, showWinterImpact: false,
         showHazardsOutlook: false, showHeatRisk: true
       };
-      const allNullHeatRisk = () => {
-        const block = {};
-        for (let d = 1; d <= 7; d++) block["day" + d] = { category: null, text: "", color: "" };
-        return block;
-      };
+      // Phase 19: HeatRisk now flows through the unified days[] grid. The backend's own
+      // NO_RISK_FLOOR already admits category >= 1 to the payload (D-13) and never
+      // consults showMinorHeat (D-02 — it never crosses the wire), so summary.anyHazard
+      // reflects the Minor entry's presence in BOTH arms below, byte-identical, matching
+      // the legacy fixture's own "the payload is byte-identical in both arms" framing.
+      const payload = unifiedPayload({});
+      payload.days["3"].hazards = [{
+        dimension: "heat", source: "heatrisk", label: "1", text: "Minor", value: 1,
+        color: "f4f257", suppressedBy: null
+      }];
+      payload.summary.anyHazard = true;
 
-      const minorBlock = allNullHeatRisk();
-      minorBlock.day3 = { category: 1, text: "Minor", color: "f4f257" };
-      const payload = { ...noRiskPayloadWithAdvisory({ spcMD: [], mpd: [] }), heatRisk: minorBlock };
-
-      // Arm A: showMinorHeat off. A blank module (neither the row nor the all-clear) is
-      // exactly the failure D-03 exists to make unrepresentable.
+      // Arm A: showMinorHeat off. The frontend's own display floor (RPT-06 checklist row
+      // 30) filters the Minor entry out of the day loop; with nothing else to render, this
+      // now degrades to the unconfirmed variant (CR-01's honest read on a gate that knows
+      // about a hazard the render's own floor will not show) rather than a bare blank
+      // module — a blank module is exactly the failure D-03 exists to make unrepresentable.
       const armA = renderDom(frontend, { config: { ...baseConfig, showMinorHeat: false }, spcrisk: payload });
-      if (armA.includes("Heat Risk (Day 3)")) {
+      if (armA.includes("Minor")) {
         throw new Error(`Arm A (showMinorHeat false): expected the Minor row filtered out by the floor, got: ${armA}`);
       }
       if (!armA.includes("No Severe Weather Risk")) {
-        throw new Error(`Arm A (showMinorHeat false): expected the all-clear restored, got a blank module: ${armA}`);
+        throw new Error(`Arm A (showMinorHeat false): expected an honest degrade, got a blank module: ${armA}`);
       }
 
       // Arm B: the SAME payload object, showMinorHeat on — the opposite outcome, driven
       // only by the frontend flag.
       const armB = renderDom(frontend, { config: { ...baseConfig, showMinorHeat: true }, spcrisk: payload });
-      if (!armB.includes("Heat Risk (Day 3)")) {
+      if (!armB.includes("Day 3") || !armB.includes("Heat") || !armB.includes("Minor")) {
         throw new Error(`Arm B (showMinorHeat true): expected the Minor row to render, got: ${armB}`);
       }
       if (armB.includes("No Severe Weather Risk")) {
@@ -7463,11 +7572,16 @@ const scenarios = [
 
       // Control: a category-2 (Moderate) day with showMinorHeat off DOES render — proving
       // Arm A's non-render is the D-01 floor at work, not a renderer that never renders.
-      const moderateBlock = allNullHeatRisk();
-      moderateBlock.day3 = { category: 2, text: "Moderate", color: "ffc700" };
-      const controlPayload = { ...noRiskPayloadWithAdvisory({ spcMD: [], mpd: [] }), heatRisk: moderateBlock };
-      const controlRendered = renderDom(frontend, { config: { ...baseConfig, showMinorHeat: false }, spcrisk: controlPayload });
-      if (!controlRendered.includes("Heat Risk (Day 3)")) {
+      const moderatePayload = unifiedPayload({});
+      moderatePayload.days["3"].hazards = [{
+        dimension: "heat", source: "heatrisk", label: "2", text: "Moderate", value: 2,
+        color: "ffc700", suppressedBy: null
+      }];
+      moderatePayload.summary.anyHazard = true;
+      const controlRendered = renderDom(
+        frontend, { config: { ...baseConfig, showMinorHeat: false }, spcrisk: moderatePayload }
+      );
+      if (!controlRendered.includes("Day 3") || !controlRendered.includes("Moderate")) {
         throw new Error(
           `control: a category-2 day with showMinorHeat false did not render (${controlRendered}) — Arm A's ` +
           "non-render would then prove nothing about the floor specifically"
@@ -10666,6 +10780,261 @@ const scenarios = [
         }
       } finally {
         turfStub.pointInPolygon = originalPointInPolygon;
+      }
+    }
+  },
+  {
+    // RPT-05/18 D-16: "never checked" (no products enabled) must never be confused with
+    // "checked and clear." Pins the empty-state ladder's first branch, checked before the
+    // anyHazard discriminator.
+    name: "rpt05-no-products-enabled-is-not-an-all-clear",
+    run: async (_helper) => {
+      const frontend = loadFrontendModule();
+      const config = {
+        lat: PROBE_LAT, lon: PROBE_LON, extended: false, updateInterval: 60,
+        proximityWeighting: false
+      };
+      const payload = unifiedPayload({});
+      payload.summary.enabledSourceCount = 0;
+      const rendered = renderDom(frontend, { config, spcrisk: payload });
+      if (rendered !== "No Products Enabled (edit config.js to turn one on)") {
+        throw new Error(`expected the exact no-products-enabled string, got: ${JSON.stringify(rendered)}`);
+      }
+      if (rendered.includes("No Severe Weather Risk")) {
+        throw new Error(`no-products-enabled output must not contain the all-clear substring: ${rendered}`);
+      }
+
+      // Control: enabledSourceCount 1 with anyHazard false is a genuine "checked and
+      // clear" all-clear — proving the branch above keys off the count, not off emptiness.
+      const controlPayload = unifiedPayload({});
+      controlPayload.summary.enabledSourceCount = 1;
+      const controlRendered = renderDom(frontend, { config, spcrisk: controlPayload });
+      if (controlRendered !== "No Severe Weather Risk") {
+        throw new Error(
+          `control: enabledSourceCount 1 with anyHazard false should render the confident all-clear, ` +
+          `got: ${JSON.stringify(controlRendered)}`
+        );
+      }
+    }
+  },
+  {
+    // CR-01: a degraded read is never a confident all-clear. Pins the empty-state ladder's
+    // staleness disqualification — a stale, quiet payload must show the ⚠ badge with the
+    // unconfirmed string beneath it, never a bare badge and never the confident string.
+    name: "rpt05-stale-quiet-payload-renders-unconfirmed-under-the-badge",
+    run: async (_helper) => {
+      const frontend = loadFrontendModule();
+      const config = {
+        lat: PROBE_LAT, lon: PROBE_LON, extended: false, updateInterval: 60,
+        proximityWeighting: false
+      };
+      const payload = unifiedPayload({});
+      payload._stale = true;
+      payload._staleAsOf = Date.now() - 3600000;
+      const rendered = renderDom(frontend, { config, spcrisk: payload });
+      if (!rendered.includes("Stale")) {
+        throw new Error(`expected the stale badge to render, got: ${rendered}`);
+      }
+      // Vacuity/CR-01 guard: real content follows the badge, proving this isn't a bare
+      // badge with nothing beneath it.
+      if (!rendered.endsWith("No Severe Weather Risk (unconfirmed)")) {
+        throw new Error(`expected the unconfirmed variant beneath the badge, got: ${rendered}`);
+      }
+
+      // Control: an otherwise-identical payload with `_stale` absent renders the
+      // confident all-clear with no badge at all.
+      const controlPayload = unifiedPayload({});
+      const controlRendered = renderDom(frontend, { config, spcrisk: controlPayload });
+      if (controlRendered !== "No Severe Weather Risk") {
+        throw new Error(
+          `control: an absent _stale should render the confident all-clear with no badge, ` +
+          `got: ${JSON.stringify(controlRendered)}`
+        );
+      }
+    }
+  },
+  {
+    // RPT-02: the compact line's byte-exact grammar — dimension-worded segments joined by
+    // " · " (U+00B7), no colon between the day label and the first hazard.
+    name: "rpt02-compact-line-renders-dimension-worded-dot-separated-segments",
+    run: async (_helper) => {
+      const frontend = loadFrontendModule();
+      const config = {
+        lat: PROBE_LAT, lon: PROBE_LON, extended: false, updateInterval: 60,
+        proximityWeighting: false
+      };
+      const payload = unifiedPayload({});
+      const day3Hazards = [
+        { dimension: "convective", source: "spc-convective", label: "ENH", text: "Enhanced", value: 4, color: "e06666", suppressedBy: null },
+        { dimension: "flash-flood", source: "wpc-hazards", label: "Flash Flood Slight", text: "Slight", value: null, color: "63be7b", suppressedBy: null },
+        { dimension: "heat", source: "heatrisk", label: "3", text: "Major", value: 3, color: "e22f33", suppressedBy: null }
+      ];
+      payload.days["3"].hazards = day3Hazards;
+      payload.summary.anyHazard = true;
+
+      // Precondition guard: the fixture must actually carry 3 surviving (suppressedBy
+      // === null) entries, or the assertions below could pass trivially on a shorter line.
+      const survivorCount = payload.days["3"].hazards.filter((h) => h.suppressedBy === null).length;
+      if (survivorCount !== 3) {
+        throw new Error(`precondition failed: expected 3 surviving day-3 entries, got ${survivorCount}`);
+      }
+
+      const rendered = renderDom(frontend, { config, spcrisk: payload });
+      if (!/Day 3 \([A-Za-z]+\)  /.test(rendered)) {
+        throw new Error(`expected "Day 3 (Weekday)" followed by exactly two spaces, got: ${rendered}`);
+      }
+      const dotCount = (rendered.match(/ · /g) || []).length;
+      if (dotCount !== 2) {
+        throw new Error(`expected exactly two " · " separators for 3 segments, got ${dotCount}: ${rendered}`);
+      }
+      if (!rendered.includes("Convective Enhanced")) {
+        throw new Error(`expected the dimension-worded segment "Convective Enhanced", got: ${rendered}`);
+      }
+      if (rendered.includes("):")) {
+        throw new Error(`expected no colon between the day label and the first hazard, got: ${rendered}`);
+      }
+    }
+  },
+  {
+    // D-03: a day with no surviving hazard renders no row and no marker (D-03-SKIP) —
+    // driven by the field, not by array length.
+    name: "rpt02-compact-line-skips-days-with-no-survivor",
+    run: async (_helper) => {
+      const frontend = loadFrontendModule();
+      const config = {
+        lat: PROBE_LAT, lon: PROBE_LON, extended: false, updateInterval: 60,
+        proximityWeighting: false
+      };
+      const survivorEntry = (dimension, text) => ({
+        dimension, source: "spc-convective", label: text.toUpperCase(), text, value: 4,
+        color: "e06666", suppressedBy: null
+      });
+      const suppressedEntry = {
+        dimension: "wind", source: "wpc-hazards", label: "High Winds", text: "High Winds",
+        value: null, color: "e69138", suppressedBy: "spc-convective"
+      };
+      const payload = unifiedPayload({});
+      payload.days["1"].hazards = [survivorEntry("convective", "Enhanced")];
+      payload.days["2"].hazards = [{ ...suppressedEntry }];
+      payload.days["3"].hazards = [survivorEntry("convective", "Slight")];
+      payload.summary.anyHazard = true;
+      const rendered = renderDom(frontend, { config, spcrisk: payload });
+      if (!rendered.includes("Day 1 (") || !rendered.includes("Day 3 (")) {
+        throw new Error(`expected both Day 1 and Day 3 to render, got: ${rendered}`);
+      }
+      if (rendered.includes("Day 2 (")) {
+        throw new Error(`expected Day 2 to be skipped (its only entry is suppressed), got: ${rendered}`);
+      }
+
+      // Control: clearing day 2's suppressedBy makes it render, proving the skip above is
+      // driven by the field, not by array length.
+      const controlPayload = unifiedPayload({});
+      controlPayload.days["1"].hazards = [survivorEntry("convective", "Enhanced")];
+      controlPayload.days["2"].hazards = [{ ...suppressedEntry, suppressedBy: null }];
+      controlPayload.days["3"].hazards = [survivorEntry("convective", "Slight")];
+      controlPayload.summary.anyHazard = true;
+      const controlRendered = renderDom(frontend, { config, spcrisk: controlPayload });
+      if (!controlRendered.includes("Day 2 (")) {
+        throw new Error(`control: clearing suppressedBy should make Day 2 render, got: ${controlRendered}`);
+      }
+    }
+  },
+  {
+    // D-08: the one named exception to D-03 — a day with no survivor but a renderable
+    // outside-mode categorical proximity still renders, badge alone, uncolored, with the
+    // same two-space gap as every other compact line (one literal space + the badge's own
+    // embedded leading space).
+    name: "rpt02-proximity-only-day-renders-badge-alone-with-a-two-space-gap",
+    run: async (_helper) => {
+      const frontend = loadFrontendModule();
+      const config = {
+        lat: PROBE_LAT, lon: PROBE_LON, extended: false, updateInterval: 60,
+        proximityWeighting: true
+      };
+      const payload = unifiedPayload({});
+      payload.days["2"].proximity = { categorical: { value: 2.3, nextTier: "MRGL" } };
+      // A real payload derives anyHazard from this same grid entry (19-02); stated
+      // directly here to isolate D-08's render behavior from that derivation.
+      payload.summary.anyHazard = true;
+      const rendered = renderDom(frontend, { config, spcrisk: payload });
+      if (!/Day 2 \([A-Za-z]+\)  0\.3 \(near MRGL\)<br\/>/.test(rendered)) {
+        throw new Error(`expected "Day 2 (Weekday)  0.3 (near MRGL)" with an exact two-space gap, got: ${rendered}`);
+      }
+      if (rendered.includes('<span style="color:')) {
+        throw new Error(`expected the D-08 badge to render uncolored (no span), got: ${rendered}`);
+      }
+
+      // Control (a): proximityWeighting off renders no day line at all.
+      const offRendered = renderDom(frontend, { config: { ...config, proximityWeighting: false }, spcrisk: payload });
+      if (offRendered.includes("Day 2 (")) {
+        throw new Error(`control: proximityWeighting:false should render no Day 2 line, got: ${offRendered}`);
+      }
+
+      // Control (b): a sub-PROX_MIN_WEIGHT (0.1) fractional weight renders no day line
+      // either, pinning PROXUI-05's noise floor.
+      const belowFloorPayload = unifiedPayload({});
+      belowFloorPayload.days["2"].proximity = { categorical: { value: 2.05, nextTier: "MRGL" } };
+      belowFloorPayload.summary.anyHazard = true;
+      const belowFloorRendered = renderDom(frontend, { config, spcrisk: belowFloorPayload });
+      if (belowFloorRendered.includes("Day 2 (")) {
+        throw new Error(`control: a sub-PROX_MIN_WEIGHT proximity value should render no Day 2 line, got: ${belowFloorRendered}`);
+      }
+    }
+  },
+  {
+    // WR-02 closure: every compact segment applies both guards — validHazardColor against
+    // a hostile color, escapeHtml(truncateHazardLabel(...)) against a hostile/oversized
+    // label — at the one shared call site the unified renderer collapsed two call sites
+    // into (T-19-11/T-19-12/T-19-13).
+    name: "wr02-unified-compact-segment-escapes-hostile-label-and-rejects-hostile-color",
+    run: async (_helper) => {
+      const frontend = loadFrontendModule();
+      const config = {
+        lat: PROBE_LAT, lon: PROBE_LON, extended: false, updateInterval: 60,
+        proximityWeighting: false
+      };
+      const hostile = `<img src=x onerror="alert(1)&'">`;
+      const payload = unifiedPayload({});
+      payload.days["4"].hazards = [{
+        dimension: "convective", source: "spc-convective", label: "ENH", text: hostile,
+        value: 4, color: 'red" onload="alert(1)', suppressedBy: null
+      }];
+      payload.summary.anyHazard = true;
+      const rendered = renderDom(frontend, { config, spcrisk: payload });
+      if (rendered.includes("<img")) {
+        throw new Error(`a hostile hazard text reached innerHTML unescaped: ${rendered}`);
+      }
+      if (!rendered.includes("&lt;img")) {
+        throw new Error(`expected the escaped form of the hostile text, got: ${rendered}`);
+      }
+      if (!rendered.includes("color:#aaaaaa")) {
+        throw new Error(`expected the hostile color to fall back to aaaaaa, got: ${rendered}`);
+      }
+      // Vacuity guard: the day's line rendered at all, not merely absence-of-<img> on an
+      // empty render.
+      if (!rendered.includes("Day 4 (")) {
+        throw new Error(`vacuity guard failed: day 4 did not render at all: ${rendered}`);
+      }
+
+      // Second assertion: a 200-character label truncates to 60 SOURCE characters (the
+      // composed "Wind " + label segment, before escaping) plus "…".
+      const longText = "A".repeat(200);
+      const longPayload = unifiedPayload({});
+      longPayload.days["5"].hazards = [{
+        dimension: "wind", source: "wpc-hazards", label: "Long", text: longText,
+        value: null, color: "e69138", suppressedBy: null
+      }];
+      longPayload.summary.anyHazard = true;
+      const longRendered = renderDom(frontend, { config, spcrisk: longPayload });
+      if (!longRendered.includes("…")) {
+        throw new Error(`expected a 200-character label to be truncated with an ellipsis, got: ${longRendered}`);
+      }
+      const expectedTruncated = "Wind " + "A".repeat(55) + "…";
+      if (!longRendered.includes(expectedTruncated)) {
+        throw new Error(`expected the 60-source-character truncated segment "${expectedTruncated}", got: ${longRendered}`);
+      }
+      if (longRendered.includes("A".repeat(56))) {
+        throw new Error(`too many source characters survived truncation (expected exactly 55 A's before the ellipsis): ${longRendered}`);
       }
     }
   }
