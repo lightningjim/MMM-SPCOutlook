@@ -428,21 +428,28 @@ The deciding factor found in this research is **not** MagicMirror's contract but
 
 **None of the payload-shape, defect-provenance, or worst-case-count claims above are assumed** — those are tagged `[VERIFIED]` throughout because they were confirmed by direct source read or the live capture artifact, not training-data recall.
 
-## Open Questions
+## Open Questions (RESOLVED during planning — see per-question markers below)
+
+> All three were carried into the Phase 19 plan set rather than left open. Two became blocking
+> operator checkpoints (an executor cannot silently resolve them); one became a recorded
+> intentional no-change. Resolution sites are named inline.
 
 1. **Should a `wpc-hazards`-only winning entry ever independently trigger D-04's auto-expand?**
    - What we know: `wpc-hazards` has no severity ladder (`FLOOR_PREBAKED`); presence is its only signal. It is the *sole* source for the `cold`, `wind`, and `heavy-precip` dimensions.
    - What's unclear: whether "any wpc-hazards entry auto-expands" is too aggressive (it would auto-expand every day with, say, a routine "High Winds" entry) or "wpc-hazards never independently auto-expands" under-serves those three dimensions (they could never auto-expand at all, regardless of real severity, since no other source ever wins them).
+   - **RESOLVED → plan 19-03, Task 1 (blocking `checkpoint:decision`).** The `SIGNIFICANCE_FLOOR` thresholds are `[ASSUMED]` here and were NOT quietly adopted; 19-03 halts for an explicit operator decision before locking them.
    - Recommendation: default to "never independently triggers" (conservative — matches D-04's own framing of auto-expand as being about days that are unusually *serious*, and a presence-only source has no way to distinguish routine from serious), but confirm with the user before locking, since PRODUCT_REGISTRY intentionally has no severity data to appeal to here — this is a genuine gap, not a research oversight.
 
 2. **Does the legacy block retirement happen inside this phase, or after RPT-06 sign-off?**
    - What we know: 18 D-01 kept all 8 legacy blocks byte-for-byte specifically so this phase has an old-vs-new reference for the parity checklist; PROJECT.md fixes the eventual outcome (unified report is the sole path, no legacy fallback).
    - What's unclear: whether deleting the legacy backend emission code is a task inside this phase's plan or a follow-up once the human UAT sign-off completes.
+   - **RESOLVED → plan 19-09, Task 2 (blocking `checkpoint:decision`), sequenced after RPT-06 sign-off.** Costed during planning: deleting the legacy backend emission forces migration of 156 `assertPayloadIntact` call sites and 180 legacy-field assertions across 124 probe scenarios. 19-09 recommends deferring the emission deletion as a costed backlog item — PROJECT.md's "sole render path" outcome is already satisfied by 19-06. The operator decides.
    - Recommendation: sequence it as a final task, gated on the RPT-06 checklist being fully checked off — deleting the reference before the checklist is verified removes the only tool available for catching a silent parity break.
 
 3. **Is `sign` (day 4-8 convective trend indicator, from BUG-01) meant to ever surface in the new unified renderer?**
    - What we know: it has never been rendered by any shipped `getDom()`, in any milestone, despite existing in the payload since v1.0.
    - What's unclear: whether this is a deliberate omission (trend indicator judged not worth a UI element) or a genuinely dead field nobody revisited.
+   - **RESOLVED → plan 19-05, recorded as the `SIGN-NOOP` intentional-change entry.** Confirmed out of scope: `sign` is neither rendered today nor introduced by this phase, and the no-change is recorded explicitly so a later reader does not read its absence as a rewrite regression.
    - Recommendation: treat as out of scope for RPT-06 parity (nothing to preserve, since nothing was ever shown) and do not add new rendering for it without an explicit user decision — adding new UI surface is outside this phase's "display-only, no new anything" framing.
 
 ## Sources

@@ -333,7 +333,6 @@ Plans:
   5. With every product disabled or reporting no active hazard, the module renders the correct empty state — a "no risk anywhere" manual test run passes with no error and no stray rows (RPT-05).
   6. Two mandatory manual test runs — "no risk anywhere" and "everything active at once" — both reproduce every previously shipped behavior from BUG-01..04, FWXT-01..05, PROX-01..06, PROXUI-01..05 (the combinatorial no-risk gate and all proximity badge modes), checked off against a per-requirement-ID checklist before this phase is considered done (RPT-06). This phase does not interleave any new-product work — it is strictly a display rewrite against the payload Phase 18 already validated.
 
-
 **Carried-in scope (folded from backlog 2026-09-06 — all three are SECONDARY to the rewrite):**
 
 These land in Phase 19 because Phase 19 is the first real consumer of each. They are explicitly
@@ -378,14 +377,37 @@ letting them compete with behavior parity. Ordered by how much Phase 19 depends 
 **Plans**: 9 plans in 8 waves
 
 Plans:
+**Wave 1**
+
 - [ ] 19-01-PLAN.md — RPT-06 behavior-parity checklist artifact + the two mandatory manual-run procedures (written before any render code)
 - [ ] 19-02-PLAN.md — backend: thread the SPC proximity subtree into the unified `days[]` grid (gap found at planning: proximity exists only on legacy day1-3 blocks)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
 - [ ] 19-03-PLAN.md — `SIGNIFICANCE_FLOOR` in hazardTaxonomy.js + backend-resolved `days[n].autoExpand` for D-04 (blocking decision on thresholds)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
 - [ ] 19-04-PLAN.md — frontend: render-mechanism decision, helper hoist, `dayReportDetail`, three empty states, top stale badge, compact per-day line (D-01/02/03/08)
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
 - [ ] 19-05-PLAN.md — frontend: detail mode, `also:` competitor lines, three-shape probabilistic sub-line, all ten proximity mode decisions (D-04/05/06/07)
+
+**Wave 5** *(blocked on Wave 4 completion)*
+
 - [ ] 19-06-PLAN.md — frontend: one band below all day blocks (RPT-04) + promote `windowBand` to top level + sole-render-path gate
+
+**Wave 6** *(blocked on Wave 5 completion)*
+
 - [ ] 19-07-PLAN.md — SEVERABLE carried-in backend items: `wpc-hazards` metadata under-report + IN-01 dedupe key
+
+**Wave 7** *(blocked on Wave 6 completion)*
+
 - [ ] 19-08-PLAN.md — RPT-06 sign-off: checklist reconciliation + the two mandatory manual runs on the Pi (blocking human verify)
+
+**Wave 8** *(blocked on Wave 7 completion)*
+
 - [ ] 19-09-PLAN.md — legacy retirement: sole-reader proof, folded HeatRisk todo discharge, measured emission-deletion decision (blocking)
 
 **UI hint**: yes
