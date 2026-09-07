@@ -275,7 +275,12 @@ function loadFrontendModule() {
     // in the string or it did not) but it means this harness cannot prove that what does
     // reach a real browser is inert. Replacing this with a real DOM would let a scenario
     // assert that, and is the only way to close that gap.
-    document: { createElement: () => ({ innerHTML: "", textContent: "" }) },
+    // `style` is a bare property bag, present so assignments like `wrapper.style.textAlign`
+    // do not throw. It is NOT evidence of anything visual: nothing here lays out, measures or
+    // renders, so a scenario can assert only that a property was assigned, never that the
+    // resulting screen is aligned. Alignment, whitespace collapsing and column layout remain
+    // MANUAL ONLY rows in 19-PARITY-CHECKLIST.md's Probe Coverage.
+    document: { createElement: () => ({ innerHTML: "", textContent: "", style: {} }) },
     setInterval: () => 0,
     console
   };

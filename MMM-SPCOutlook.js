@@ -635,6 +635,19 @@
       hasRenderableProximity(day && day.proximity && day.proximity.categorical)
     );
     const wrapper = document.createElement("div");
+    // Phase 19 gap closure (19-08 Run B, operator-observed): UI-SPEC's "Layout Grammar"
+    // defines the detail sub-row column contract as character offsets "measured from the
+    // left margin of the day block", and states that hierarchy in this module is carried
+    // "entirely structural (indentation + color/neutral split)" — no font-size or border
+    // cue. Both assume a left margin. Deployed in a right-hand MagicMirror region the
+    // wrapper inherits `text-align: right`, and because a padded sub-row (~42 cols) is
+    // wider than the compact header above it, the sub-row extends PAST the header's left
+    // edge — inverting the indentation and making sub-rows read as siblings of the day
+    // headers rather than children of them. Anchoring this module's own text stream to the
+    // left keeps the shipped column contract correct as written; the region placement is
+    // unaffected. Probe-invisible by construction (the DOM stub cannot observe alignment),
+    // so this is a MANUAL ONLY row — see 19-PARITY-CHECKLIST.md "Probe Coverage".
+    wrapper.style.textAlign = "left";
     // Phase 19 (RPT-05/RPT-06): summary is read defensively everywhere below — an absent or
     // malformed summary can never throw out of getDom(), and can never be trusted to assert
     // a confident empty state either. A malformed summary falls through both guarded empty-
