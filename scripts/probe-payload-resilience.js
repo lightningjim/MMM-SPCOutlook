@@ -710,6 +710,9 @@ function unifiedPayload(overrides) {
     },
     sources,
     advisories: { spcMD: [], mpd: [] },
+    // RPT-04: mirrors the real payload's always-present, top-level windowBand array
+    // (node_helper.js) — empty by default, same as every other quiet-by-default field here.
+    windowBand: [],
     ...(overrides || {})
   };
 }
@@ -818,13 +821,18 @@ function noRiskPayloadWithAdvisory(advisories) {
 // Phase 19: `summary.anyHazard` is overridden here (on top of noRiskPayloadWithAdvisory's
 // advisory-only computation) to reflect the SAME hazardsBlock's own window band, via the
 // identical renderable-entry rule getDom()'s renderHazardsWindowBand applies — so the gate
-// and the render this fixture drives can never disagree about what it isolates.
+// and the render this fixture drives can never disagree about what it isolates. RPT-04:
+// `windowBand` is also mirrored at the top level, matching the real payload's own
+// promotion (node_helper.js) — getDom()'s band renderer reads `spcrisk.windowBand`, never
+// `spcrisk.hazardsOutlook.windowBand`, so a fixture that only set the legacy nested copy
+// would silently stop exercising the window band the moment the renderer re-pointed.
 function noRiskPayloadWithHazards(hazardsBlock) {
   const base = noRiskPayloadWithAdvisory({ spcMD: [], mpd: [] });
   const anyHazard = hazardsWindowBandIsRenderable(hazardsBlock);
   return {
     ...base,
     hazardsOutlook: hazardsBlock,
+    windowBand: (hazardsBlock && Array.isArray(hazardsBlock.windowBand)) ? hazardsBlock.windowBand : [],
     summary: { ...base.summary, anyHazard, bandDiagnostics: { ...base.summary.bandDiagnostics, windowBandCount: anyHazard ? 1 : 0 } }
   };
 }

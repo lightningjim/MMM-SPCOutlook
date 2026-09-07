@@ -526,9 +526,9 @@
       if (HAZARDS_DROUGHT_KEYS.includes(key) && this.config.showDrought !== true) return false;
       return true;
     };
-    const renderableWindowEntries = (block) => {
-      if (!block || typeof block !== "object" || !Array.isArray(block.windowBand)) return [];
-      return block.windowBand.filter((entry) => (
+    const renderableWindowEntries = (windowBand) => {
+      if (!Array.isArray(windowBand)) return [];
+      return windowBand.filter((entry) => (
         entry && typeof entry === "object" &&
         !(typeof entry.offsetEnd === "number" && entry.offsetEnd < 0) &&
         hazardsLabelDisplayable(entry.label)
@@ -553,16 +553,15 @@
       }
       return lines;
     };
-    // D-05: this is its own labeled region, below the day rows — deliberately NOT
-    // folded into the advisory band (15 D-05). That band holds things in effect NOW
-    // (MDs/MPDs are 1-6h nowcasts); "in effect" wording does not apply to a 5-to-7-day
-    // forecast window. Unchanged by Phase 19's day-loop rewrite — RPT-04 relocates this
-    // band's position in plan 19-06, not its rendering.
-    const renderHazardsWindowBand = (block) => {
+    // D-05: this is its own labeled region within the combined band (RPT-04) —
+    // deliberately not folded into the advisory sub-section's own styling. That
+    // sub-section holds things in effect NOW (MDs/MPDs are 1-6h nowcasts); "in effect"
+    // wording does not apply to a 5-to-7-day forecast window, so the window band keeps
+    // its own "Extended Hazards:" heading as its self-identification instead.
+    const renderHazardsWindowBand = (windowBand) => {
       // ERO-03 / 15 D-09: absence is silence applies to the band as a whole — a
-      // missing/non-object block or an empty/non-array windowBand renders nothing,
-      // not even the heading.
-      if (renderableWindowEntries(block).length === 0) {
+      // missing/non-array windowBand renders nothing, not even the heading.
+      if (renderableWindowEntries(windowBand).length === 0) {
         return;
       }
       let headingWritten = false;
@@ -570,12 +569,12 @@
       // applied the registry order (span start, ties broken by registry order);
       // re-sorting here would put the ordering rule at two sites.
       //
-      // WR-04: iterate the SHARED predicate, not `block.windowBand` with a local copy of
-      // the filter. The "a wholly-elapsed window is not a forecast, and rendering it
-      // would be worse than silence" rule now lives in exactly one place
+      // WR-04: iterate the SHARED predicate, not `windowBand` with a local copy of the
+      // filter. The "a wholly-elapsed window is not a forecast, and rendering it would
+      // be worse than silence" rule now lives in exactly one place
       // (renderableWindowEntries) and the no-risk gate reads the same definition, so the
       // two cannot disagree about whether this band has anything to say.
-      for (const entry of renderableWindowEntries(block)) {
+      for (const entry of renderableWindowEntries(windowBand)) {
         if (!headingWritten) {
           wrapper.innerHTML += "Extended Hazards:<br/>";
           headingWritten = true;
@@ -692,34 +691,6 @@
       // warning. Defense in depth: the empty-state ladder above catches the normal case,
       // this catches a gate/render disagreement (Pitfall 9).
       const contentMarker = wrapper.innerHTML;
-      // D-05: one advisory band, one colour, each entry prefixed with its issuing source
-      // by `label` (SPC MD / WPC MPD entries are concatenated in that order) and MPDs
-      // suffixed with their hazard type. `label` and `hazardType` both originate in remote
-      // KML — the label from the Placemark <name> or the description table's MPDNumber,
-      // the hazard type from the MPDType cell — so both are escaped (WR-12 already applies
-      // this reasoning to MD names; MPD adds a second such source). No cap, no truncation
-      // (D-07) — polygon containment already bounds the realistic count.
-      // WR-07: this line used to spread `advisories.spcMD` and `advisories.mpd` directly,
-      // while the gate above tolerated both a missing `advisories` key and a missing inner
-      // key — `advisories || {...}` guards only the OUTER object, so a payload carrying
-      // `advisories` with one key absent threw "advisories.mpd is not iterable" out of
-      // getDom and took the module's ENTIRE render with it. WR-09: and it consulted no
-      // toggle. Both are now settled once, in enabledAdvisories(), so the gate and the
-      // render can no longer disagree about either question.
-      const allAdvisories = enabledAdvisories();
-      for (const entry of allAdvisories) {
-        // Guard the entry itself: skip a null/non-object entry rather than rendering
-        // "undefined in effect." — the failure class CR-02 already fixed once on the backend.
-        if (!entry || typeof entry !== "object") continue;
-        let line = escapeHtml(entry.label);
-        // D-06: a hazard type is only ever a non-empty string when present — an MPD whose
-        // hazard type could not be parsed renders without the suffix rather than being
-        // dropped, degrading to exactly today's MD behaviour.
-        if (typeof entry.hazardType === "string" && entry.hazardType.length > 0) {
-          line += " — " + escapeHtml(entry.hazardType);
-        }
-        wrapper.innerHTML += "<span style=\"color: #0059E0\">" + line + " in effect.</span><br/>"
-      }
       // Phase 19 (RPT-01/RPT-02/RPT-03): one compact line per day, replacing every legacy
       // per-product day render section (day1-3, extended days 4-8, fire weather, the shared
       // ERO/WSSI per-day renderer, the HeatRisk loop, and the HazardsOutlook day3-14 grid).
@@ -789,13 +760,54 @@
           if (detailModeActive) wrapper.innerHTML += "<br/>";
         }
       }
+      // RPT-04: one combined band below every day block — the advisories sub-section then
+      // the Hazards Outlook window band, in that order. This is a deliberate reordering
+      // (RPT-04-RELOC on the parity checklist), not a parity target: today's renderer puts
+      // the advisory band above the day rows and the window band at the very end: both now
+      // render here instead. No unifying heading is introduced — the advisories' own blue
+      // color and the window band's own "Extended Hazards:" heading each identify their own
+      // content, so a third label would be new copy nobody asked for. The blank-line
+      // separator between the last day block and this band's first line comes for free from
+      // the day loop's own trailing `<br/>` in detail mode (the same vertical-rhythm rule
+      // used between two day blocks); compact mode already has no such separator between
+      // rows, so the band reads as one more block either way.
+      //
+      // D-05: one advisory band, one colour, each entry prefixed with its issuing source
+      // by `label` (SPC MD / WPC MPD entries are concatenated in that order) and MPDs
+      // suffixed with their hazard type. `label` and `hazardType` both originate in remote
+      // KML — the label from the Placemark <name> or the description table's MPDNumber,
+      // the hazard type from the MPDType cell — so both are escaped (WR-12 already applies
+      // this reasoning to MD names; MPD adds a second such source). No cap, no truncation
+      // (D-07) — polygon containment already bounds the realistic count.
+      // WR-07: this line used to spread `advisories.spcMD` and `advisories.mpd` directly,
+      // while the gate above tolerated both a missing `advisories` key and a missing inner
+      // key — `advisories || {...}` guards only the OUTER object, so a payload carrying
+      // `advisories` with one key absent threw "advisories.mpd is not iterable" out of
+      // getDom and took the module's ENTIRE render with it. WR-09: and it consulted no
+      // toggle. Both are now settled once, in enabledAdvisories(), so the gate and the
+      // render can no longer disagree about either question.
+      const allAdvisories = enabledAdvisories();
+      for (const entry of allAdvisories) {
+        // Guard the entry itself: skip a null/non-object entry rather than rendering
+        // "undefined in effect." — the failure class CR-02 already fixed once on the backend.
+        if (!entry || typeof entry !== "object") continue;
+        let line = escapeHtml(entry.label);
+        // D-06: a hazard type is only ever a non-empty string when present — an MPD whose
+        // hazard type could not be parsed renders without the suffix rather than being
+        // dropped, degrading to exactly today's MD behaviour.
+        if (typeof entry.hazardType === "string" && entry.hazardType.length > 0) {
+          line += " — " + escapeHtml(entry.hazardType);
+        }
+        wrapper.innerHTML += "<span style=\"color: #0059E0\">" + line + " in effect.</span><br/>"
+      }
       // Gated on the same flag the no-risk gate terms use (WR-09 — gate and render must
       // agree about what is displayable). Placed before the contentMarker comparison so
       // a stale payload carrying real hazards renders its content and not a bare ⚠
-      // badge (D-16, CR-01). Only the window band renders here — the day3-14 grid this
-      // block used to also render is now covered by the unified day loop above.
+      // badge (D-16, CR-01). Reads the top-level, always-present `windowBand` array
+      // (RPT-04) rather than the legacy `hazardsOutlook.windowBand` — the day3-14 grid
+      // this block used to also render is covered by the unified day loop above.
       if (this.config.showHazardsOutlook) {
-        renderHazardsWindowBand(this.spcrisk.hazardsOutlook);
+        renderHazardsWindowBand(this.spcrisk.windowBand);
       }
       // CR-01: a stale payload with no renderable risk must not present as a bare ⚠ badge.
       // "unconfirmed" rather than "last known good" because the two cases are not
