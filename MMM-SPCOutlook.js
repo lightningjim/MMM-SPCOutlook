@@ -376,7 +376,10 @@
             const torMode = detail.torCig === 0 ? "outside" : "inside";
             segments.push(
               "<i class=\"wi wi-tornado\"></i>" + cigLabel(detail.torCig) +
-              proximityBadge(prox.torCig, torMode) + (100 * detail.torRisk) + "% "
+              // T-19-18: the plain-tier branch of proximityBadge() passes a remote-derived
+              // tier token through verbatim; escaped here since this sub-line bypasses
+              // detailColoredSpan's own escapeHtml call (unlike the label field's badges).
+              escapeHtml(proximityBadge(prox.torCig, torMode)) + (100 * detail.torRisk) + "% "
             );
           }
           // Checklist rows 3/7 (Day 1/2 hailCig): legacy `dayN.hailCig === 0 ? "outside" :
@@ -385,7 +388,7 @@
             const hailMode = detail.hailCig === 0 ? "outside" : "inside";
             segments.push(
               "<i class=\"wi wi-meteor\"></i>" + cigLabel(detail.hailCig) +
-              proximityBadge(prox.hailCig, hailMode) + (100 * detail.hailRisk) + "% "
+              escapeHtml(proximityBadge(prox.hailCig, hailMode)) + (100 * detail.hailRisk) + "% "
             );
           }
           // Checklist rows 4/8 (Day 1/2 windCig): legacy `dayN.windCig === 0 ? "outside" :
@@ -394,7 +397,7 @@
             const windMode = detail.windCig === 0 ? "outside" : "inside";
             segments.push(
               "<i class=\"wi wi-strong-wind\"></i>" + cigLabel(detail.windCig) +
-              proximityBadge(prox.windCig, windMode) + (100 * detail.windRisk) + "% "
+              escapeHtml(proximityBadge(prox.windCig, windMode)) + (100 * detail.windRisk) + "% "
             );
           }
           if (segments.length > 0) {

@@ -11380,6 +11380,39 @@ const scenarios = [
         );
       }
     }
+  },
+  {
+    // T-19-18 (WR-02 family): proximityBadge()'s plain-tier branch passes a remote-derived
+    // `nextTier` token through verbatim when it doesn't start with "CIG". The probabilistic
+    // sub-line's per-type badges (torCig/hailCig/windCig) build their own HTML directly
+    // rather than routing through detailColoredSpan's shared escapeHtml call, so they need
+    // their own guard — this pins it against a hostile tornado-type nextTier.
+    name: "wr02-detail-sub-line-proximity-badge-escapes-a-hostile-tier-token",
+    run: async (_helper) => {
+      const frontend = loadFrontendModule();
+      const config = {
+        lat: PROBE_LAT, lon: PROBE_LON, extended: false, updateInterval: 60,
+        proximityWeighting: true, dayReportDetail: true
+      };
+      const hostileTier = `<img src=x onerror="alert(1)">`;
+      const payload = unifiedPayload({});
+      payload.days["1"].hazards = [convectiveEntryGridOneTwo({})];
+      payload.days["1"].proximity = {
+        torCig: { value: 1.2, nextTier: hostileTier }
+      };
+      payload.summary.anyHazard = true;
+      const rendered = renderDom(frontend, { config, spcrisk: payload });
+      if (rendered.includes("<img")) {
+        throw new Error(`a hostile proximity tier token reached the sub-line unescaped: ${rendered}`);
+      }
+      if (!rendered.includes("&lt;img")) {
+        throw new Error(`expected the escaped form of the hostile tier token, got: ${rendered}`);
+      }
+      // Vacuity guard: the tornado segment (which carries the badge) actually rendered.
+      if (!rendered.includes("wi-tornado")) {
+        throw new Error(`vacuity guard failed: the tornado segment did not render at all: ${rendered}`);
+      }
+    }
   }
 ];
 
