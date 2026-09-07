@@ -10957,7 +10957,11 @@ const scenarios = [
       // directly here to isolate D-08's render behavior from that derivation.
       payload.summary.anyHazard = true;
       const rendered = renderDom(frontend, { config, spcrisk: payload });
-      if (!/Day 2 \([A-Za-z]+\)  0\.3 \(near MRGL\)<br\/>/.test(rendered)) {
+      // Phase 19 (plan 19-05): the D-08 line is now wrapped in a white-space:pre-wrap span
+      // (RPT-06 "Space padding survives to the screen") so the two-space gap (one literal
+      // space plus proximityBadge()'s own embedded leading space) is no longer immediately
+      // followed by <br/> — a </span> now sits between the content and the line break.
+      if (!/Day 2 \([A-Za-z]+\)  0\.3 \(near MRGL\)<\/span><br\/>/.test(rendered)) {
         throw new Error(`expected "Day 2 (Weekday)  0.3 (near MRGL)" with an exact two-space gap, got: ${rendered}`);
       }
       if (rendered.includes('<span style="color:')) {

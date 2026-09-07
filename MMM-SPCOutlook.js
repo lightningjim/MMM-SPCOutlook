@@ -295,6 +295,94 @@
       "spc-convective": "SPC", "spc-fire": "SPC Fire", "wpc-ero": "WPC ERO",
       "wpc-wssi": "WSSI", "wpc-hazards": "WPC Hazards", "heatrisk": "HeatRisk"
     };
+    // Phase 19 (RPT-03/UI-SPEC "Detail line" column contract): derived from
+    // DIMENSION_LABELS' own longest value plus one, never a bare 13 literal — a future
+    // taxonomy addition widens this field automatically instead of silently breaking the
+    // column grid.
+    const DIMENSION_FIELD_WIDTH = Math.max(
+      ...Object.values(DIMENSION_LABELS).map((label) => label.length)
+    ) + 1;
+    // UI-SPEC "Label field width, derived exactly from the CONTEXT.md mockup": the em dash
+    // of every source-attribution string lands at the same column regardless of row content
+    // length. This is the exact number the spec locks; do not round or approximate it.
+    const DETAIL_LABEL_FIELD_WIDTH = 23;
+    // UI-SPEC "source attribution" — uncolored (structural, not hazard data), three literal
+    // spaces then an em dash then one space then the source's short name. A source id with
+    // no SOURCE_SHORT_NAMES entry falls back to its own (escaped) id rather than rendering
+    // "undefined".
+    const detailSourceAttribution = (source) => (
+      "   — " + (SOURCE_SHORT_NAMES[source] || escapeHtml(String(source)))
+    );
+    // UI-SPEC "Detail-Mode Column Alignment": the one font-family override this phase
+    // introduces, applied per sub-row's own inline style (this render mechanism has no
+    // enclosing per-day element to hold it once). Carries white-space:pre-wrap alongside it
+    // so the padded content above doesn't collapse to a single space (RPT-06 "Space padding
+    // survives to the screen").
+    const detailColoredSpan = (color, content) => (
+      "<span style=\"color:#" + validHazardColor(color) +
+      ";white-space:pre-wrap;font-family:'DejaVu Sans Mono','Liberation Mono',monospace\">" +
+      escapeHtml(truncateHazardLabel(content)) + "</span>"
+    );
+    // Phase 19 (RPT-03/D-04-D-06): detail mode renders one sub-row per dimension present on
+    // the day, in payload order (18 D-15 already fixes taxonomy order — grouped here, never
+    // re-sorted), the resolved winner first with any suppressed competitors beneath it as
+    // `also:` lines (D-05). A `dimension === null` entry (18 D-07 unmapped passthrough) never
+    // groups with anything and never carries a competitor — node_helper.js's own resolution
+    // never marks one suppressed.
+    const renderDaySubRows = (day) => {
+      const groups = [];
+      const groupByDimension = new Map();
+      for (const h of (Array.isArray(day.hazards) ? day.hazards : [])) {
+        if (!h || typeof h !== "object") continue;
+        let group;
+        if (h.dimension === null || h.dimension === undefined) {
+          group = { dimension: null, winner: null, competitors: [] };
+          groups.push(group);
+        } else {
+          group = groupByDimension.get(h.dimension);
+          if (!group) {
+            group = { dimension: h.dimension, winner: null, competitors: [] };
+            groupByDimension.set(h.dimension, group);
+            groups.push(group);
+          }
+        }
+        // The array already carries survivors-before-suppressed order within a dimension
+        // (node_helper.js D-15), so the first suppressedBy===null entry encountered is the
+        // winner; anything else on the dimension is a competitor, defensively including a
+        // second suppressedBy===null entry should the resolution invariant ever be violated.
+        if (h.suppressedBy === null && !group.winner) {
+          group.winner = h;
+        } else {
+          group.competitors.push(h);
+        }
+      }
+      for (const group of groups) {
+        if (!group.winner) continue;
+        const dimensionField = (group.dimension === null
+          ? ""
+          : (DIMENSION_LABELS[group.dimension] || group.dimension)
+        ).padEnd(DIMENSION_FIELD_WIDTH);
+        const labelContent = String(group.winner.text || group.winner.label || "");
+        const paddedFieldContent = dimensionField + labelContent.padEnd(DETAIL_LABEL_FIELD_WIDTH);
+        wrapper.innerHTML += "<span style=\"white-space:pre-wrap\">" + "  " +
+          detailColoredSpan(group.winner.color, paddedFieldContent) +
+          detailSourceAttribution(group.winner.source) + "</span><br/>";
+        for (const competitor of group.competitors) {
+          // 17 literal spaces (2 + the dimension field width + 2 more), derived rather than
+          // hardcoded so it stays in step with DIMENSION_FIELD_WIDTH above.
+          const alsoIndent = " ".repeat(2 + DIMENSION_FIELD_WIDTH + 2);
+          // The label field's remaining width once "also: " (6 chars) has already
+          // consumed part of it — derived so the em dash still lands on the winner row's
+          // own column regardless of DETAIL_LABEL_FIELD_WIDTH/DIMENSION_FIELD_WIDTH.
+          const alsoLabelFieldWidth = DETAIL_LABEL_FIELD_WIDTH - 2 - "also: ".length;
+          const competitorLabel = String(competitor.text || competitor.label || "")
+            .padEnd(alsoLabelFieldWidth);
+          wrapper.innerHTML += "<span style=\"white-space:pre-wrap\">" + alsoIndent + "also: " +
+            detailColoredSpan(competitor.color, competitorLabel) +
+            detailSourceAttribution(competitor.source) + "</span><br/>";
+        }
+      }
+    };
     // 16-REVIEW WR-01: `hazardsLabelDisplayable` is this end's half of D-09/D-10. Every
     // other product row is gated on its own config at BOTH ends; the hazards renderers
     // used to render whatever labels arrived, so correctness depended entirely on the
@@ -528,6 +616,19 @@
       // day count. A missing/malformed `days` object or an individual day skips rather than
       // throwing (T-19-16).
       if (this.spcrisk.days && typeof this.spcrisk.days === "object") {
+        // UI-SPEC "Vertical rhythm in detail mode": once ANY day in this render is in
+        // detail mode — either the global `dayReportDetail` flag or an individual day's
+        // `autoExpand` (19-03) — every day gets the same trailing blank line, so the rhythm
+        // itself never discloses which specific day auto-expanded (D-04's "No Chrome for
+        // Auto-Expand"). A render where nothing ever expands keeps today's dense
+        // one-`<br/>`-per-day rhythm (Layout Grammar "no blank line between compact rows").
+        let detailModeActive = this.config.dayReportDetail === true;
+        if (!detailModeActive) {
+          for (let n = 1; n <= 14 && !detailModeActive; n++) {
+            const d = this.spcrisk.days[String(n)];
+            if (d && d.autoExpand === true) detailModeActive = true;
+          }
+        }
         for (let n = 1; n <= 14; n++) {
           const day = this.spcrisk.days[String(n)];
           if (!day || typeof day !== "object") continue;
@@ -542,12 +643,19 @@
             // D-08: one literal space, then proximityBadge()'s own leading-space return —
             // together the same two-space gap every other compact line uses. Uncolored,
             // no dimension prefix — this is the one named exception to <Dimension> <Label>.
-            wrapper.innerHTML += prefix + " " +
-              proximityBadge(day.proximity && day.proximity.categorical, "outside") + "<br/>";
+            // Wrapped in a white-space:pre-wrap span so that two-space gap (one literal
+            // space plus the badge's own embedded leading space) survives to the screen
+            // instead of collapsing to one (RPT-06 "Space padding survives to the screen").
+            wrapper.innerHTML += "<span style=\"white-space:pre-wrap\">" + prefix + " " +
+              proximityBadge(day.proximity && day.proximity.categorical, "outside") +
+              "</span><br/>";
+            if (detailModeActive) wrapper.innerHTML += "<br/>";
             continue;
           }
           // Compact line grammar (UI-SPEC "Layout Grammar"): prefix, exactly two literal
           // spaces, then hazard segments joined by " · " (U+00B7, outside every span).
+          // This is the exact same header restated verbatim when the day expands below
+          // (D-06) — never rebuilt as a second, different header string.
           const segments = survivors.map((h) => {
             const segmentText = (h.dimension !== null && h.dimension !== undefined)
               ? (DIMENSION_LABELS[h.dimension] || h.dimension) + " " + (h.text || h.label)
@@ -555,7 +663,19 @@
             return "<span style=\"color:#" + validHazardColor(h.color) + "\">" +
               escapeHtml(truncateHazardLabel(segmentText)) + "</span>";
           });
-          wrapper.innerHTML += prefix + "  " + segments.join(" · ") + "<br/>";
+          // Wrapped in a white-space:pre-wrap span so the two literal spaces before the
+          // first segment survive to the screen instead of collapsing (same reasoning as
+          // the D-08 branch above).
+          wrapper.innerHTML += "<span style=\"white-space:pre-wrap\">" + prefix + "  " +
+            segments.join(" · ") + "</span><br/>";
+          // Phase 19 (RPT-03/D-04): a day expands into dimension sub-rows when detail mode
+          // is globally on OR this day cleared its own auto-expand floor (19-03) — both
+          // paths call the exact same rendering, so an auto-expanded day is byte-identical
+          // to a globally-expanded one (D-04's "No Chrome for Auto-Expand").
+          if (this.config.dayReportDetail === true || day.autoExpand === true) {
+            renderDaySubRows(day);
+          }
+          if (detailModeActive) wrapper.innerHTML += "<br/>";
         }
       }
       // Gated on the same flag the no-risk gate terms use (WR-09 — gate and render must
