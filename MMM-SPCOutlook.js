@@ -198,6 +198,19 @@
       return weekday[day];
     }
     const PROX_MIN_WEIGHT = 0.1;
+    // Re-introduced for plan 19-05's detail-mode probabilistic sub-line and day-3 badge
+    // (retired as dead code by plan 19-04 when its only call sites, the legacy day1-3
+    // sections, were removed — it has a real call site again now). Numeric input, trailing
+    // space (distinct from cigLabelFromTierString's string-tier/no-trailing-space form
+    // below — their input domains never overlap, so they stay two functions, never merged).
+    // Non-numeric/out-of-range input returns "" rather than a glyph, satisfying the "no
+    // segment rather than undefined%/NaN%" guard for every call site.
+    const cigLabel = (cig) => {
+      if (cig === 3) return "③ ";
+      if (cig === 2) return "② ";
+      if (cig === 1) return "① ";
+      return "";
+    };
     const cigLabelFromTierString = (tier) => {
       if (tier === "CIG3") return "③";
       if (tier === "CIG2") return "②";
@@ -323,6 +336,94 @@
       ";white-space:pre-wrap;font-family:'DejaVu Sans Mono','Liberation Mono',monospace\">" +
       escapeHtml(truncateHazardLabel(content)) + "</span>"
     );
+    // Phase 19 (RPT-03/D-07/PROXUI): the convective sub-row's own inside-mode proximity
+    // badge, three-shape probabilistic sub-line, and day-3 dual badge — the one dimension
+    // that carries an optional `detail` sub-object (node_helper.js:3159-3167). Every mode
+    // decision below is its own explicit expression against this day's own data, matching
+    // RESEARCH.md Pitfall 4's warning not to centralize them into one shared "is this hazard
+    // active" test. Returns `{ labelSuffix, subLineHtml }`: `labelSuffix` is appended INSIDE
+    // the label field's own color span (before its 23-char padding, per UI-SPEC's "shares
+    // the same span" rule); `subLineHtml` is emitted as a standalone line beneath the row.
+    const convectiveDetailAugment = (day, winner) => {
+      const detail = winner.detail;
+      if (!detail || typeof detail !== "object") return { labelSuffix: "", subLineHtml: "" };
+      const prox = (day && day.proximity && typeof day.proximity === "object") ? day.proximity : {};
+      // Checklist rows 1/5/9 (Day 1/2/3 categorical): legacy `dayN.risk == "NONE" ?
+      // "outside" : "inside"`. This dimension group only exists when the day HAS a
+      // surviving convective entry (a NONE/TSTM day never reaches this code — the backend's
+      // own floor already excluded it before it ever became a hazards entry), so
+      // `winner.label` (which carries the original risk token) is tested directly against
+      // "NONE" rather than assuming the mode — a future architecture change that ever did
+      // admit a NONE-risk entry here cannot silently flip this to a hardcoded "inside".
+      const categoricalMode = winner.label === "NONE" ? "outside" : "inside";
+      const categoricalBadge = proximityBadge(prox.categorical, categoricalMode);
+      const hasTorFamily = Object.prototype.hasOwnProperty.call(detail, "torRisk") ||
+        Object.prototype.hasOwnProperty.call(detail, "hailRisk") ||
+        Object.prototype.hasOwnProperty.call(detail, "windRisk");
+      const hasCigOnly = !hasTorFamily && Object.prototype.hasOwnProperty.call(detail, "cig");
+      if (hasTorFamily) {
+        // Grid days 1-2: the inside-mode categorical badge is part of the label field's own
+        // content (UI-SPEC "Inside-mode proximity badge") — appended with no added literal
+        // space, since proximityBadge()'s own return already carries a leading space.
+        let subLineHtml = "";
+        // Gate the whole sub-line on probRisk, matching the legacy gate exactly.
+        if (detail.probRisk) {
+          const segments = [];
+          // Checklist rows 2/6 (Day 1/2 torCig): legacy `dayN.torCig === 0 ? "outside" :
+          // "inside"`. Guarded numeric read: a non-numeric/absent torRisk or a torRisk <= 0
+          // contributes no segment at all, never "undefined%"/"NaN%".
+          if (typeof detail.torRisk === "number" && isFinite(detail.torRisk) && detail.torRisk > 0) {
+            const torMode = detail.torCig === 0 ? "outside" : "inside";
+            segments.push(
+              "<i class=\"wi wi-tornado\"></i>" + cigLabel(detail.torCig) +
+              proximityBadge(prox.torCig, torMode) + (100 * detail.torRisk) + "% "
+            );
+          }
+          // Checklist rows 3/7 (Day 1/2 hailCig): legacy `dayN.hailCig === 0 ? "outside" :
+          // "inside"`.
+          if (typeof detail.hailRisk === "number" && isFinite(detail.hailRisk) && detail.hailRisk > 0) {
+            const hailMode = detail.hailCig === 0 ? "outside" : "inside";
+            segments.push(
+              "<i class=\"wi wi-meteor\"></i>" + cigLabel(detail.hailCig) +
+              proximityBadge(prox.hailCig, hailMode) + (100 * detail.hailRisk) + "% "
+            );
+          }
+          // Checklist rows 4/8 (Day 1/2 windCig): legacy `dayN.windCig === 0 ? "outside" :
+          // "inside"`.
+          if (typeof detail.windRisk === "number" && isFinite(detail.windRisk) && detail.windRisk > 0) {
+            const windMode = detail.windCig === 0 ? "outside" : "inside";
+            segments.push(
+              "<i class=\"wi wi-strong-wind\"></i>" + cigLabel(detail.windCig) +
+              proximityBadge(prox.windCig, windMode) + (100 * detail.windRisk) + "% "
+            );
+          }
+          if (segments.length > 0) {
+            // 5-space indent (2 base + 3, UI-SPEC "Probabilistic sub-line"), not
+            // column-aligned to the label field — a subordinate line under the whole row.
+            subLineHtml = "<span style=\"white-space:pre-wrap\">     " +
+              segments.join("") + "</span><br/>";
+          }
+        }
+        return { labelSuffix: categoricalBadge, subLineHtml };
+      }
+      if (hasCigOnly) {
+        // Grid day 3: one combined CIG glyph appended directly into the label field
+        // (matching today's day-3 inline treatment), no separate breakdown line.
+        // Checklist row 10 (Day 3 cig): legacy `day3.cig === 0 ? "outside" : "inside"`.
+        const cigMode = detail.cig === 0 ? "outside" : "inside";
+        const cigBadge = proximityBadge(prox.cig, cigMode);
+        // day3DualSep: joined with ";" only when BOTH badges are non-empty strings — a
+        // single non-empty badge must not acquire a stray semicolon.
+        const dualSep = (categoricalBadge !== "" && cigBadge !== "") ? ";" : "";
+        return { labelSuffix: cigLabel(detail.cig) + categoricalBadge + dualSep + cigBadge, subLineHtml: "" };
+      }
+      // Grid days 4-8 (`{probRisk, sign}`) or no detail at all (grid days 9-14, convective
+      // winner is wpc-hazards there): plain label only. `sign` has never been rendered by
+      // any shipped getDom() (RESEARCH Open Question 3) — rendering it would be new UI in a
+      // phase whose framing is display-only, so this is a deliberate no-op (SIGN-NOOP on
+      // the parity checklist), not an oversight.
+      return { labelSuffix: "", subLineHtml: "" };
+    };
     // Phase 19 (RPT-03/D-04-D-06): detail mode renders one sub-row per dimension present on
     // the day, in payload order (18 D-15 already fixes taxonomy order — grouped here, never
     // re-sorted), the resolved winner first with any suppressed competitors beneath it as
@@ -362,11 +463,18 @@
           ? ""
           : (DIMENSION_LABELS[group.dimension] || group.dimension)
         ).padEnd(DIMENSION_FIELD_WIDTH);
-        const labelContent = String(group.winner.text || group.winner.label || "");
+        // D-07: the convective sub-row's inside-mode proximity badge and three-shape
+        // probabilistic sub-line are relocated here, detail-only — every other dimension
+        // has no `detail` sub-object at all, so this is a no-op for them.
+        const augment = group.dimension === "convective"
+          ? convectiveDetailAugment(day, group.winner)
+          : { labelSuffix: "", subLineHtml: "" };
+        const labelContent = String(group.winner.text || group.winner.label || "") + augment.labelSuffix;
         const paddedFieldContent = dimensionField + labelContent.padEnd(DETAIL_LABEL_FIELD_WIDTH);
         wrapper.innerHTML += "<span style=\"white-space:pre-wrap\">" + "  " +
           detailColoredSpan(group.winner.color, paddedFieldContent) +
           detailSourceAttribution(group.winner.source) + "</span><br/>";
+        if (augment.subLineHtml) wrapper.innerHTML += augment.subLineHtml;
         for (const competitor of group.competitors) {
           // 17 literal spaces (2 + the dimension field width + 2 more), derived rather than
           // hardcoded so it stays in step with DIMENSION_FIELD_WIDTH above.
