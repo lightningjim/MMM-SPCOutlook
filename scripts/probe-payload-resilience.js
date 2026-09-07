@@ -714,6 +714,42 @@ function unifiedPayload(overrides) {
   };
 }
 
+// Phase 19 (RPT-03 plan 19-05, D-10): builders for a spc-convective hazards entry in each
+// of the `detail` sub-object's three shapes (node_helper.js:3159-3167), so every detail-mode
+// scenario below builds its fixture from one place. `overrides.detail` merges onto the
+// shape's own default detail fields rather than replacing them wholesale, so a scenario can
+// tweak a single field (e.g. `torRisk: 0`) without restating the rest.
+function convectiveEntryGridOneTwo(overrides) {
+  const base = {
+    dimension: "convective", source: "spc-convective", label: "ENH", text: "Enhanced",
+    value: 4, color: "e06666", suppressedBy: null,
+    detail: {
+      probRisk: true, torRisk: 0.1, torCig: 2, hailRisk: 0.3, hailCig: 1,
+      windRisk: 0.15, windCig: 0
+    }
+  };
+  const o = overrides || {};
+  return { ...base, ...o, detail: { ...base.detail, ...(o.detail || {}) } };
+}
+function convectiveEntryGridThree(overrides) {
+  const base = {
+    dimension: "convective", source: "spc-convective", label: "SLGT", text: "Slight",
+    value: 3, color: "f6f67d", suppressedBy: null,
+    detail: { probRisk: true, cig: 1 }
+  };
+  const o = overrides || {};
+  return { ...base, ...o, detail: { ...base.detail, ...(o.detail || {}) } };
+}
+function convectiveEntryGridExtended(overrides) {
+  const base = {
+    dimension: "convective", source: "spc-convective", label: "MDT", text: "Moderate",
+    value: 5, color: "e614e6", suppressedBy: null,
+    detail: { probRisk: true, sign: true }
+  };
+  const o = overrides || {};
+  return { ...base, ...o, detail: { ...base.detail, ...(o.detail || {}) } };
+}
+
 // A payload shape in which every day/fireWeather/ERO/winterImpact value is the
 // no-risk/none default and `_stale` is absent, parameterised only by `advisories` — used
 // by frontend-advisory-only-is-not-an-all-clear to isolate the advisory term of the
@@ -11039,6 +11075,309 @@ const scenarios = [
       }
       if (longRendered.includes("A".repeat(56))) {
         throw new Error(`too many source characters survived truncation (expected exactly 55 A's before the ellipsis): ${longRendered}`);
+      }
+    }
+  },
+  {
+    // RPT-03: detail mode renders the compact header verbatim (D-06) plus one
+    // source-labeled sub-row per surviving dimension, using SOURCE_SHORT_NAMES rather than
+    // the payload's own long displayName.
+    name: "rpt03-detail-mode-renders-source-labeled-sub-rows-under-the-compact-header",
+    run: async (_helper) => {
+      const frontend = loadFrontendModule();
+      const config = {
+        lat: PROBE_LAT, lon: PROBE_LON, extended: false, updateInterval: 60,
+        proximityWeighting: false, dayReportDetail: true
+      };
+      const payload = unifiedPayload({});
+      // Precondition guard: the fixture's sources entries must carry LONG displayName
+      // values, or a renderer that mistakenly read sources[id].displayName instead of
+      // SOURCE_SHORT_NAMES would still pass this scenario trivially.
+      payload.sources["spc-convective"].displayName = "SPC Convective Outlook";
+      payload.sources["heatrisk"].displayName = "NWS HeatRisk";
+      if (
+        payload.sources["spc-convective"].displayName === "spc-convective" ||
+        payload.sources["heatrisk"].displayName === "heatrisk"
+      ) {
+        throw new Error("precondition failed: sources displayName must be a long form, not the bare id");
+      }
+      payload.days["1"].hazards = [
+        { dimension: "convective", source: "spc-convective", label: "ENH", text: "Enhanced", value: 4, color: "e06666", suppressedBy: null },
+        { dimension: "heat", source: "heatrisk", label: "3", text: "Major", value: 3, color: "e22f33", suppressedBy: null }
+      ];
+      payload.summary.anyHazard = true;
+      const rendered = renderDom(frontend, { config, spcrisk: payload });
+      if (!/Day 1 \([A-Za-z]+\)  /.test(rendered) || !rendered.includes("Convective Enhanced") ||
+        !rendered.includes("Heat Major") || !rendered.includes(" · ")) {
+        throw new Error(`expected the compact header to render verbatim (D-06), got: ${rendered}`);
+      }
+      if (!rendered.includes("— SPC")) {
+        throw new Error(`expected a sub-row attributed to "— SPC", got: ${rendered}`);
+      }
+      if (!rendered.includes("— HeatRisk")) {
+        throw new Error(`expected a sub-row attributed to "— HeatRisk", got: ${rendered}`);
+      }
+      if (rendered.includes("SPC Convective Outlook") || rendered.includes("NWS HeatRisk")) {
+        throw new Error(`expected the short attribution names, not the payload's long displayName: ${rendered}`);
+      }
+    }
+  },
+  {
+    // D-04 "No Chrome for Auto-Expand": an auto-expanded day and a globally-expanded day
+    // must render byte-identical output. Control proves the equality isn't trivially
+    // satisfied by neither path ever expanding.
+    name: "rpt03-autoexpand-day-renders-identically-to-a-globally-expanded-day",
+    run: async (_helper) => {
+      const frontend = loadFrontendModule();
+      const baseConfig = {
+        lat: PROBE_LAT, lon: PROBE_LON, extended: false, updateInterval: 60,
+        proximityWeighting: false
+      };
+      const buildPayload = (autoExpand) => {
+        const payload = unifiedPayload({});
+        payload.days["3"].hazards = [
+          { dimension: "convective", source: "spc-convective", label: "ENH", text: "Enhanced", value: 4, color: "e06666", suppressedBy: null }
+        ];
+        payload.days["3"].autoExpand = autoExpand;
+        payload.summary.anyHazard = true;
+        return payload;
+      };
+      const globalRendered = renderDom(frontend, {
+        config: { ...baseConfig, dayReportDetail: true }, spcrisk: buildPayload(false)
+      });
+      const autoRendered = renderDom(frontend, {
+        config: { ...baseConfig, dayReportDetail: false }, spcrisk: buildPayload(true)
+      });
+      if (globalRendered !== autoRendered) {
+        throw new Error(
+          "D-04: an auto-expanded day must render byte-identical to a globally-expanded one:\n" +
+          `global: ${globalRendered}\nauto: ${autoRendered}`
+        );
+      }
+      // Vacuity guard: both renders must actually contain sub-rows, not merely agree by
+      // both failing to expand (an `&&` instead of `||` in the dispatcher would make both
+      // sides collapse to the SAME plain compact line, satisfying string equality above
+      // without ever proving either trigger works).
+      if (!globalRendered.includes("— SPC") || !autoRendered.includes("— SPC")) {
+        throw new Error(
+          `vacuity guard failed: expected both renders to actually contain sub-rows, got:\n` +
+          `global: ${globalRendered}\nauto: ${autoRendered}`
+        );
+      }
+      // Control: with both flags false, sub-rows must not render — proving the equality
+      // above is not trivially satisfied by neither path ever expanding.
+      const neitherRendered = renderDom(frontend, {
+        config: { ...baseConfig, dayReportDetail: false }, spcrisk: buildPayload(false)
+      });
+      if (neitherRendered.includes("— SPC")) {
+        throw new Error(`control: with both flags false, sub-rows must not render, got: ${neitherRendered}`);
+      }
+      if (neitherRendered === globalRendered) {
+        throw new Error("control: the no-expand render must differ from the expanded render, got identical output");
+      }
+    }
+  },
+  {
+    // D-05: every suppressed competitor on a dimension renders as an also: line beneath the
+    // winner, in its own payload color, with the literal "also:" text uncolored, in payload
+    // order.
+    name: "rpt03-also-line-renders-every-suppressed-competitor-in-its-own-color",
+    run: async (_helper) => {
+      const frontend = loadFrontendModule();
+      const config = {
+        lat: PROBE_LAT, lon: PROBE_LON, extended: false, updateInterval: 60,
+        proximityWeighting: false, dayReportDetail: true
+      };
+      const payload = unifiedPayload({});
+      payload.days["2"].hazards = [
+        { dimension: "wind", source: "wpc-wssi", label: "Winner", text: "High Winds", value: 3, color: "e69138", suppressedBy: null },
+        { dimension: "wind", source: "wpc-hazards", label: "Comp1", text: "Wind Advisory", value: null, color: "63be7b", suppressedBy: "wpc-wssi" },
+        { dimension: "wind", source: "wpc-ero", label: "Comp2", text: "Damaging Wind Risk", value: 2, color: "f4f257", suppressedBy: "wpc-wssi" }
+      ];
+      payload.summary.anyHazard = true;
+      const rendered = renderDom(frontend, { config, spcrisk: payload });
+      if (!rendered.includes("Wind Advisory") || !rendered.includes("Damaging Wind Risk")) {
+        throw new Error(`expected both suppressed competitors to render, got: ${rendered}`);
+      }
+      if (!rendered.includes("color:#63be7b") || !rendered.includes("color:#f4f257")) {
+        throw new Error(`expected each competitor in its own payload color, got: ${rendered}`);
+      }
+      if (/<span style="color:#[0-9a-fA-F]{6}[^"]*">also:/.test(rendered)) {
+        throw new Error(`expected the literal "also:" text to render outside any color span, got: ${rendered}`);
+      }
+      const alsoCount = (rendered.match(/also: /g) || []).length;
+      if (alsoCount !== 2) {
+        throw new Error(`expected exactly two "also:" lines for two suppressed competitors, got ${alsoCount}: ${rendered}`);
+      }
+      const order = [rendered.indexOf("Wind Advisory"), rendered.indexOf("Damaging Wind Risk")];
+      if (order[0] === -1 || order[1] === -1 || order[0] > order[1]) {
+        throw new Error(`expected competitors in payload order (Comp1 before Comp2), got: ${rendered}`);
+      }
+    }
+  },
+  {
+    // UI-SPEC "Detail-Mode Density": grid days 1-2's full torRisk/hailRisk/windRisk shape
+    // renders all three icons with percentages, and a type with risk 0 contributes no icon
+    // at all (not a 0% segment).
+    name: "rpt03-detail-shape-days-1-2-renders-the-full-icon-line",
+    run: async (_helper) => {
+      const frontend = loadFrontendModule();
+      const config = {
+        lat: PROBE_LAT, lon: PROBE_LON, extended: false, updateInterval: 60,
+        proximityWeighting: false, dayReportDetail: true
+      };
+      const payload = unifiedPayload({});
+      payload.days["1"].hazards = [convectiveEntryGridOneTwo({})];
+      payload.summary.anyHazard = true;
+      const rendered = renderDom(frontend, { config, spcrisk: payload });
+      for (const cls of ["wi-tornado", "wi-meteor", "wi-strong-wind"]) {
+        if (!rendered.includes(cls)) {
+          throw new Error(`expected the ${cls} icon to render for the full days-1-2 shape, got: ${rendered}`);
+        }
+      }
+      if (!rendered.includes("10%") || !rendered.includes("30%") || !rendered.includes("15%")) {
+        throw new Error(`expected all three per-type percentages to render, got: ${rendered}`);
+      }
+
+      const zeroWindPayload = unifiedPayload({});
+      zeroWindPayload.days["1"].hazards = [convectiveEntryGridOneTwo({ detail: { windRisk: 0, windCig: 0 } })];
+      zeroWindPayload.summary.anyHazard = true;
+      const zeroWindRendered = renderDom(frontend, { config, spcrisk: zeroWindPayload });
+      if (zeroWindRendered.includes("wi-strong-wind")) {
+        throw new Error(`expected no wind icon when windRisk is 0, got: ${zeroWindRendered}`);
+      }
+      if (!zeroWindRendered.includes("wi-tornado") || !zeroWindRendered.includes("wi-meteor")) {
+        throw new Error(`expected tornado/hail icons to still render when only wind is zeroed, got: ${zeroWindRendered}`);
+      }
+    }
+  },
+  {
+    // UI-SPEC "Detail-Mode Density": grid day 3's cig-only shape appends one inline CIG
+    // glyph into the label field, with no separate per-type icon breakdown line at all.
+    name: "rpt03-detail-shape-day-3-renders-one-inline-cig-and-no-icon-line",
+    run: async (_helper) => {
+      const frontend = loadFrontendModule();
+      const config = {
+        lat: PROBE_LAT, lon: PROBE_LON, extended: false, updateInterval: 60,
+        proximityWeighting: false, dayReportDetail: true
+      };
+      const payload = unifiedPayload({});
+      payload.days["3"].hazards = [convectiveEntryGridThree({})];
+      payload.summary.anyHazard = true;
+      const rendered = renderDom(frontend, { config, spcrisk: payload });
+      if (!/[①②③]/.test(rendered)) {
+        throw new Error(`expected a CIG glyph to render inline for the day-3 shape, got: ${rendered}`);
+      }
+      for (const cls of ["wi-tornado", "wi-meteor", "wi-strong-wind"]) {
+        if (rendered.includes(cls)) {
+          throw new Error(`expected no ${cls} icon for the day-3 shape (no per-type breakdown), got: ${rendered}`);
+        }
+      }
+      if (rendered.includes("%")) {
+        throw new Error(`expected no percentage for the day-3 shape, got: ${rendered}`);
+      }
+    }
+  },
+  {
+    // UI-SPEC "Detail-Mode Density": grid days 4-8's sign-only shape renders a plain label
+    // with no glyph, no icon, no percentage — `sign` is a deliberate no-op (SIGN-NOOP).
+    name: "rpt03-detail-shape-extended-days-render-plain-label-only",
+    run: async (_helper) => {
+      const frontend = loadFrontendModule();
+      const config = {
+        lat: PROBE_LAT, lon: PROBE_LON, extended: true, updateInterval: 60,
+        proximityWeighting: false, dayReportDetail: true
+      };
+      const payload = unifiedPayload({});
+      payload.days["5"].hazards = [convectiveEntryGridExtended({})];
+      payload.summary.anyHazard = true;
+      const rendered = renderDom(frontend, { config, spcrisk: payload });
+      if (!rendered.includes("Moderate")) {
+        throw new Error(`expected the plain label to render, got: ${rendered}`);
+      }
+      for (const cls of ["wi-tornado", "wi-meteor", "wi-strong-wind"]) {
+        if (rendered.includes(cls)) {
+          throw new Error(`expected no ${cls} icon for the sign-only shape, got: ${rendered}`);
+        }
+      }
+      if (/[①②③]/.test(rendered)) {
+        throw new Error(`expected no CIG glyph for the sign-only shape, got: ${rendered}`);
+      }
+      if (rendered.includes("%")) {
+        throw new Error(`expected no percentage for the sign-only shape, got: ${rendered}`);
+      }
+    }
+  },
+  {
+    // PROXUI-04: the day-3 dual badge joins categorical + cig badges with ";" only when
+    // BOTH are non-empty strings — a single non-empty badge must not acquire a stray ";".
+    name: "rpt03-day3-dual-badge-joins-only-when-both-badges-are-non-empty",
+    run: async (_helper) => {
+      const frontend = loadFrontendModule();
+      const config = {
+        lat: PROBE_LAT, lon: PROBE_LON, extended: false, updateInterval: 60,
+        proximityWeighting: true, dayReportDetail: true
+      };
+      const bothPayload = unifiedPayload({});
+      bothPayload.days["3"].hazards = [convectiveEntryGridThree({})];
+      bothPayload.days["3"].proximity = {
+        categorical: { value: 1.5, nextTier: "MRGL" },
+        cig: { value: 1.5, nextTier: "CIG1" }
+      };
+      bothPayload.summary.anyHazard = true;
+      const bothRendered = renderDom(frontend, { config, spcrisk: bothPayload });
+      // Checked against a digit immediately followed by ";" (the dual badge's own visible
+      // join), not a bare ";" — the monospace span's inline style is itself a
+      // semicolon-separated CSS declaration list ("...pre-wrap;font-family:...") and would
+      // otherwise produce a false positive on every detail-mode render.
+      if (!/\d;/.test(bothRendered)) {
+        throw new Error(`expected the dual badge join ";" when both badges are renderable, got: ${bothRendered}`);
+      }
+
+      const onePayload = unifiedPayload({});
+      onePayload.days["3"].hazards = [convectiveEntryGridThree({})];
+      onePayload.days["3"].proximity = {
+        categorical: { value: 1.5, nextTier: "MRGL" }
+        // No `cig` proximity entry — the cig badge is not renderable.
+      };
+      onePayload.summary.anyHazard = true;
+      const oneRendered = renderDom(frontend, { config, spcrisk: onePayload });
+      if (/\d;/.test(oneRendered)) {
+        throw new Error(`expected no stray ";" when only one badge is renderable, got: ${oneRendered}`);
+      }
+      if (!oneRendered.includes("MRGL")) {
+        throw new Error(`expected the single renderable categorical badge to still render, got: ${oneRendered}`);
+      }
+    }
+  },
+  {
+    // RESEARCH.md Pitfall 4: a per-hazard-type proximity mode must be derived from that
+    // type's OWN condition, never the day's categorical mode. Here the categorical mode is
+    // "inside" (an active ENH day) while the tornado type's own CIG is 0 ("outside") — both
+    // forms must appear in the same day's render.
+    name: "proxui-per-type-badge-modes-are-independent-of-the-day-categorical-mode",
+    run: async (_helper) => {
+      const frontend = loadFrontendModule();
+      const config = {
+        lat: PROBE_LAT, lon: PROBE_LON, extended: false, updateInterval: 60,
+        proximityWeighting: true, dayReportDetail: true
+      };
+      const payload = unifiedPayload({});
+      payload.days["1"].hazards = [convectiveEntryGridOneTwo({ detail: { torCig: 0 } })];
+      payload.days["1"].proximity = {
+        categorical: { value: 2.4, nextTier: "MRGL" },
+        torCig: { value: 1.2, nextTier: "MRGL" }
+      };
+      payload.summary.anyHazard = true;
+      const rendered = renderDom(frontend, { config, spcrisk: payload });
+      if (!rendered.includes("→")) {
+        throw new Error(`expected the inside-mode categorical badge (arrow form), got: ${rendered}`);
+      }
+      if (!rendered.includes("(near ")) {
+        throw new Error(
+          `expected the outside-mode tornado badge ("near" form) despite the day's own categorical ` +
+          `mode being inside, got: ${rendered}`
+        );
       }
     }
   }
