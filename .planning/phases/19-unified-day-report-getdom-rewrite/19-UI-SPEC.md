@@ -79,6 +79,40 @@ Day 4 (Fri)  Convective Slight · Flash Flood Marginal
   followed by the next day's line — matches today's density (a compact-mode mirror should read
   exactly as dense as the current one).
 
+### Proximity-only compact exception (D-08)
+
+```
+Day 2 (Wed)  0.3 (near Marginal)
+```
+
+This is a named, explicit exception to the `<Dimension> <Label>` rule above — it is the
+**only** compact segment in this entire spec that does not carry a dimension name. Do not
+"fix" it into `<Dimension> <Label>` shape by prefixing a dimension name; the omission is the
+user's own verbatim target shape (CONTEXT.md `<specifics>`), not an oversight to correct.
+
+- **Format:** exactly `{weight.toFixed(1)} (near {tierLabel})` — the literal string already
+  produced by the shipped `proximityBadge(prox, "outside")` at `MMM-SPCOutlook.js:230`, called
+  with `mode: "outside"`. Reuse that function verbatim; do not re-derive the string.
+- **Indentation:** identical to every other compact line — `Day N (Weekday)` then exactly two
+  literal spaces, then this badge text. It occupies the same position a normal
+  `<Dimension> <Label>` segment would; no extra offset, no dimension-field indent.
+- **Color:** uncolored — no inline `style="color:..."` span at all, host's inherited default
+  text color, same treatment as `Day N (Weekday)`/separators/`also:`. This is a second, narrow
+  carve-out from "hazard content is colored" (alongside the day label itself): a
+  proximity-to-a-tier reading describes closeness to a hazard the location is **not** currently
+  in, so it reads as a structural distance note, not payload hazard data. It also matches the
+  shipped `proximityBadge()` at `:230`, which returns a bare, uncolored string in `"outside"`
+  mode today — preserving that exactly is what the PROXUI-01..05 RPT-06 parity gate requires;
+  there is no reason for this phase to introduce a new color decision the legacy renderer never
+  made.
+- **Scope:** applies only when D-08's own trigger fires — a day with no surviving hazard
+  (D-03 would otherwise skip the day entirely) but with `proximityWeighting: true` and
+  `hasRenderableProximity()` true for the day's outside-mode categorical proximity. On a day
+  that already has a real hazard survivor, the day renders its normal `<Dimension> <Label>`
+  segments per D-01–D-03 only; this badge never appends onto or mixes into that dot-separated
+  list — D-08 exists to give a would-be-empty day content, not to add a ninth kind of segment
+  to an already-populated day.
+
 ### Detail line (per-day, `dayReportDetail: true` or auto-expand)
 
 ```
@@ -97,10 +131,31 @@ level 0 = the compact header line above):
 | Compact line (header, D-06) | 0 | Identical to the compact render above — restated verbatim, not summarized or abbreviated. This IS the header; do not build a second, different header string. |
 | Dimension sub-row | 2 spaces | One sub-row per dimension present on the day, in `DIMENSION_ORDER` (18 D-15), resolved entry (`suppressedBy === null`) only |
 | — dimension name field | cols 3–15 (13 chars, left-aligned, space-padded) | Widest known dimension name is "Flash Flood"/"Heavy Precip" (11–12 chars); 13 gives at least one trailing space against every current taxonomy entry. If `hazardTaxonomy.js` ever adds a longer dimension name, recompute this field width as `longest dimension name + 1`, not a hardcoded 13. |
-| — label field, starting col 16 | left-aligned, pad to a fixed width before the source-attribution gap (see below) | Colored per the same rule as compact: dimension name + label text share one `<span style="color:#...">` |
-| — source attribution | `   — {SourceDisplayName}` (3 spaces, em dash, 1 space, then the source's display name, e.g. `SPC`, `HeatRisk`, `WPC Hazards`) | **Uncolored** (structural, not hazard data) — this is RPT-03's whole reason to exist: attribution is exclusive to detail mode, so it must read as metadata, not as another hazard |
+| — label field | cols 16–38 (23 chars, left-aligned, space-padded) before the source-attribution gap (see below) | Colored per the same rule as compact: dimension name + label text share one `<span style="color:#...">` |
+| — source attribution | `   — {SourceDisplayName}` (3 spaces, em dash, 1 space, then the source's display name, e.g. `SPC`, `HeatRisk`, `WPC Hazards`), em dash lands at col 42 | **Uncolored** (structural, not hazard data) — this is RPT-03's whole reason to exist: attribution is exclusive to detail mode, so it must read as metadata, not as another hazard |
 | Probabilistic sub-line (D-07, days 1–2 convective only) | 5 spaces (2 base + 3) | Beneath the convective sub-row only. NOT column-aligned to the label field — it's a subordinate wrapped line under the whole row, not a value in a column. Icon + CIG glyph + per-type proximity badge + percentage, space-separated, in `torRisk, hailRisk, windRisk` order (matches legacy) |
 | `also:` competing-claim line (D-05) | 17 spaces (2 + 13-char dimension field + 2 more) | One per suppressed entry on that dimension, same order the payload provides (18 D-03 — never re-sorted). Format: `also: {Label}` then the same source-attribution gap/format as the winner's row. The competing label text IS colored in its own payload color (all entries render, 18 D-13 — a competitor is not visually punished by being uncolored); only the `also:` word and the source attribution stay neutral. |
+
+**Label field width, derived exactly from the CONTEXT.md mockup:** the em dash of every
+source-attribution string lands at the same column (42) regardless of row — verified
+byte-for-byte against `Enhanced → Moderate 0.4` (23 chars, fills the field exactly) and `Major`
+(5 chars, padded with 18 trailing spaces to fill the same field) in the mockup. 42 (em dash
+col) − 3 (attribution gap) = col 39 is the first column after the label field, so the field
+itself is cols 16–38 inclusive = **23 characters**, left-aligned, space-padded with trailing
+spaces when the content is shorter. This is the exact number; do not round or approximate it
+elsewhere in this document (see "Degradation & Truncation" below, which previously referred to
+it as "~24-char" — corrected to 23 there too, so every reference to this field agrees).
+
+**Inside-mode proximity badge (D-07, detail only).** The ` → {nextTier} {weight}` suffix
+appended to a convective sub-row's label (e.g. `Enhanced → Moderate 0.4`) is part of that row's
+label-field content, not a separate structural element — it shares the same
+`<span style="color:#...">` as the label text ahead of it (one span, same rule as the compact
+line's `<Dimension> <Label>` unit), because it describes where the day's own active hazard is
+trending, not a near-miss to a tier the location isn't in. This is the **opposite** color
+treatment from the D-08 compact exception above (intentionally uncolored, since it describes a
+tier the location is near but not in) — inside mode colors, outside mode does not. Produced by
+the shipped `proximityBadge(prox, "inside")` at `MMM-SPCOutlook.js:230`; reuse verbatim, same as
+the outside-mode call site.
 
 **Detail-Mode Column Alignment.** Roboto Condensed is proportional; space-padding a proportional
 font does not produce visually aligned columns. To make the table above actually line up on
@@ -298,11 +353,11 @@ lines beyond what's specified above.
   `truncateHazardLabel`'s existing 60-char/`…` cap remains the only truncation point, applied
   per-label, not per-line.
 - **Detail-mode column alignment degrades gracefully, not catastrophically:** a label wider
-  than its field's assumed width (Layout Grammar's ~13/24-char fields are sized for the known
-  taxonomy vocabulary, not a 60-char unmapped worst case) breaks alignment for that one row only
-  — every other row computes its own padding independently, so a long label never cascades
-  misalignment into subsequent rows. This is an accepted, rare-case cosmetic degradation, not a
-  defect to engineer around with more truncation.
+  than its field's assumed width (Layout Grammar's 13-char dimension field / 23-char label
+  field are sized for the known taxonomy vocabulary, not a 60-char unmapped worst case) breaks
+  alignment for that one row only — every other row computes its own padding independently, so
+  a long label never cascades misalignment into subsequent rows. This is an accepted, rare-case
+  cosmetic degradation, not a defect to engineer around with more truncation.
 
 ---
 
@@ -326,7 +381,8 @@ lines beyond what's specified above.
 7. Day block — compact line (one per day with a survivor; D-01–D-03)
 8. Day block — detail header + dimension sub-rows + `also:` competitor lines (D-04–D-06)
 9. Day block — probabilistic sub-line, three-shape-branching per Detail-Mode Density table (D-07)
-10. Day block — proximity-only compact exception (D-08)
+10. Day block — proximity-only compact exception (D-08) — full format/indent/color contract
+    under "Proximity-only compact exception (D-08)" in Layout Grammar above
 11. Band — advisories sub-section (SPC MD, WPC MPD; unchanged wording, relocated position)
 12. Band — window-spanning Hazards Outlook sub-section (unchanged wording, relocated position)
 13. WR-02 guard closure — `validHazardColor()`/`escapeHtml()` applied to every remote-influenced
