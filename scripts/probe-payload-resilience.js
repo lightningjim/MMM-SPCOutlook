@@ -10502,6 +10502,172 @@ const scenarios = [
         }
       }
     }
+  },
+  {
+    // RPT-02/D-04: a surviving spc-convective entry at or above its own SIGNIFICANCE_FLOOR
+    // cutoff (ENH, value 4) must set days["1"].autoExpand true. Control: the identical
+    // fixture one tier lower (SLGT, value 3) must NOT trigger — proving the flag tracks the
+    // locked threshold rather than mere presence of an entry.
+    // Mutation to prove RED: change the significance predicate call in
+    // _resolveGridDayAutoExpand to a bare truthiness test on entry.value.
+    name: "rpt02-autoexpand-true-when-a-winning-entry-clears-its-own-significance-floor",
+    run: async (helper) => {
+      const SPC_ENH_BODY_LOCAL = {
+        type: "FeatureCollection",
+        features: [
+          { type: "Feature", properties: { LABEL: "ENH" }, geometry: { type: "Polygon", coordinates: [SAMPLE_RING] } }
+        ]
+      };
+      const originalPointInPolygon = turfStub.pointInPolygon;
+      const runWithBody = async (body) => {
+        resetHelper(helper);
+        resetLogs();
+        helper._products = {};
+        turfStub.pointInPolygon = () => true;
+        installHttp(helper, [
+          ["day1otlk_cat.lyr.geojson", () => httpResponse({ body, etag: "rpt02-autoexpand-v1" })],
+          [".lyr.geojson", () => httpResponse({ body: EMPTY_FEATURE_COLLECTION, etag: "rpt02-autoexpand-empty-v1" })]
+        ]);
+        const out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, {});
+        assertPayloadIntact(out);
+        return out;
+      };
+      try {
+        const enh = await runWithBody(SPC_ENH_BODY_LOCAL);
+        const entry = enh.days["1"].hazards.find((h) => h.source === "spc-convective");
+        if (!entry || entry.value !== 4 || entry.suppressedBy !== null) {
+          throw new Error(`precondition failed: expected a surviving spc-convective entry with value 4 (ENH) on day 1, got ${JSON.stringify(entry)}`);
+        }
+        if (enh.days["1"].autoExpand !== true) {
+          throw new Error(`RPT-02: expected days["1"].autoExpand === true for an ENH-tier surviving entry, got ${JSON.stringify(enh.days["1"].autoExpand)}`);
+        }
+        for (let d = 1; d <= 14; d++) {
+          if (typeof enh.days[String(d)].autoExpand !== "boolean") {
+            throw new Error(`days["${d}"].autoExpand expected boolean on all 14 grid days, got ${JSON.stringify(enh.days[String(d)].autoExpand)}`);
+          }
+        }
+
+        const slgt = await runWithBody(SPC_SLGT_BODY);
+        const controlEntry = slgt.days["1"].hazards.find((h) => h.source === "spc-convective");
+        if (!controlEntry || controlEntry.value !== 3 || controlEntry.suppressedBy !== null) {
+          throw new Error(`precondition failed: expected a surviving spc-convective entry with value 3 (SLGT) on day 1, got ${JSON.stringify(controlEntry)}`);
+        }
+        if (slgt.days["1"].autoExpand !== false) {
+          throw new Error(`control: expected days["1"].autoExpand === false for a SLGT-tier (below the >=4 ENH floor) entry, got ${JSON.stringify(slgt.days["1"].autoExpand)}`);
+        }
+      } finally {
+        turfStub.pointInPolygon = originalPointInPolygon;
+      }
+    }
+  },
+  {
+    // RPT-02/D-04: autoExpand must ignore a suppressed entry even when it looks serious
+    // (spc-fire's real winner here is a below-floor ELEV reading, while a scary-labelled
+    // "Critical Wildfire Risk" wpc-hazards entry loses the "fire" dimension to it and is
+    // suppressed), and must never be triggered by a SURVIVING wpc-hazards entry either
+    // ("High Winds", sole source for "wind", SIGNIFICANCE_NEVER). Both code paths land on
+    // the same day so one scenario proves both guards.
+    // Mutation to prove RED (1): change the `entry.suppressedBy !== null` skip in
+    // _resolveGridDayAutoExpand to accept all entries.
+    // Mutation to prove RED (2): remove the `typeof entry.value === "number"` guard and let
+    // a wpc-hazards null value reach a predicate lookup.
+    name: "rpt02-autoexpand-ignores-suppressed-and-never-triggering-entries",
+    run: async (helper) => {
+      resetHelper(helper);
+      resetLogs();
+      const { start, end } = mergeGridWindow(1);
+      const FIRE_ELEV_BODY = {
+        type: "FeatureCollection",
+        features: [
+          { type: "Feature", properties: { LABEL: "ELEV" }, geometry: { type: "Polygon", coordinates: [SAMPLE_RING] } }
+        ]
+      };
+      const originalPointInPolygon = turfStub.pointInPolygon;
+      turfStub.pointInPolygon = () => true;
+      try {
+        helper._nowMs = () => MERGE_NOW_MS;
+        const toggles = { showHazardsOutlook: true };
+        helper._products = toggles;
+        installHttp(helper, [
+          ["day1fw_windrh.lyr.geojson", () => httpResponse({ body: FIRE_ELEV_BODY, etag: "rpt02-fire-elev-v1" })],
+          ...hazardsRoutes({ 4: () => httpResponse({
+            body: hazardsCollection([
+              hazardsFeature({ label: "Critical Wildfire Risk", startDate: start, endDate: end }),
+              hazardsFeature({ label: "High Winds", startDate: start, endDate: end })
+            ]),
+            etag: "rpt02-hazards-v1"
+          }) })
+        ]);
+        const out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, toggles);
+        assertPayloadIntact(out);
+        assertHazardsBlockIntact(out);
+
+        const fire = out.days["1"].hazards.find((h) => h.source === "spc-fire");
+        if (!fire || fire.value !== 1 || fire.suppressedBy !== null) {
+          throw new Error(`precondition failed: expected a surviving below-floor spc-fire ELEV entry (value 1) on day 1, got ${JSON.stringify(fire)}`);
+        }
+        const suppressedWildfire = out.days["1"].hazards.find(
+          (h) => h.source === "wpc-hazards" && h.label === "Critical Wildfire Risk"
+        );
+        if (!suppressedWildfire || suppressedWildfire.suppressedBy === null) {
+          throw new Error(`precondition failed: expected wpc-hazards "Critical Wildfire Risk" suppressed by spc-fire on day 1, got ${JSON.stringify(suppressedWildfire)}`);
+        }
+        const survivingWind = out.days["1"].hazards.find(
+          (h) => h.source === "wpc-hazards" && h.label === "High Winds"
+        );
+        if (!survivingWind || survivingWind.suppressedBy !== null) {
+          throw new Error(`precondition failed: expected a surviving wpc-hazards "High Winds" entry on day 1, got ${JSON.stringify(survivingWind)}`);
+        }
+
+        if (out.days["1"].autoExpand !== false) {
+          throw new Error(`RPT-02: expected days["1"].autoExpand === false (suppressed entry ignored, surviving wpc-hazards entry never triggers alone), got ${JSON.stringify(out.days["1"].autoExpand)}`);
+        }
+
+        // The end-to-end fixture above cannot mutation-prove the `suppressedBy !== null`
+        // skip by itself: under the locked SIGNIFICANCE_FLOOR table (option-a), every
+        // dimension's PRECEDENCE array ranks its one non-wpc-hazards source FIRST, so a
+        // real merge can never suppress a genuinely significant (non-SIGNIFICANCE_NEVER)
+        // entry — only a wpc-hazards entry (always SIGNIFICANCE_NEVER) can ever lose,
+        // and mutation (1) has no effect on an entry the NEVER check already excludes.
+        // A direct call to the same production method on a synthetic day proves the
+        // suppression-skip line is load-bearing regardless: a suppressed HIGH-tier
+        // spc-convective entry (suppressedBy !== null, value 6, clears its own floor)
+        // must not set autoExpand true.
+        const syntheticDay = {
+          hazards: [
+            { source: "spc-convective", dimension: "convective", value: 6, suppressedBy: "synthetic-suppressor" }
+          ]
+        };
+        helper._resolveGridDayAutoExpand(syntheticDay);
+        if (syntheticDay.autoExpand !== false) {
+          throw new Error(`RPT-02: expected a suppressed HIGH-tier spc-convective entry to never trigger autoExpand, got ${JSON.stringify(syntheticDay.autoExpand)}`);
+        }
+
+        // T-19-07: the `typeof entry.value === "number"` guard exists so no non-numeric
+        // value — a wpc-hazards entry's real value is always `null` — can ever reach a
+        // predicate and abort grid assembly for the whole day. `null >= 4` degrades to
+        // `false` without throwing (JS's relational-comparison coercion), so a live
+        // wpc-hazards `null` cannot itself distinguish "guard present" from "guard
+        // removed" here — but it is already excluded earlier by the SIGNIFICANCE_NEVER
+        // check regardless (proven by the surviving "High Winds" entry above never
+        // triggering). A `Symbol`, which DOES throw under `>=`, stands in for "some
+        // non-numeric value the guard must keep out of a predicate call" and gives
+        // mutation (3) below a diagnosable signal: with the guard in place this never
+        // throws; with it removed, `_resolveGridDayAutoExpand` throws and this whole
+        // scenario fails loudly rather than silently mis-resolving `autoExpand`.
+        const symbolValueDay = {
+          hazards: [
+            { source: "spc-convective", dimension: "convective", value: Symbol("non-numeric"), suppressedBy: null }
+          ]
+        };
+        helper._resolveGridDayAutoExpand(symbolValueDay);
+        if (symbolValueDay.autoExpand !== false) {
+          throw new Error(`T-19-07: expected a non-numeric entry.value to be guarded out rather than reaching a predicate, got autoExpand ${JSON.stringify(symbolValueDay.autoExpand)}`);
+        }
+      } finally {
+        turfStub.pointInPolygon = originalPointInPolygon;
+      }
+    }
   }
 ];
 
