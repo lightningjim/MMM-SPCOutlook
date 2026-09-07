@@ -379,8 +379,8 @@ letting them compete with behavior parity. Ordered by how much Phase 19 depends 
 Plans:
 **Wave 1**
 
-- [ ] 19-01-PLAN.md — RPT-06 behavior-parity checklist artifact + the two mandatory manual-run procedures (written before any render code)
-- [ ] 19-02-PLAN.md — backend: thread the SPC proximity subtree into the unified `days[]` grid (gap found at planning: proximity exists only on legacy day1-3 blocks)
+- [x] 19-01-PLAN.md — RPT-06 behavior-parity checklist artifact + the two mandatory manual-run procedures (written before any render code)
+- [x] 19-02-PLAN.md — backend: thread the SPC proximity subtree into the unified `days[]` grid (gap found at planning: proximity exists only on legacy day1-3 blocks)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -437,7 +437,7 @@ Phases execute in numeric order: 14 → 15 → 16 → 17 → 18 → 19
 | 16. WPC Day 3–7 / CPC Day 8–14 Hazards Outlook | v2.0 | 8/8 | Complete    | 2026-08-27 |
 | 17. NWS/WPC HeatRisk & Parallelized Fetching | v2.0 | 9/9 | Complete    | 2026-09-01 |
 | 18. Merge, Precedence & Unified Payload Schema | v2.0 | 16/16 | Complete    | 2026-09-06 |
-| 19. Unified Day Report — getDom() Rewrite | v2.0 | 0/? | Not started | - |
+| 19. Unified Day Report — getDom() Rewrite | v2.0 | 2/9 | In Progress|  |
 
 ## Backlog
 
