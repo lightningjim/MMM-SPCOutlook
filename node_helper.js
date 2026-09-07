@@ -133,7 +133,7 @@ const KMZ_MAX_KML_BYTES = 8 * 1024 * 1024;
 // getSpcOutlook is a ~30-hop serial chain), so a window of exactly one interval has always
 // expired by the only moment it is ever consulted. At the documented 60-minute default that
 // made the stale fallback unreachable in production: a single upstream hiccup during an
-// active HIGH resolved the day to "NONE" and rendered "No Severe Weather Risk
+// active HIGH resolved the day to "NONE" and rendered the all-clear string
 // (unconfirmed)" for a location that was HIGH minutes earlier — the false negative this
 // product exists to prevent, and the exact opposite of the guarantee the fallback was
 // written to deliver. Two intervals is the smallest window that survives one missed poll.
@@ -3616,7 +3616,7 @@ module.exports = NodeHelper.create({
    * of it: a day-scoped-only `anyHazard` reproduces Phase 15's `getDom` no-risk gate that
    * made an advisory-only MPD state read as an all-clear, and the still-unexercised
    * Phase 16 case where a window-band entry with every other product NONE must not
-   * render "No Severe Weather Risk" either.
+   * render the all-clear string either.
    *
    * @param gridDays - the resolved fourteen-key `days` object; every entry has already
    *   passed through `_resolveGridDayPrecedence`

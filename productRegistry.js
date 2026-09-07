@@ -41,7 +41,7 @@ function buildArcGisQuery(baseUrl, layerId) {
 // catch sets the payload's staleness flag. So a row whose `days` runs one past its
 // `dayLayers` does not fail loudly or even intermittently — it flags every payload stale on
 // every poll forever, which shows a permanent ⚠ Stale badge and, because staleness disables
-// the frontend's no-risk short-circuit, renders "No Severe Weather Risk (unconfirmed)"
+// the frontend's no-risk short-circuit, renders "No Hazards Forecast (unconfirmed)"
 // indefinitely on quiet days. Raising `days` from 5 to 7 is the exact edit four separate
 // comments in this codebase use to illustrate a one-line span change.
 //

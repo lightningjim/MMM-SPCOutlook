@@ -1559,7 +1559,7 @@ const scenarios = [
         proximityWeighting: false, showExcessiveRain: true, showWinterImpact: false
       };
       const rendered = renderDom(frontend, { config, spcrisk: out });
-      if (rendered === "No Severe Weather Risk") {
+      if (rendered === "No Hazards Forecast") {
         throw new Error("a silently-degraded ERO run rendered as a confident all-clear");
       }
 
@@ -1835,10 +1835,10 @@ const scenarios = [
           proximityWeighting: false, showExcessiveRain: false, showWinterImpact: true
         };
         const rendered = renderDom(frontend, { config, spcrisk: out });
-        if (rendered === "No Severe Weather Risk") {
+        if (rendered === "No Hazards Forecast") {
           throw new Error(
             "a genuine MINOR winter impact with no convective risk short-circuited to " +
-            "\"No Severe Weather Risk\" — the WSSI term of the no-risk gate is unguarded"
+            "\"No Hazards Forecast\" — the WSSI term of the no-risk gate is unguarded"
           );
         }
         // Phase 19: the legacy "Winter Impact (Day 1):" per-product label is retired — the
@@ -2296,7 +2296,7 @@ const scenarios = [
     // CR-01: the regression that survived two review rounds because the suite asserted on
     // the payload and stopped before the render. Every layer fails, so every value is
     // "NONE" — the same value a genuine all-clear produces — and getDom's no-risk
-    // short-circuit used to win, putting "No Severe Weather Risk" on the wall during a
+    // short-circuit used to win, putting "No Hazards Forecast" on the wall during a
     // total NOAA/DNS/Wi-Fi outage with no visible difference from a quiet day. The
     // payload half of this guarantee is asserted by ero-hard-fail-is-flagged and was
     // already true then; only the render tells you whether the user can see it.
@@ -2316,7 +2316,7 @@ const scenarios = [
       const config = { lat: PROBE_LAT, lon: PROBE_LON, extended: false, updateInterval: 60,
                        proximityWeighting: false, showExcessiveRain: true };
       const rendered = renderDom(frontend, { config, spcrisk: out });
-      if (rendered === "No Severe Weather Risk") {
+      if (rendered === "No Hazards Forecast") {
         throw new Error("a total outage rendered as a confident all-clear — the degrade signal never reached the screen");
       }
       if (!rendered.includes("Stale")) {
@@ -2329,7 +2329,7 @@ const scenarios = [
       delete allClear._stale;
       delete allClear._staleAsOf;
       const cleanRender = renderDom(frontend, { config, spcrisk: allClear });
-      if (cleanRender !== "No Severe Weather Risk") {
+      if (cleanRender !== "No Hazards Forecast") {
         throw new Error(`control: a genuine all-clear no longer renders the no-risk line, it rendered: ${cleanRender}`);
       }
     }
@@ -2562,7 +2562,7 @@ const scenarios = [
   {
     // MPD-01: before Phase 15 the no-risk short-circuit gate had no advisory term at all,
     // so a location inside an active discussion with every other value at its no-risk
-    // default rendered the literal "No Severe Weather Risk" and the advisory never
+    // default rendered the literal "No Hazards Forecast" and the advisory never
     // displayed. Dormant for SPC MDs (which usually accompany convective risk), fatal for
     // MPD-01, since a WPC MPD routinely fires with zero SPC convective risk.
     name: "frontend-advisory-only-is-not-an-all-clear",
@@ -2578,7 +2578,7 @@ const scenarios = [
         mpd: [{ label: "WPC MPD 1118", hazardType: "Heavy rainfall, Flash flooding possible" }]
       });
       const rendered = renderDom(frontend, { config, spcrisk: withAdvisory });
-      if (rendered === "No Severe Weather Risk") {
+      if (rendered === "No Hazards Forecast") {
         throw new Error(
           "MPD-01: an advisory-only payload (every day/fireWeather/ERO/WSSI value no-risk, " +
           "no _stale) short-circuited to the plain no-risk line — before Phase 15 the gate had " +
@@ -2594,7 +2594,7 @@ const scenarios = [
       // positive assertion above is satisfied by the gate simply never firing.
       const noAdvisory = noRiskPayloadWithAdvisory({ spcMD: [], mpd: [] });
       const controlRendered = renderDom(frontend, { config, spcrisk: noAdvisory });
-      if (controlRendered !== "No Severe Weather Risk") {
+      if (controlRendered !== "No Hazards Forecast") {
         throw new Error(`control: a genuine all-clear with no advisories no longer renders the plain no-risk line, it rendered: ${controlRendered}`);
       }
     }
@@ -3562,7 +3562,7 @@ const scenarios = [
       }
       // The gate must agree with the render: with nothing displayable and no other risk,
       // this is a genuine all-clear, not a band-less "(unconfirmed)" or a bare page.
-      if (bothOff !== "No Severe Weather Risk") {
+      if (bothOff !== "No Hazards Forecast") {
         throw new Error(
           `the no-risk gate did not agree with the render — advisories the config disabled ` +
           `still disqualified the short-circuit: ${JSON.stringify(bothOff)}`
@@ -3622,7 +3622,7 @@ const scenarios = [
       payload.days["14"].hazards = [{ ...eroHazard }];
       payload.summary.anyHazard = true;
       const rendered = renderDom(frontend, { config, spcrisk: payload });
-      if (rendered.includes("No Severe Weather Risk")) {
+      if (rendered.includes("No Hazards Forecast")) {
         throw new Error(
           "a hazard on day 14 (the far boundary a hand-enumerated shorter loop would miss) " +
           `did not disqualify the all-clear: ${JSON.stringify(rendered)}`
@@ -3831,7 +3831,7 @@ const scenarios = [
     // 60-minute cadence a cached reading is ALWAYS at least one interval old by the time
     // the next poll can fail, so a window of exactly one interval had expired at the only
     // moment it was ever consulted and the fallback was unreachable in production: the
-    // day resolved to NONE and the display rendered "No Severe Weather Risk
+    // day resolved to NONE and the display rendered "No Hazards Forecast
     // (unconfirmed)" for a location that was SLGT an hour earlier.
     //
     // A real-elapsed-time test cannot observe this — the whole suite runs in under a
@@ -4071,7 +4071,7 @@ const scenarios = [
     // per-day try, whose catch raises the payload's staleness flag, so the product flags
     // every payload stale on every poll forever — a permanent ⚠ Stale badge and, because
     // staleness disables the frontend's no-risk short-circuit, a permanent
-    // "No Severe Weather Risk (unconfirmed)" on quiet days. The span is derived now; this
+    // "No Hazards Forecast (unconfirmed)" on quiet days. The span is derived now; this
     // asserts the derivation refuses the shapes that would reintroduce it.
     name: "registry-day-span-is-derived-and-cannot-outrun-its-layer-map",
     run: async (helper) => {
@@ -5230,7 +5230,7 @@ const scenarios = [
     // unconditionally (HAZ-02), independent of the day3..day14 grid — a location inside a
     // live "Hazardous Heat" window can have every day array empty. Before this scenario the
     // no-risk gate's day-grid term alone would let exactly this payload short-circuit to a
-    // confident "No Severe Weather Risk" — the Phase 15 getDom regression class, which
+    // confident "No Hazards Forecast" — the Phase 15 getDom regression class, which
     // shipped live once (the MPD-invisible defect).
     name: "frontend-hazards-window-band-only-is-not-an-all-clear",
     run: async (helper) => {
@@ -5261,7 +5261,7 @@ const scenarios = [
 
       const payload = noRiskPayloadWithHazards(windowOnlyBlock);
       const rendered = renderDom(frontend, { config, spcrisk: payload });
-      if (rendered === "No Severe Weather Risk") {
+      if (rendered === "No Hazards Forecast") {
         throw new Error(
           "HAZ-02: a window-band-only payload short-circuited to a confident all-clear — a location inside a " +
           "Hazardous Heat polygon with no day-resolved hazards. This is the Phase 15 getDom regression class, " +
@@ -5277,7 +5277,7 @@ const scenarios = [
       // never firing.
       const controlPayload = noRiskPayloadWithHazards(emptyHazardsBlock());
       const controlRendered = renderDom(frontend, { config, spcrisk: controlPayload });
-      if (controlRendered !== "No Severe Weather Risk") {
+      if (controlRendered !== "No Hazards Forecast") {
         throw new Error(`control: an empty-windowBand payload no longer short-circuits, it rendered: ${controlRendered}`);
       }
 
@@ -5295,7 +5295,7 @@ const scenarios = [
       if (disabledRendered.includes("Hazardous Heat")) {
         throw new Error(`control: content the config disabled leaked into the render: ${disabledRendered}`);
       }
-      if (!disabledRendered.includes("No Severe Weather Risk (unconfirmed)")) {
+      if (!disabledRendered.includes("No Hazards Forecast (unconfirmed)")) {
         throw new Error(
           `control: a populated windowBand payload the config can't display should degrade to the ` +
           `unconfirmed variant (CR-01), not a bare or unexpected render: ${disabledRendered}`
@@ -5343,7 +5343,7 @@ const scenarios = [
           `is neither stale nor degraded — a false staleness signal. Rendered: ${rendered}`
         );
       }
-      if (rendered !== "No Severe Weather Risk") {
+      if (rendered !== "No Hazards Forecast") {
         throw new Error(
           "WR-04: a band whose every entry has already elapsed has nothing to say, so the plain confident " +
           `all-clear is the correct render. Got: ${rendered}`
@@ -5362,7 +5362,7 @@ const scenarios = [
         startDate: "2026-08-29", endDate: "2026-09-02", offsetStart: 3, offsetEnd: 7
       }];
       const liveRendered = renderDom(frontend, { config, spcrisk: noRiskPayloadWithHazards(liveBlock) });
-      if (liveRendered === "No Severe Weather Risk" || !liveRendered.includes("Hazardous Heat")) {
+      if (liveRendered === "No Hazards Forecast" || !liveRendered.includes("Hazardous Heat")) {
         throw new Error(`control: a live window-band entry no longer renders, it produced: ${liveRendered}`);
       }
 
@@ -5810,7 +5810,7 @@ const scenarios = [
       if (!rendered.includes("Heavy Rain")) {
         throw new Error(`D-16: a data-age trip suppressed the hazard row instead of just badging it: ${rendered}`);
       }
-      if (rendered === "No Severe Weather Risk" || rendered.endsWith("No Severe Weather Risk (unconfirmed)")) {
+      if (rendered === "No Hazards Forecast" || rendered.endsWith("No Hazards Forecast (unconfirmed)")) {
         throw new Error(`D-16: stale hazard content rendered as an all-clear instead of its actual rows: ${rendered}`);
       }
     }
@@ -7708,7 +7708,7 @@ const scenarios = [
       // scenario proves nothing about HeatRisk.
       const controlPayload = unifiedPayload({});
       const controlRendered = renderDom(frontend, { config, spcrisk: controlPayload });
-      if (controlRendered !== "No Severe Weather Risk") {
+      if (controlRendered !== "No Hazards Forecast") {
         throw new Error(
           "precondition failed: the otherwise-all-quiet control payload (no heat entries) did not " +
           `render the plain all-clear — some other term is already disqualifying the gate: ${controlRendered}`
@@ -7725,7 +7725,7 @@ const scenarios = [
       }];
       payload.summary.anyHazard = true;
       const rendered = renderDom(frontend, { config, spcrisk: payload });
-      if (rendered.includes("No Severe Weather Risk")) {
+      if (rendered.includes("No Hazards Forecast")) {
         throw new Error(
           "D-03: a HeatRisk-only day above the floor (category 3, showMinorHeat false) should not " +
           `render as a confident all-clear: ${rendered}`
@@ -7774,7 +7774,7 @@ const scenarios = [
       if (armA.includes("Minor")) {
         throw new Error(`Arm A (showMinorHeat false): expected the Minor row filtered out by the floor, got: ${armA}`);
       }
-      if (!armA.includes("No Severe Weather Risk")) {
+      if (!armA.includes("No Hazards Forecast")) {
         throw new Error(`Arm A (showMinorHeat false): expected an honest degrade, got a blank module: ${armA}`);
       }
 
@@ -7784,7 +7784,7 @@ const scenarios = [
       if (!armB.includes("Day 3") || !armB.includes("Heat") || !armB.includes("Minor")) {
         throw new Error(`Arm B (showMinorHeat true): expected the Minor row to render, got: ${armB}`);
       }
-      if (armB.includes("No Severe Weather Risk")) {
+      if (armB.includes("No Hazards Forecast")) {
         throw new Error(`Arm B (showMinorHeat true): expected the all-clear suppressed by the rendered row, got: ${armB}`);
       }
 
@@ -11319,7 +11319,7 @@ const scenarios = [
       if (rendered !== "No Products Enabled (edit config.js to turn one on)") {
         throw new Error(`expected the exact no-products-enabled string, got: ${JSON.stringify(rendered)}`);
       }
-      if (rendered.includes("No Severe Weather Risk")) {
+      if (rendered.includes("No Hazards Forecast")) {
         throw new Error(`no-products-enabled output must not contain the all-clear substring: ${rendered}`);
       }
 
@@ -11328,7 +11328,7 @@ const scenarios = [
       const controlPayload = unifiedPayload({});
       controlPayload.summary.enabledSourceCount = 1;
       const controlRendered = renderDom(frontend, { config, spcrisk: controlPayload });
-      if (controlRendered !== "No Severe Weather Risk") {
+      if (controlRendered !== "No Hazards Forecast") {
         throw new Error(
           `control: enabledSourceCount 1 with anyHazard false should render the confident all-clear, ` +
           `got: ${JSON.stringify(controlRendered)}`
@@ -11356,7 +11356,7 @@ const scenarios = [
       }
       // Vacuity/CR-01 guard: real content follows the badge, proving this isn't a bare
       // badge with nothing beneath it.
-      if (!rendered.endsWith("No Severe Weather Risk (unconfirmed)")) {
+      if (!rendered.endsWith("No Hazards Forecast (unconfirmed)")) {
         throw new Error(`expected the unconfirmed variant beneath the badge, got: ${rendered}`);
       }
 
@@ -11364,7 +11364,7 @@ const scenarios = [
       // confident all-clear with no badge at all.
       const controlPayload = unifiedPayload({});
       const controlRendered = renderDom(frontend, { config, spcrisk: controlPayload });
-      if (controlRendered !== "No Severe Weather Risk") {
+      if (controlRendered !== "No Hazards Forecast") {
         throw new Error(
           `control: an absent _stale should render the confident all-clear with no badge, ` +
           `got: ${JSON.stringify(controlRendered)}`
@@ -12121,7 +12121,7 @@ const scenarios = [
       }
 
       const rendered = renderDom(frontend, { config, spcrisk: payload });
-      if (rendered === "No Severe Weather Risk") {
+      if (rendered === "No Hazards Forecast") {
         throw new Error(
           "a band-only payload (every day empty, anyHazard driven solely by the window band) " +
           `short-circuited to a confident all-clear — the exact getDom no-risk-gate defect class ` +
@@ -12137,7 +12137,7 @@ const scenarios = [
       // simply never firing.
       const emptyPayload = unifiedPayload({});
       const emptyRendered = renderDom(frontend, { config, spcrisk: emptyPayload });
-      if (emptyRendered !== "No Severe Weather Risk") {
+      if (emptyRendered !== "No Hazards Forecast") {
         throw new Error(`control (a): a genuine all-clear no longer renders the plain no-risk line, got: ${emptyRendered}`);
       }
 
@@ -12150,7 +12150,7 @@ const scenarios = [
       if (disabledRendered.includes("Hazardous Heat")) {
         throw new Error(`control (b): content the config disabled leaked into the render: ${disabledRendered}`);
       }
-      if (!disabledRendered.includes("No Severe Weather Risk (unconfirmed)")) {
+      if (!disabledRendered.includes("No Hazards Forecast (unconfirmed)")) {
         throw new Error(`control (b): expected the unconfirmed degrade (CR-01), got: ${disabledRendered}`);
       }
     }

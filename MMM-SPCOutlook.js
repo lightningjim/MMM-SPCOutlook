@@ -634,6 +634,18 @@
       this.config.proximityWeighting === true &&
       hasRenderableProximity(day && day.proximity && day.proximity.categorical)
     );
+    // Phase 19 gap closure (19-08 Run A, operator decision): the all-clear string is
+    // "No Hazards Forecast", not the legacy "No Severe Weather Risk". v1.x was an
+    // SPC-convective-only module and "severe weather" was accurate then; v2.0 merged in
+    // WPC ERO, WSSI, MPD, CPC Hazards Outlook and NWS HeatRisk, so the gate now clears on
+    // drought, heat, cold, wind and heavy precipitation too — none of which is severe
+    // weather in the SPC sense. The old wording asserted something narrower than what was
+    // actually checked, which is the same class of dishonesty CR-01 guards against at the
+    // staleness end. Declared once here because the confident and unconfirmed forms MUST
+    // NOT drift apart: the unconfirmed string is the contentMarker fallback for exactly
+    // the state the confident string is forbidden to claim.
+    const NO_HAZARD_TEXT = "No Hazards Forecast";
+    const NO_HAZARD_TEXT_UNCONFIRMED = NO_HAZARD_TEXT + " (unconfirmed)";
     const wrapper = document.createElement("div");
     // Phase 19 gap closure (19-08 Run B, operator-observed): UI-SPEC's "Layout Grammar"
     // defines the detail sub-row column contract as character offsets "measured from the
@@ -670,7 +682,7 @@
     } else if (
       // CR-01: staleness disqualifies this short-circuit entirely, preserved verbatim from
       // the legacy gate's own `!this.spcrisk._stale` term — a degraded read must still reach
-      // the main branch below so the ⚠ badge renders, with "No Severe Weather Risk
+      // the main branch below so the ⚠ badge renders, with "No Hazards Forecast
       // (unconfirmed)" supplied underneath it by the contentMarker fallback (unchanged),
       // rather than a bare confident string standing in for a read that was never confirmed.
       // Only the source of "no risk" changed, from a ~15-term boolean expression to one
@@ -678,7 +690,7 @@
       // window band and the advisories into this one flag).
       summaryOk && summary.anyHazard === false && !this.spcrisk._stale
     ) {
-      wrapper.innerHTML = "No Severe Weather Risk";
+      wrapper.innerHTML = NO_HAZARD_TEXT;
     } else {
       if (this.spcrisk._stale) {
         let staleSuffix = "";
@@ -829,7 +841,7 @@
       // nothing to fall back to. Either way the one thing the display can honestly assert
       // is that this all-clear was not confirmed against upstream.
       if (wrapper.innerHTML === contentMarker) {
-        wrapper.innerHTML += "No Severe Weather Risk (unconfirmed)";
+        wrapper.innerHTML += NO_HAZARD_TEXT_UNCONFIRMED;
       }
     }
     return wrapper;

@@ -254,7 +254,7 @@ function resetHelper(helper) {
 }
 
 // CR-01: the suite asserted on the payload and stopped there, which is exactly how a
-// total outage came to render as a confident "No Severe Weather Risk" while
+// total outage came to render as a confident "No Hazards Forecast" while
 // ero-hard-fail-is-flagged reported the guarantee as met — `_stale: true` was in the
 // payload and the branch that renders it was unreachable. MMM-SPCOutlook.js is a browser
 // module: it calls Module.register at top level and reads Log, moment and document off
