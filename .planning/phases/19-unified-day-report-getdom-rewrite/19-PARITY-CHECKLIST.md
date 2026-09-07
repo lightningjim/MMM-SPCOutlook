@@ -316,9 +316,24 @@ session. This is signed off anyway, for reasons stated directly rather than assu
    2026-09-07, not a gap in how the session was run.
 3. **The probe suite and the two manual runs are two independent legs by design (per this plan's
    own objective), and neither substitutes for the other, but neither is required to
-   independently re-prove every row alone either.** The probe suite is mechanism-proof for all 35
-   rows; the two runs are the live-behavior leg the mechanism proof cannot supply, and they
+   independently re-prove every row alone either.** The probe suite is mechanism-proof for 32 of
+   the 35 rows; the two runs are the live-behavior leg the mechanism proof cannot supply, and they
    exercised the renderer end-to-end against real remote data without a single discrepancy.
+
+   **Exception, stated rather than buried — rows 1, 2 and 8 have NO evidence from either leg.**
+   They are the three rows marked `MANUAL ONLY` in `## Probe Coverage` (no scenario can observe
+   them: nothing constructs an unset-`spcrisk` render, nothing constructs an `{error}` render, and
+   the harness stubs `moment` to a constant so the real `fromNow()` age string is unreachable) AND
+   `NOT OBSERVABLE` in both run columns (`_stale` was never true this session, and neither the
+   loading nor the error state was induced). For these three the honest statement is not "proven by
+   the other leg" but "unproven, and known to be unproven." They are carried as their own deferred
+   row rather than folded into the general `NOT OBSERVABLE` count, because the reason differs in
+   kind: every other `NOT OBSERVABLE` row still has mutation-proven mechanism evidence behind it,
+   and these do not. All three are simple, unchanged-verbatim passthroughs (rows 1 and 2 were
+   carried forward line-for-line; row 8's badge logic is unchanged and only its age suffix is
+   unobservable), which is why this is a disclosed gap rather than a blocker — but it is a gap, and
+   inducing all three is cheap: set an invalid coordinate to force the error state, and pull the
+   network to force staleness.
 4. **Precedent.** Phase 15/16/18 all closed with comparably-sized `NOT OBSERVABLE`/deferred sets
    (WSSI, SPC MD, MPD, Drought/Flooding rows) rather than blocking on live conditions no session
    can force to occur. This close follows the same standing practice, now carried forward into
