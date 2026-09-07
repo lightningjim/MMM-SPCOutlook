@@ -181,6 +181,10 @@ const PRECEDENCE = {
 // construction.
 const FLOOR_PREBAKED = "prebaked-at-fetch-time";
 
+// String sentinel for a source that can never independently trigger a day's auto-expand,
+// regardless of value — see SIGNIFICANCE_FLOOR below.
+const SIGNIFICANCE_NEVER = "significance-never-triggers-alone";
+
 // source id -> no-risk-floor predicate, keyed by the six day-scoped sources.
 const NO_RISK_FLOOR = {
   // Two named predicates: SPC convective covers days 1-8, categorical on 1-3 and
@@ -216,6 +220,32 @@ const NO_RISK_FLOOR = {
   // reads; D-13 revises 17 D-02's stated rationale (the null-vs-0 split is not what makes
   // MERGE-03 decidable — the floor test is) without retiring the distinction.
   heatrisk: (category) => category !== null && category >= 1
+};
+
+// source id -> significance predicate for D-04's per-day auto-expand trigger. This answers a
+// different question from NO_RISK_FLOOR above: NO_RISK_FLOOR decides "does this reach the
+// payload at all"; SIGNIFICANCE_FLOOR decides "is this serious enough to auto-expand the day
+// without the user reconfiguring dayReportDetail". Each predicate reads only its own source's
+// value ladder — never another dimension's — so no cross-dimension severity ranking is built
+// here, respecting 18 D-15's rejection of one.
+//
+// Threshold decision (locked, option-a — per-source value floor, wpc-hazards never triggers
+// alone): spc-convective >= 4 is ENH; spc-fire >= 2 is CRIT; wpc-ero >= 3 is MDT; wpc-wssi >= 4
+// is MAJOR; heatrisk >= 3 is Major. This is the finest-grained option: it reuses value ladders
+// that already exist, requires no cross-dimension ranking, and stays conservative on the one
+// presence-only source (wpc-hazards has no severity ladder anywhere in its schema, matching
+// its FLOOR_PREBAKED treatment in NO_RISK_FLOOR above). The accepted cost is that `cold`,
+// `wind`, and `heavy-precip` — the three dimensions whose only source is wpc-hazards — can
+// never independently auto-expand a day; that trade-off was chosen deliberately over making
+// auto-expand near-permanent on busy long-range days where a routine wpc-hazards entry is
+// common.
+const SIGNIFICANCE_FLOOR = {
+  "spc-convective": (value) => value >= 4, // ENH or above
+  "spc-fire": (value) => value >= 2, // CRIT or above
+  "wpc-ero": (value) => value >= 3, // MDT or above
+  "wpc-wssi": (value) => value >= 4, // MAJOR or above
+  "wpc-hazards": SIGNIFICANCE_NEVER, // presence-only source, no severity ladder exists
+  heatrisk: (value) => value >= 3 // Major or above
 };
 
 // Returns the mapped dimension string, or null when the source or the label is unknown.
@@ -310,6 +340,26 @@ function assertTaxonomyIntegrity() {
       );
     }
   }
+  for (const sourceId of DAY_SOURCE_IDS) {
+    if (!Object.prototype.hasOwnProperty.call(SIGNIFICANCE_FLOOR, sourceId)) {
+      throw new Error("hazardTaxonomy: DAY_SOURCE_IDS entry \"" + sourceId + "\" has no SIGNIFICANCE_FLOOR key");
+    }
+    const significance = SIGNIFICANCE_FLOOR[sourceId];
+    if (typeof significance !== "function" && significance !== SIGNIFICANCE_NEVER) {
+      throw new Error(
+        "hazardTaxonomy: SIGNIFICANCE_FLOOR[\"" + sourceId + "\"] must be a function or SIGNIFICANCE_NEVER — got " +
+        JSON.stringify(significance)
+      );
+    }
+  }
+  for (const sourceId of ADVISORY_SOURCE_IDS) {
+    if (Object.prototype.hasOwnProperty.call(SIGNIFICANCE_FLOOR, sourceId)) {
+      throw new Error(
+        "hazardTaxonomy: ADVISORY_SOURCE_IDS entry \"" + sourceId + "\" must not have a SIGNIFICANCE_FLOOR key, " +
+        "since advisories are not day-scoped and never participate in auto-expand"
+      );
+    }
+  }
   const dimensionOrderSorted = [...DIMENSION_ORDER].sort();
   const dimensionsSorted = [...DIMENSIONS].sort();
   const isPermutation = dimensionOrderSorted.length === dimensionsSorted.length &&
@@ -329,6 +379,8 @@ module.exports = {
   PRECEDENCE,
   NO_RISK_FLOOR,
   FLOOR_PREBAKED,
+  SIGNIFICANCE_FLOOR,
+  SIGNIFICANCE_NEVER,
   DIMENSIONS,
   DIMENSION_ORDER,
   SOURCE_IDS,
