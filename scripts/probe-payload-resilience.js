@@ -4885,6 +4885,119 @@ const scenarios = [
     }
   },
   {
+    // IN-01 (19-07): node_helper.js:939's ORIGINAL key was `entry.label + "|" +
+    // entry.offsetStart + "|" + entry.offsetEnd` -- a remote-controlled label joined by a
+    // single, unescaped delimiter. `offsetStart`/`offsetEnd` are always plain integers
+    // from `_hazardDayOffset` (Math.round of a date diff), and an integer's string form
+    // never contains "|" -- which means, provably, the last two "|" occurrences in ANY
+    // string this formula can produce always recover the SAME (offsetStart, offsetEnd)
+    // regardless of how many pipes the label embeds, so a collision between two
+    // genuinely different REAL (label, offsetStart, offsetEnd) triples cannot be
+    // reproduced live through this poll's date-derived pipeline (verified by exhaustive
+    // brute force across realistic offsets and label/pipe placements; disclosed in
+    // 19-07-SUMMARY.md's Deviations as a 15 D-10 "cannot go RED through the real
+    // pipeline" case). The precondition guard below computes the historical formula
+    // directly, with a synthetic offsetStart, to prove the exact ambiguity class the fix
+    // closes is real, not imagined; the static source check that follows is what makes
+    // THIS scenario responsive to node_helper.js's actual key expression, so a mutation
+    // that restores the pipe-joined key still turns this scenario RED even though the
+    // live end-to-end assertions below cannot observe such a mutation on their own.
+    // Mutation to prove RED: restore `entry.label + "|" + entry.offsetStart + "|" +
+    // entry.offsetEnd` at node_helper.js's window-band key site.
+    name: "in01-window-band-labels-containing-a-pipe-do-not-collide",
+    run: async (helper) => {
+      // Precondition guard: the historical `|`-joined formula (the exact expression IN-01
+      // replaced, reproduced here ONLY as a fixed reference so this scenario can prove the
+      // ambiguity class the fix closes) genuinely collides for two distinct triples.
+      const historicalPipeJoinedKey = (label, offsetStart, offsetEnd) => label + "|" + offsetStart + "|" + offsetEnd;
+      const entryA = { label: "A|1", offsetStart: 2, offsetEnd: 3 };
+      const entryB = { label: "A", offsetStart: "1|2", offsetEnd: 3 };
+      const oldKeyA = historicalPipeJoinedKey(entryA.label, entryA.offsetStart, entryA.offsetEnd);
+      const oldKeyB = historicalPipeJoinedKey(entryB.label, entryB.offsetStart, entryB.offsetEnd);
+      if (oldKeyA !== oldKeyB) {
+        throw new Error(
+          `precondition failed: the historical formula does not actually collide for these two entries ` +
+          `(${JSON.stringify(oldKeyA)} vs ${JSON.stringify(oldKeyB)}) -- the scenario would be exercising ` +
+          `an imagined collision, not a real one`
+        );
+      }
+      const fixedKeyA = JSON.stringify([entryA.label, entryA.offsetStart, entryA.offsetEnd]);
+      const fixedKeyB = JSON.stringify([entryB.label, entryB.offsetStart, entryB.offsetEnd]);
+      if (fixedKeyA === fixedKeyB) {
+        throw new Error(`the fixed JSON.stringify-based key still collides for the same two entries: ${fixedKeyA}`);
+      }
+
+      // Static check: node_helper.js's actual window-band dedupe key must currently be
+      // the JSON.stringify-based fix, not the historical pipe-joined formula above. This
+      // is what makes the scenario RED under a "restore the old key" mutation.
+      const fs = require("fs");
+      const path = require("path");
+      const nodeHelperSource = fs.readFileSync(path.join(__dirname, "..", "node_helper.js"), "utf-8");
+      if (/entry\.label \+ "\|" \+ entry\.offsetStart/.test(nodeHelperSource)) {
+        throw new Error("node_helper.js's window-band dedupe key is still the historical pipe-joined formula -- IN-01's fix is missing or reverted");
+      }
+      if (!/JSON\.stringify\(\[entry\.label, entry\.offsetStart, entry\.offsetEnd\]\)/.test(nodeHelperSource)) {
+        throw new Error("node_helper.js's window-band dedupe key does not match the expected JSON.stringify([entry.label, entry.offsetStart, entry.offsetEnd]) fix");
+      }
+
+      // End to end: two genuinely different real window-band matches, one carrying a
+      // pipe in its label, both reach the band and both survive.
+      resetHelper(helper);
+      resetLogs();
+      helper._nowMs = () => HAZARDS_NOW_MS;
+      const toggles = { showHazardsOutlook: true };
+      helper._products = toggles;
+      const originalPointInPolygon = turfStub.pointInPolygon;
+      turfStub.pointInPolygon = () => true;
+      let out;
+      try {
+        const layer7Body = hazardsCollection([
+          hazardsFeature({ label: "Frost/Freeze | Advisory", startDate: Date.UTC(2026, 7, 29), endDate: Date.UTC(2026, 8, 2) }),
+          hazardsFeature({ label: "Critical Wildfire Risk", startDate: Date.UTC(2026, 8, 4), endDate: Date.UTC(2026, 8, 6) })
+        ]);
+        installHttp(helper, hazardsRoutes({ 7: () => httpResponse({ body: layer7Body, etag: "in01-collision-v1" }) }));
+        out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, toggles);
+      } finally {
+        turfStub.pointInPolygon = originalPointInPolygon;
+      }
+      assertPayloadIntact(out);
+      assertHazardsBlockIntact(out);
+      if (out.windowBand.length !== 2) {
+        throw new Error(`expected out.windowBand.length === 2, got ${out.windowBand.length}: ${JSON.stringify(out.windowBand)}`);
+      }
+      if (!out.windowBand.some((e) => e.label === "Frost/Freeze | Advisory")) {
+        throw new Error(`expected the pipe-containing label to survive in out.windowBand, got ${JSON.stringify(out.windowBand)}`);
+      }
+      if (!out.windowBand.some((e) => e.label === "Critical Wildfire Risk")) {
+        throw new Error(`expected "Critical Wildfire Risk" to survive in out.windowBand, got ${JSON.stringify(out.windowBand)}`);
+      }
+
+      // Control: two genuinely IDENTICAL real matches (same label, same layer, same
+      // dates) still dedupe to length 1 -- proving the fix did not simply disable
+      // deduping.
+      resetHelper(helper);
+      resetLogs();
+      helper._nowMs = () => HAZARDS_NOW_MS;
+      helper._products = toggles;
+      turfStub.pointInPolygon = () => true;
+      let controlOut;
+      try {
+        const controlBody = hazardsCollection([
+          hazardsFeature({ label: "Critical Wildfire Risk", startDate: Date.UTC(2026, 7, 29), endDate: Date.UTC(2026, 8, 2) }),
+          hazardsFeature({ label: "Critical Wildfire Risk", startDate: Date.UTC(2026, 7, 29), endDate: Date.UTC(2026, 8, 2) })
+        ]);
+        installHttp(helper, hazardsRoutes({ 7: () => httpResponse({ body: controlBody, etag: "in01-control-v1" }) }));
+        controlOut = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, toggles);
+      } finally {
+        turfStub.pointInPolygon = originalPointInPolygon;
+      }
+      assertPayloadIntact(controlOut);
+      if (controlOut.windowBand.length !== 1) {
+        throw new Error(`control: expected two identical real matches to dedupe to windowBand.length === 1, got ${controlOut.windowBand.length}: ${JSON.stringify(controlOut.windowBand)}`);
+      }
+    }
+  },
+  {
     // HAZ-04, end to end: CR-01's lesson — the suite asserted on the payload and stopped
     // there, which is how a total outage came to render as a confident all-clear while a
     // payload assertion reported the guarantee as met. HAZ-04 is a *display* requirement;

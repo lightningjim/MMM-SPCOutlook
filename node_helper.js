@@ -938,7 +938,17 @@ module.exports = NodeHelper.create({
     const seenWindowKeys = new Set();
     const windowBand = [];
     for (const entry of windowEntries) {
-      const key = entry.label + "|" + entry.offsetStart + "|" + entry.offsetEnd;
+      // IN-01 (19-07): `entry.label` is remote-controlled. A bare `|`-joined key let a
+      // label containing `|` collide with a different real (label, offsetStart, offsetEnd)
+      // triple — the label content could impersonate a field boundary — and silently
+      // dropped a band entry, which this project's no-false-negative rule treats as the
+      // most serious failure class. `JSON.stringify` quotes and escapes each field, so no
+      // label content can be mistaken for the array's own delimiters. This is key hygiene,
+      // not a resource risk: `HAZARDS_MAX_WINDOW_ENTRIES` (below) already bounds growth.
+      // No prior composite-key analog exists in this file to reuse (19-PATTERNS.md "IN-01"
+      // — `seenLabels` above and `_inFlightCacheKeys`/`_geoJsonCache` are single-field), so
+      // this is a new pattern here, not a relocation of an existing one.
+      const key = JSON.stringify([entry.label, entry.offsetStart, entry.offsetEnd]);
       if (seenWindowKeys.has(key)) continue;
       seenWindowKeys.add(key);
       const { color, mapped } = resolveStyle(entry.label);
