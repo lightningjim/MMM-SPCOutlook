@@ -224,3 +224,21 @@ eventual answer may add a further row of its own; not anticipated here.)
 ---
 *Phase: 19-unified-day-report-getdom-rewrite*
 *Completed: Task 1 only — 2026-09-07 (Task 2 pending operator decision)*
+
+## Task 2 — Decision recorded (orchestrator, post-checkpoint)
+
+**Selected: option-a — defer the emission deletion to its own follow-up.** Operator decision at the
+blocking checkpoint, 2026-09-07. Recorded verbatim under `## Decision` in `19-LEGACY-RETIREMENT.md`.
+
+Plan 19-09 is COMPLETE. Both acceptance criteria for option-a are met:
+- The backlog item from Task 1 is confirmed present:
+  `.planning/todos/pending/2026-09-07-delete-legacy-payload-block-emission-and-migrate-probe-suite.md`
+- A matching row naming the measured cost and citing `19-LEGACY-RETIREMENT.md` was appended to
+  `.planning/STATE.md`'s deferred-items table by the orchestrator (worktree mode leaves STATE.md to
+  the orchestrator, per this plan's launch override).
+- `node scripts/probe-payload-resilience.js` at plan close: **157 passed, 0 failed, 0 skipped**.
+
+Deferring is not discharging. Both folded defects stay live in the EMITTED payload until the
+follow-up lands, though neither is reachable on screen:
+- legacy `heatRisk.day1..day7` day-7 drop (`node_helper.js:1152-1153`)
+- legacy `hazardsOutlook.dayN` raw-offset labelling (`node_helper.js:915-920`)

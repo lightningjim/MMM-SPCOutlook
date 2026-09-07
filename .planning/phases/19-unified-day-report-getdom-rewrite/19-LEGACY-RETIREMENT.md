@@ -247,4 +247,54 @@ the window band both now live in the unified payload).
 
 ## Decision
 
-_Pending — recorded by the orchestrator after Task 2's checkpoint response._
+**Selected: option-a — defer the emission deletion to its own follow-up.**
+**Decided by:** the operator, at plan 19-09's Task 2 blocking decision checkpoint.
+**Date:** 2026-09-07.
+
+Verbatim selection: *"Defer to its own pass (Recommended)"*.
+
+### What this means concretely
+
+Phase 19 closes having met PROJECT.md's v2.0 end state: the unified day report is the sole
+**render** path with no legacy fallback. That was achieved by plan 19-06 and is held in place by
+the permanent gate scenario `rpt01-getdom-reads-no-legacy-payload-block`, re-verified against the
+current tree in this artifact's sole-reader proof above.
+
+`node_helper.js` continues to build and emit the eight legacy payload blocks on every poll. Nothing
+reads them, so nothing on screen is affected, and the probe suite stays exactly as it is — 157
+passed, 0 failed, 0 skipped, every scenario still individually mutation-proven under 15 D-10.
+
+### What remains broken, stated plainly
+
+Deferring is not the same as discharging. Both folded defects are unreachable **on screen** but
+remain live **in the emitted payload** until the follow-up lands:
+
+- Legacy `heatRisk.day1..day7` still drops day 7 for roughly 12 of every 24 hours (the 00Z-12Z UTC
+  window), the pre-existing `feat(17-04)` defect. `node_helper.js:1152-1153`.
+- Legacy `hazardsOutlook.dayN` keys are still labelled by raw 0-based offset rather than the 1-based
+  NWS day they hold, and still cannot represent an offset-2 (NWS Day 3) feature at all.
+  `node_helper.js:915-920`. Documented but deliberately not fixed by 19-08's `fb18000`.
+
+The unified `days[]` grid is unaffected by both.
+
+### Why this was the right call with the measured numbers in hand
+
+The cost measured at Task 1 came in materially above the plan's planning-time estimate — 172
+`assertPayloadIntact` call sites (from 156), 198 legacy-field assertions (from 180), 157 scenarios
+(from 124), and still growing plan over plan. `assertPayloadIntact` dispatches unconditionally on
+every `PRODUCT_REGISTRY` row kind and throws on an undeclared kind, so deleting any single legacy
+block fails essentially every scenario that calls it: there is no incremental path, only a
+whole-suite migration.
+
+The decisive consideration is not size, though. The legacy blocks are the only old-versus-new
+reference left that could still catch a silent parity break, and RPT-06 signed off at 5 PASS /
+30 NOT OBSERVABLE / 0 FAIL, with checklist rows 1, 2 and 8 carrying no evidence from either
+verification leg. Removing the last reference immediately after a sign-off resting that heavily on
+mechanism proof rather than live confirmation is exactly the moment a silent break would be
+hardest to attribute. Deferring keeps the reference available for the follow-up to check against.
+
+### Carried forward
+
+- Backlog item: `.planning/todos/pending/2026-09-07-delete-legacy-payload-block-emission-and-migrate-probe-suite.md`,
+  carrying the measured counts as scope input.
+- A matching row in `.planning/STATE.md`'s deferred-items table citing this artifact.

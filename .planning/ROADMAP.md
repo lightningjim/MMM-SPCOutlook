@@ -55,7 +55,7 @@ Full details: `.planning/milestones/v1.2-ROADMAP.md`
 - [x] **Phase 16: WPC Day 3–7 / CPC Day 8–14 Hazards Outlook** - Ship per-day and window-spanning hazard entries with weekday-aware staleness (completed 2026-08-27)
 - [x] **Phase 17: NWS/WPC HeatRisk & Parallelized Fetching** - Ship the raster-identify HeatRisk product and parallelize all new fetches (completed 2026-09-01)
 - [x] **Phase 18: Merge, Precedence & Unified Payload Schema** - Build the cross-source dedup/precedence logic and single backend payload; measure cold-cache latency (completed 2026-09-06)
-- [ ] **Phase 19: Unified Day Report — getDom() Rewrite** - Replace per-product sections with the merged per-day report, with full behavior-parity verification
+- [x] **Phase 19: Unified Day Report — getDom() Rewrite** - Replace per-product sections with the merged per-day report, with full behavior-parity verification (completed 2026-09-07)
 
 ## Phase Details
 
@@ -408,7 +408,7 @@ Plans:
 
 **Wave 8** *(blocked on Wave 7 completion)*
 
-- [ ] 19-09-PLAN.md — legacy retirement: sole-reader proof, folded HeatRisk todo discharge, measured emission-deletion decision (blocking)
+- [x] 19-09-PLAN.md — legacy retirement: sole-reader proof, folded HeatRisk todo discharge, measured emission-deletion decision (blocking)
 
 **UI hint**: yes
 
@@ -437,7 +437,7 @@ Phases execute in numeric order: 14 → 15 → 16 → 17 → 18 → 19
 | 16. WPC Day 3–7 / CPC Day 8–14 Hazards Outlook | v2.0 | 8/8 | Complete    | 2026-08-27 |
 | 17. NWS/WPC HeatRisk & Parallelized Fetching | v2.0 | 9/9 | Complete    | 2026-09-01 |
 | 18. Merge, Precedence & Unified Payload Schema | v2.0 | 16/16 | Complete    | 2026-09-06 |
-| 19. Unified Day Report — getDom() Rewrite | v2.0 | 8/9 | In Progress|  |
+| 19. Unified Day Report — getDom() Rewrite | v2.0 | 9/9 | Complete   | 2026-09-07 |
 
 ## Backlog
 
