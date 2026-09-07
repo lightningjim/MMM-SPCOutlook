@@ -710,6 +710,9 @@ function unifiedPayload(overrides) {
     },
     sources,
     advisories: { spcMD: [], mpd: [] },
+    // RPT-04: mirrors the real payload's always-present, top-level windowBand array
+    // (node_helper.js) — empty by default, same as every other quiet-by-default field here.
+    windowBand: [],
     ...(overrides || {})
   };
 }
@@ -818,13 +821,18 @@ function noRiskPayloadWithAdvisory(advisories) {
 // Phase 19: `summary.anyHazard` is overridden here (on top of noRiskPayloadWithAdvisory's
 // advisory-only computation) to reflect the SAME hazardsBlock's own window band, via the
 // identical renderable-entry rule getDom()'s renderHazardsWindowBand applies — so the gate
-// and the render this fixture drives can never disagree about what it isolates.
+// and the render this fixture drives can never disagree about what it isolates. RPT-04:
+// `windowBand` is also mirrored at the top level, matching the real payload's own
+// promotion (node_helper.js) — getDom()'s band renderer reads `spcrisk.windowBand`, never
+// `spcrisk.hazardsOutlook.windowBand`, so a fixture that only set the legacy nested copy
+// would silently stop exercising the window band the moment the renderer re-pointed.
 function noRiskPayloadWithHazards(hazardsBlock) {
   const base = noRiskPayloadWithAdvisory({ spcMD: [], mpd: [] });
   const anyHazard = hazardsWindowBandIsRenderable(hazardsBlock);
   return {
     ...base,
     hazardsOutlook: hazardsBlock,
+    windowBand: (hazardsBlock && Array.isArray(hazardsBlock.windowBand)) ? hazardsBlock.windowBand : [],
     summary: { ...base.summary, anyHazard, bandDiagnostics: { ...base.summary.bandDiagnostics, windowBandCount: anyHazard ? 1 : 0 } }
   };
 }
@@ -4812,6 +4820,67 @@ const scenarios = [
       }
       if (!bandLabels.includes("Critical Wildfire Risk")) {
         throw new Error(`showDrought:true: control failed — Critical Wildfire Risk missing from windowBand: ${JSON.stringify(bandLabels)}`);
+      }
+    }
+  },
+  {
+    // RPT-04 (19-06 Task 1): the top-level `windowBand` key is a promotion of the SAME array
+    // `hazardsOutlook.windowBand` already carries — not a second derivation — so the unified
+    // renderer never has to read the legacy block. Layer 7 (Wildfire/Drought, group !==
+    // "precipitation") routes unconditionally to the window band per `_bucketHazardMatch`,
+    // giving a real end-to-end window-band entry without touching the day grid at all.
+    name: "rpt04-window-band-is-promoted-to-a-top-level-payload-key",
+    run: async (helper) => {
+      const layer7Body = hazardsCollection([
+        hazardsFeature({ label: "Critical Wildfire Risk", startDate: Date.UTC(2026, 7, 29), endDate: Date.UTC(2026, 8, 2) })
+      ]);
+
+      resetHelper(helper);
+      resetLogs();
+      helper._nowMs = () => HAZARDS_NOW_MS;
+      const toggles = { showHazardsOutlook: true };
+      helper._products = toggles;
+      const originalPointInPolygon = turfStub.pointInPolygon;
+      turfStub.pointInPolygon = () => true;
+      let out;
+      try {
+        installHttp(helper, hazardsRoutes({ 7: () => httpResponse({ body: layer7Body, etag: "rpt04-windowband-v1" }) }));
+        out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, toggles);
+      } finally {
+        turfStub.pointInPolygon = originalPointInPolygon;
+      }
+      assertPayloadIntact(out);
+      assertHazardsBlockIntact(out);
+      if (!Array.isArray(out.windowBand)) {
+        throw new Error(`out.windowBand is not an array (got ${JSON.stringify(out.windowBand)})`);
+      }
+      if (out.windowBand.length === 0) {
+        throw new Error("precondition failed: fixture produced zero window-band entries — nothing to promote");
+      }
+      if (JSON.stringify(out.windowBand) !== JSON.stringify(out.hazardsOutlook.windowBand)) {
+        throw new Error(
+          `out.windowBand does not deep-equal out.hazardsOutlook.windowBand: ` +
+          `${JSON.stringify(out.windowBand)} vs ${JSON.stringify(out.hazardsOutlook.windowBand)}`
+        );
+      }
+      if (!out.windowBand.some((e) => e.label === "Critical Wildfire Risk")) {
+        throw new Error(`expected Critical Wildfire Risk in out.windowBand, got ${JSON.stringify(out.windowBand)}`);
+      }
+
+      // Control: Hazards Outlook toggled off — the promoted key must still be an array,
+      // never undefined, matching D-02's always-present invariant for `days`.
+      resetHelper(helper);
+      resetLogs();
+      helper._nowMs = () => HAZARDS_NOW_MS;
+      const offToggles = { showHazardsOutlook: false };
+      helper._products = offToggles;
+      const off = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, offToggles);
+      assertPayloadIntact(off);
+      if (typeof off.windowBand === "undefined") {
+        throw new Error("control: out.windowBand is undefined on a toggle-off fixture, expected []");
+      }
+      if (!Array.isArray(off.windowBand) || off.windowBand.length !== 0) {
+        throw new Error(`control: expected an empty array on toggle-off, got ${JSON.stringify(off.windowBand)}`);
       }
     }
   },
@@ -11411,6 +11480,339 @@ const scenarios = [
       // Vacuity guard: the tornado segment (which carries the badge) actually rendered.
       if (!rendered.includes("wi-tornado")) {
         throw new Error(`vacuity guard failed: the tornado segment did not render at all: ${rendered}`);
+      }
+    }
+  },
+  {
+    // RPT-04: the combined band (advisories then the window band) renders below every day
+    // block, never above or interleaved with them. Four fixture parts — a day-1 survivor,
+    // an SPC MD, a WPC MPD, a window-band entry — with a precondition guard, so the
+    // ordering assertion below cannot pass on a partially-empty render.
+    name: "rpt04-band-renders-below-every-day-block",
+    run: async (_helper) => {
+      const frontend = loadFrontendModule();
+      const config = {
+        lat: PROBE_LAT, lon: PROBE_LON, extended: false, updateInterval: 60,
+        proximityWeighting: false, showSPCMD: true, showMPD: true, showHazardsOutlook: true
+      };
+      const payload = unifiedPayload({
+        advisories: {
+          spcMD: [{ label: "SPC MD 2108", hazardType: null }],
+          mpd: [{ label: "WPC MPD 1118", hazardType: "Heavy snow" }]
+        },
+        windowBand: [{
+          label: "Hazardous Heat", color: "a80000", mapped: true,
+          startDate: "2026-08-29", endDate: "2026-09-02", offsetStart: 3, offsetEnd: 7
+        }]
+      });
+      payload.days["1"].hazards = [convectiveEntryGridOneTwo({})];
+      payload.summary.anyHazard = true;
+
+      if (payload.days["1"].hazards.length === 0) {
+        throw new Error("precondition failed: day 1 has no surviving hazard");
+      }
+      if (payload.advisories.spcMD.length === 0) {
+        throw new Error("precondition failed: fixture carries no SPC MD");
+      }
+      if (payload.advisories.mpd.length === 0) {
+        throw new Error("precondition failed: fixture carries no WPC MPD");
+      }
+      if (payload.windowBand.length === 0) {
+        throw new Error("precondition failed: fixture carries no window-band entry");
+      }
+
+      const rendered = renderDom(frontend, { config, spcrisk: payload });
+      const dayIdx = rendered.indexOf("Day 1 (");
+      const advisoryIdx = rendered.indexOf("SPC MD 2108");
+      const mpdIdx = rendered.indexOf("WPC MPD 1118");
+      const windowIdx = rendered.indexOf("Extended Hazards:");
+      if (dayIdx === -1 || advisoryIdx === -1 || mpdIdx === -1 || windowIdx === -1) {
+        throw new Error(
+          `expected all four landmarks to render, got day=${dayIdx} spcMD=${advisoryIdx} ` +
+          `mpd=${mpdIdx} window=${windowIdx}: ${rendered}`
+        );
+      }
+      if (!(dayIdx < advisoryIdx && advisoryIdx < windowIdx)) {
+        throw new Error(
+          `expected Day 1 < advisory < "Extended Hazards:" ordering, got day=${dayIdx} ` +
+          `advisory=${advisoryIdx} window=${windowIdx}: ${rendered}`
+        );
+      }
+      // D-05/D-06(15): SPC MD then WPC MPD, in that concatenation order — the existing
+      // enabledAdvisories() ordering, unchanged by this plan's relocation.
+      if (!(advisoryIdx < mpdIdx)) {
+        throw new Error(
+          `expected SPC MD to render before WPC MPD (the existing concatenation order), got ` +
+          `spcMD=${advisoryIdx} mpd=${mpdIdx}: ${rendered}`
+        );
+      }
+    }
+  },
+  {
+    // RPT-04: the mirror-image assertion — the band's content never leaks INSIDE the day
+    // loop's own output. The day loop's output boundary is located by the last `"Day "`
+    // occurrence, since the band itself never contains that literal substring.
+    name: "rpt04-band-never-renders-inside-a-day-block",
+    run: async (_helper) => {
+      const frontend = loadFrontendModule();
+      const config = {
+        lat: PROBE_LAT, lon: PROBE_LON, extended: false, updateInterval: 60,
+        proximityWeighting: false, showSPCMD: true, showMPD: true, showHazardsOutlook: true
+      };
+      const payload = unifiedPayload({
+        advisories: {
+          spcMD: [{ label: "SPC MD 2108", hazardType: null }],
+          mpd: [{ label: "WPC MPD 1118", hazardType: "Heavy snow" }]
+        },
+        windowBand: [{
+          label: "Hazardous Heat", color: "a80000", mapped: true,
+          startDate: "2026-08-29", endDate: "2026-09-02", offsetStart: 3, offsetEnd: 7
+        }]
+      });
+      payload.days["1"].hazards = [convectiveEntryGridOneTwo({})];
+      payload.summary.anyHazard = true;
+
+      if (payload.days["1"].hazards.length === 0) {
+        throw new Error("precondition failed: day 1 has no surviving hazard");
+      }
+      if (payload.advisories.spcMD.length === 0) {
+        throw new Error("precondition failed: fixture carries no SPC MD");
+      }
+      if (payload.advisories.mpd.length === 0) {
+        throw new Error("precondition failed: fixture carries no WPC MPD");
+      }
+      if (payload.windowBand.length === 0) {
+        throw new Error("precondition failed: fixture carries no window-band entry");
+      }
+
+      const rendered = renderDom(frontend, { config, spcrisk: payload });
+      const day1Idx = rendered.indexOf("Day 1 (");
+      const lastDayIdx = rendered.lastIndexOf("Day ");
+      const advisoryIdx = rendered.indexOf("SPC MD 2108");
+      const windowIdx = rendered.indexOf("Extended Hazards:");
+      if (day1Idx === -1 || lastDayIdx === -1 || advisoryIdx === -1 || windowIdx === -1) {
+        throw new Error(
+          `expected all landmarks to render, got day1=${day1Idx} lastDay=${lastDayIdx} ` +
+          `advisory=${advisoryIdx} window=${windowIdx}: ${rendered}`
+        );
+      }
+      if (!(advisoryIdx > lastDayIdx)) {
+        throw new Error(
+          `expected the advisory band to render after the last day row, got advisory=${advisoryIdx} ` +
+          `<= lastDay=${lastDayIdx}: ${rendered}`
+        );
+      }
+      if (!(windowIdx > lastDayIdx)) {
+        throw new Error(
+          `expected the window band to render after the last day row, got window=${windowIdx} ` +
+          `<= lastDay=${lastDayIdx}: ${rendered}`
+        );
+      }
+      const dayLoopOutput = rendered.slice(day1Idx, lastDayIdx + "Day ".length + 3);
+      if (dayLoopOutput.includes("in effect.") || dayLoopOutput.includes("SPC MD") ||
+          dayLoopOutput.includes("Extended Hazards")) {
+        throw new Error(`band content leaked inside the day-loop output: ${dayLoopOutput}`);
+      }
+    }
+  },
+  {
+    // WR-04: the "Extended Hazards:" heading is written exactly once, only when at least
+    // one renderable window-band entry exists — never once per entry, never unconditionally
+    // before the loop. Three runs: two entries, one entry, and zero renderable entries
+    // (every label excluded by HAZARDS_EXCLUDED_LABELS, WR-01's fail-safe filter) with a
+    // day-1 survivor keeping the render off the outer no-risk short-circuit, so the zero-
+    // entries run actually exercises renderHazardsWindowBand's own per-entry filter rather
+    // than the summary-level gate.
+    name: "rpt04-extended-hazards-heading-is-written-once-and-only-when-an-entry-renders",
+    run: async (_helper) => {
+      const frontend = loadFrontendModule();
+      const config = {
+        lat: PROBE_LAT, lon: PROBE_LON, extended: false, updateInterval: 60,
+        proximityWeighting: false, showHazardsOutlook: true
+      };
+      const countHeadings = (s) => (s.match(/Extended Hazards:/g) || []).length;
+
+      const twoEntries = unifiedPayload({
+        windowBand: [
+          {
+            label: "Hazardous Heat", color: "a80000", mapped: true,
+            startDate: "2026-08-29", endDate: "2026-09-02", offsetStart: 3, offsetEnd: 7
+          },
+          {
+            label: "Critical Wildfire Risk", color: "ff8c00", mapped: true,
+            startDate: "2026-08-24", endDate: "2026-08-26", offsetStart: 0, offsetEnd: 2
+          }
+        ]
+      });
+      twoEntries.summary.anyHazard = true;
+      const twoRendered = renderDom(frontend, { config, spcrisk: twoEntries });
+      if (countHeadings(twoRendered) !== 1) {
+        throw new Error(`expected exactly one heading for two entries, got ${countHeadings(twoRendered)}: ${twoRendered}`);
+      }
+
+      const oneEntry = unifiedPayload({
+        windowBand: [{
+          label: "Hazardous Heat", color: "a80000", mapped: true,
+          startDate: "2026-08-29", endDate: "2026-09-02", offsetStart: 3, offsetEnd: 7
+        }]
+      });
+      oneEntry.summary.anyHazard = true;
+      const oneRendered = renderDom(frontend, { config, spcrisk: oneEntry });
+      if (countHeadings(oneRendered) !== 1) {
+        throw new Error(`expected exactly one heading for one entry, got ${countHeadings(oneRendered)}: ${oneRendered}`);
+      }
+
+      const zeroEntries = unifiedPayload({
+        windowBand: [{
+          label: "Flooding Likely", color: "0084a8", mapped: true,
+          startDate: "2026-08-29", endDate: "2026-09-02", offsetStart: 3, offsetEnd: 7
+        }]
+      });
+      zeroEntries.days["1"].hazards = [convectiveEntryGridOneTwo({})];
+      zeroEntries.summary.anyHazard = true;
+      const zeroRendered = renderDom(frontend, { config, spcrisk: zeroEntries });
+      if (countHeadings(zeroRendered) !== 0) {
+        throw new Error(`expected zero headings when every entry is excluded, got ${countHeadings(zeroRendered)}: ${zeroRendered}`);
+      }
+      if (!zeroRendered.includes("Day 1 (")) {
+        throw new Error(`vacuity guard failed: day 1 did not render at all: ${zeroRendered}`);
+      }
+    }
+  },
+  {
+    // ROADMAP flag: no probe fixture before this plan had a windowBand-only span with every
+    // day array empty — the exact shape a day-scoped-only anyHazard would miss, and the
+    // exact shape Phase 15 found live (the getDom no-risk gate that made MPD invisible).
+    // Every days[n].hazards is genuinely empty (precondition-checked); anyHazard is driven
+    // solely by the window band.
+    name: "rpt04-band-only-payload-is-not-an-all-clear",
+    run: async (_helper) => {
+      const frontend = loadFrontendModule();
+      const config = {
+        lat: PROBE_LAT, lon: PROBE_LON, extended: false, updateInterval: 60,
+        proximityWeighting: false, showHazardsOutlook: true
+      };
+      const payload = unifiedPayload({
+        windowBand: [{
+          label: "Hazardous Heat", color: "a80000", mapped: true,
+          startDate: "2026-08-29", endDate: "2026-09-02", offsetStart: 3, offsetEnd: 7
+        }]
+      });
+      payload.summary.anyHazard = true;
+
+      for (let n = 1; n <= 14; n++) {
+        if (payload.days[String(n)].hazards.length !== 0) {
+          throw new Error(`precondition failed: day ${n} is not empty, so this fixture proves nothing about the window-band-only case`);
+        }
+      }
+
+      const rendered = renderDom(frontend, { config, spcrisk: payload });
+      if (rendered === "No Severe Weather Risk") {
+        throw new Error(
+          "a band-only payload (every day empty, anyHazard driven solely by the window band) " +
+          `short-circuited to a confident all-clear — the exact getDom no-risk-gate defect class ` +
+          `Phase 15 found live: ${rendered}`
+        );
+      }
+      if (!rendered.includes("Hazardous Heat")) {
+        throw new Error(`expected the window-band label to render, got: ${rendered}`);
+      }
+
+      // Control (a): an empty windowBand with anyHazard:false must render exactly the
+      // plain no-risk line, or the positive assertion above is satisfied by the gate
+      // simply never firing.
+      const emptyPayload = unifiedPayload({});
+      const emptyRendered = renderDom(frontend, { config, spcrisk: emptyPayload });
+      if (emptyRendered !== "No Severe Weather Risk") {
+        throw new Error(`control (a): a genuine all-clear no longer renders the plain no-risk line, got: ${emptyRendered}`);
+      }
+
+      // Control (b, WR-09): the same populated payload with showHazardsOutlook:false must
+      // still degrade to the honest "(unconfirmed)" variant — content the config disabled
+      // must not leak, but the payload's own anyHazard still disqualifies a confident
+      // all-clear this instance's own config cannot back up.
+      const disabledConfig = { ...config, showHazardsOutlook: false };
+      const disabledRendered = renderDom(frontend, { config: disabledConfig, spcrisk: payload });
+      if (disabledRendered.includes("Hazardous Heat")) {
+        throw new Error(`control (b): content the config disabled leaked into the render: ${disabledRendered}`);
+      }
+      if (!disabledRendered.includes("No Severe Weather Risk (unconfirmed)")) {
+        throw new Error(`control (b): expected the unconfirmed degrade (CR-01), got: ${disabledRendered}`);
+      }
+    }
+  },
+  {
+    // T-19-22/T-19-23: the relocated band's own escaping guards, pinned at the new call
+    // site. Two DISTINCT hostile strings (advisory vs. window-band label) so each renderer's
+    // own escaping is independently confirmed, plus a non-hex window-band color exercising
+    // validHazardColor's fallback.
+    name: "rpt04-band-escapes-remote-advisory-and-window-band-text",
+    run: async (_helper) => {
+      const frontend = loadFrontendModule();
+      const config = {
+        lat: PROBE_LAT, lon: PROBE_LON, extended: false, updateInterval: 60,
+        proximityWeighting: false, showSPCMD: true, showMPD: true, showHazardsOutlook: true
+      };
+      const hostileAdvisoryLabel = `<img src=x onerror="alert(1)">`;
+      const hostileHazardType = `<script>alert(2)</script>`;
+      const hostileWindowLabel = `<svg onload=alert(3)>`;
+      const payload = unifiedPayload({
+        advisories: {
+          spcMD: [{ label: hostileAdvisoryLabel, hazardType: hostileHazardType }],
+          mpd: []
+        },
+        windowBand: [{
+          label: hostileWindowLabel, color: "not-a-hex-color", mapped: true,
+          startDate: "2026-08-29", endDate: "2026-09-02", offsetStart: 3, offsetEnd: 7
+        }]
+      });
+      payload.summary.anyHazard = true;
+
+      const rendered = renderDom(frontend, { config, spcrisk: payload });
+      if (rendered.includes("<img") || rendered.includes("<script>") || rendered.includes("<svg onload")) {
+        throw new Error(`a hostile advisory/window-band string reached the band unescaped: ${rendered}`);
+      }
+      if (!rendered.includes("&lt;img") || !rendered.includes("&lt;script&gt;") || !rendered.includes("&lt;svg onload")) {
+        throw new Error(`expected the escaped forms of all three hostile strings, got: ${rendered}`);
+      }
+      if (!rendered.includes("#aaaaaa")) {
+        throw new Error(`expected the hostile window-band color to fall back to aaaaaa, got: ${rendered}`);
+      }
+      // Vacuity guard: the advisory line and the window-band heading both actually
+      // rendered, so the escaping assertions above are not vacuously true on a render
+      // that emitted nothing at all.
+      if (!rendered.includes("in effect.") || !rendered.includes("Extended Hazards:")) {
+        throw new Error(`vacuity guard failed: expected both the advisory line and the window-band heading to render: ${rendered}`);
+      }
+    }
+  },
+  {
+    // RPT-01: the static sole-reader gate. Comment lines are stripped BEFORE the search —
+    // this file's own comments name every one of these legacy accessors by design (they are
+    // the RPT-06 checklist's provenance trail), so an unfiltered search would be
+    // self-invalidating the moment this very sentence was written.
+    name: "rpt01-getdom-reads-no-legacy-payload-block",
+    run: async (_helper) => {
+      const fs = require("fs");
+      const path = require("path");
+      const source = fs.readFileSync(path.join(__dirname, "..", "MMM-SPCOutlook.js"), "utf-8");
+      const stripped = source.split("\n")
+        .filter((line) => {
+          const trimmed = line.trim();
+          return !trimmed.startsWith("//") && !trimmed.startsWith("*");
+        })
+        .join("\n");
+      const legacyAccessors = [
+        "spcrisk.day1", "spcrisk.day2", "spcrisk.day3", "spcrisk.day4", "spcrisk.day5",
+        "spcrisk.day6", "spcrisk.day7", "spcrisk.day8", "spcrisk.fireWeather",
+        "spcrisk.excessiveRain", "spcrisk.winterImpact", "spcrisk.hazardsOutlook", "spcrisk.heatRisk"
+      ];
+      const hits = legacyAccessors.filter((a) => stripped.includes(a));
+      if (hits.length > 0) {
+        throw new Error(`getDom still reads a legacy payload block outside comments: ${hits.join(", ")}`);
+      }
+      if (!stripped.includes("spcrisk.windowBand")) {
+        throw new Error("expected getDom to read the promoted top-level spcrisk.windowBand");
       }
     }
   }
