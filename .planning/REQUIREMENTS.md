@@ -48,11 +48,11 @@
 
 ### Unified Day Report
 
-- [ ] **RPT-01**: User sees one block per day merging all enabled sources, replacing the current per-product row sections
-- [ ] **RPT-02**: User sees a compact single line per day by default, with all of that day's hazards inline
+- [x] **RPT-01**: User sees one block per day merging all enabled sources, replacing the current per-product row sections
+- [x] **RPT-02**: User sees a compact single line per day by default, with all of that day's hazards inline
 - [x] **RPT-03**: User sees per-day hazards expanded into source-labeled sub-rows when `dayReportDetail` is enabled
-- [ ] **RPT-04**: User sees non-day-scoped items — Mesoscale Discussions, MPDs, and window-spanning Hazards Outlook entries — in a separate band below the day blocks
-- [ ] **RPT-05**: User sees a correct empty state when no hazard is active from any enabled source
+- [x] **RPT-04**: User sees non-day-scoped items — Mesoscale Discussions, MPDs, and window-spanning Hazards Outlook entries — in a separate band below the day blocks
+- [x] **RPT-05**: User sees a correct empty state when no hazard is active from any enabled source
 - [x] **RPT-06**: User sees every previously shipped display behavior preserved — the combinatorial no-risk gate and all proximity badge modes from BUG-01..04, FWXT-01..05, PROX-01..06, PROXUI-01..05
 - [x] **RPT-07**: User's frontend renders both detail levels from a backend-computed payload without re-deriving precedence
 
@@ -137,11 +137,11 @@ Deferred to v2.x. Tracked but not in this roadmap.
 | MERGE-04 | Phase 18 | Complete |
 | RPT-07 | Phase 18 | Complete |
 | PERF-03 | Phase 18 | Complete |
-| RPT-01 | Phase 19 | Pending |
-| RPT-02 | Phase 19 | Pending |
+| RPT-01 | Phase 19 | Complete |
+| RPT-02 | Phase 19 | Complete |
 | RPT-03 | Phase 19 | Complete |
-| RPT-04 | Phase 19 | Pending |
-| RPT-05 | Phase 19 | Pending |
+| RPT-04 | Phase 19 | Complete |
+| RPT-05 | Phase 19 | Complete |
 | RPT-06 | Phase 19 | Complete |
 
 **Coverage:**
