@@ -375,7 +375,19 @@ letting them compete with behavior parity. Ordered by how much Phase 19 depends 
    because RPT-04's band is where a dropped entry would actually be seen. Lowest priority of the
    three.
 
-**Plans**: TBD
+**Plans**: 9 plans in 8 waves
+
+Plans:
+- [ ] 19-01-PLAN.md — RPT-06 behavior-parity checklist artifact + the two mandatory manual-run procedures (written before any render code)
+- [ ] 19-02-PLAN.md — backend: thread the SPC proximity subtree into the unified `days[]` grid (gap found at planning: proximity exists only on legacy day1-3 blocks)
+- [ ] 19-03-PLAN.md — `SIGNIFICANCE_FLOOR` in hazardTaxonomy.js + backend-resolved `days[n].autoExpand` for D-04 (blocking decision on thresholds)
+- [ ] 19-04-PLAN.md — frontend: render-mechanism decision, helper hoist, `dayReportDetail`, three empty states, top stale badge, compact per-day line (D-01/02/03/08)
+- [ ] 19-05-PLAN.md — frontend: detail mode, `also:` competitor lines, three-shape probabilistic sub-line, all ten proximity mode decisions (D-04/05/06/07)
+- [ ] 19-06-PLAN.md — frontend: one band below all day blocks (RPT-04) + promote `windowBand` to top level + sole-render-path gate
+- [ ] 19-07-PLAN.md — SEVERABLE carried-in backend items: `wpc-hazards` metadata under-report + IN-01 dedupe key
+- [ ] 19-08-PLAN.md — RPT-06 sign-off: checklist reconciliation + the two mandatory manual runs on the Pi (blocking human verify)
+- [ ] 19-09-PLAN.md — legacy retirement: sole-reader proof, folded HeatRisk todo discharge, measured emission-deletion decision (blocking)
+
 **UI hint**: yes
 
 ## Progress
