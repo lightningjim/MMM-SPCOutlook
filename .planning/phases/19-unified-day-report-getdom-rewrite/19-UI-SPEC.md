@@ -90,11 +90,22 @@ This is a named, explicit exception to the `<Dimension> <Label>` rule above — 
 "fix" it into `<Dimension> <Label>` shape by prefixing a dimension name; the omission is the
 user's own verbatim target shape (CONTEXT.md `<specifics>`), not an oversight to correct.
 
-- **Format:** exactly `{weight.toFixed(1)} (near {tierLabel})` — the literal string already
-  produced by the shipped `proximityBadge(prox, "outside")` at `MMM-SPCOutlook.js:230`, called
-  with `mode: "outside"`. Reuse that function verbatim; do not re-derive the string.
-- **Indentation:** identical to every other compact line — `Day N (Weekday)` then exactly two
-  literal spaces, then this badge text. It occupies the same position a normal
+- **Format:** whatever `proximityBadge(prox, "outside")` returns, verbatim. Reuse that function
+  unmodified; do not re-derive, reformat, or trim the string. **Note its return value carries a
+  leading space:** `MMM-SPCOutlook.js:236` is
+  `return " " + weight.toFixed(1) + " (near " + tierLabel + ")";`, so the literal return for the
+  mockup row is `" 0.3 (near Marginal)"` — leading space included. The tier label itself comes
+  from the CIG-vs-categorical split at `:233-235` (`cigLabelFromTierString(prox.nextTier)` when
+  `nextTier` starts with `"CIG"`, otherwise `nextTier` raw), and the badge only renders when
+  `hasRenderableProximity()` passes — including its `PROX_MIN_WEIGHT` (0.1) floor.
+- **Indentation:** `Day N (Weekday)` then **one** literal space, then the verbatim function
+  return. Because that return embeds its own leading space, the rendered gap is exactly two
+  spaces — identical to every other compact line, and byte-identical to the mockup above. Do
+  **not** write two literal spaces here: concatenating two literal spaces with the function's
+  embedded one yields three, breaking both the mockup and the compact-line grid. This is the
+  same treatment the inside-mode badge receives under D-07 below (label + verbatim return, no
+  added literal space) — both call sites append `proximityBadge()`'s output directly and let its
+  embedded leading space supply the separator. The badge occupies the same position a normal
   `<Dimension> <Label>` segment would; no extra offset, no dimension-field indent.
 - **Color:** uncolored — no inline `style="color:..."` span at all, host's inherited default
   text color, same treatment as `Day N (Weekday)`/separators/`also:`. This is a second, narrow
