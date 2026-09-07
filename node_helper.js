@@ -2837,9 +2837,10 @@ module.exports = NodeHelper.create({
    *   `_runArcGisHazardWindowProduct`'s Task 1 side-channel — the SAME objects the legacy
    *   `hazardsOutlook` block was built from, never re-fetched or re-derived (D-01)
    * @param anchorInfo - the object `_spcGridAnchor` returns
-   * @param notes - `{ noteReported, noteActive, noteUnmapped }`, declared by 18-02 in
-   *   `getSpcOutlook`'s scope and passed in explicitly so this method stays pure over its
-   *   arguments rather than reaching for `this`
+   * @param notes - `{ noteReported, noteActive, noteUnmapped, noteWindowBandReported }`,
+   *   declared by 18-02 (extended by 19-07) in `getSpcOutlook`'s scope and passed in
+   *   explicitly so this method stays pure over its arguments rather than reaching for
+   *   `this`
    */
   _addHazardsOutlookGridEntries(gridDays, gridMatches, anchorInfo, notes) {
     const row = PRODUCT_REGISTRY.hazardsOutlook;
@@ -2871,6 +2872,22 @@ module.exports = NodeHelper.create({
         // to the window band unconditionally; D-04's full-nominal-window guard routes a
         // Precipitation feature spanning its layer's entire nominal window there too.
         // Neither case reaches the day grid.
+        //
+        // Carried-in item 2 (19-07): a window-routed match is still a genuine answer —
+        // the source responded, just not in day-grid form — so record it as such before
+        // leaving this iteration. Never call `noteReported`/`noteActive` here and never
+        // fabricate a day number: `reportedDays`/`activeDays` are day-grid-keyed
+        // `Set<number>` structures `_resolveGridDayPrecedence` consumes for D-14's
+        // absent-vs-below-floor distinction, and a window-band entry has no day-grid
+        // association by design (RPT-04 requires exactly that).
+        notes.noteWindowBandReported("wpc-hazards");
+        if (dimensionOf("wpc-hazards", match.label) === null) {
+          // D-07's ledger twin for the window-routed path: the legacy
+          // `_runArcGisHazardWindowProduct` build (this same match, same label) already
+          // ran `resolveStyle` and logged the pass-through label once per process before
+          // this merge pass ever runs — do not duplicate that `Log.info` emission here.
+          notes.noteUnmapped("wpc-hazards", match.label);
+        }
         continue;
       }
 
@@ -3635,8 +3652,13 @@ module.exports = NodeHelper.create({
    *
    * `reporting` means "we got an answer this poll", NEVER "it found a hazard" — that is
    * `activeDays`. For the six day-scoped sources this reads `reportedDays[id]` (lazily
-   * keyed; an absent key is a legitimate "reported nothing", not an error). For the two
-   * advisory sources, whose entries never live in `reportedDays` (they are not
+   * keyed; an absent key is a legitimate "reported nothing", not an error) OR-ed with
+   * `windowBandReported[id]` (19-07, carried-in item 2): a source whose only content this
+   * poll is a window-band span still genuinely answered, even though nothing reached the
+   * day grid at all — this OR is what makes `reporting` mean "this source answered in
+   * *any* form" rather than "this source produced a day-grid reading". `reportedDays`
+   * deliberately stays empty for a window-band-only poll; this OR does not touch it. For
+   * the two advisory sources, whose entries never live in `reportedDays` (they are not
    * day-scoped), it is "the row's fetch completed without being marked stale, while its
    * toggle is on" — `_runKmlAdvisoryRow` itself never fetches at all when its toggle is
    * off (node_helper.js:1475-1478), so gating on `enabled` here mirrors that same rule
@@ -3647,7 +3669,12 @@ module.exports = NodeHelper.create({
    * the source never covered that day at all; a day present in `reportedDays` but absent
    * from `activeDays` means the source reported and its own reading fell below its floor.
    * This is what makes that distinction diagnosable from a captured payload without a
-   * dedicated payload field for it.
+   * dedicated payload field for it. `windowBandReported` is orthogonal to this pair — it
+   * never gates `_resolveGridDayPrecedence` and is consulted only here.
+   *
+   * The outer `!enabled ? false` gate (18-05) stays exactly as it is regardless of this
+   * OR: a reader must be able to trust `enabled: false` to mean `reporting` is also
+   * `false` even if a future source's own gate regresses.
    *
    * @param productToggles - this request's own toggle snapshot (WR-13)
    * @param reportedDays / activeDays / unmappedLabels - the lazily-keyed accumulators
@@ -3659,11 +3686,13 @@ module.exports = NodeHelper.create({
    *   `results.hazardsOutlook.idpFiledate` / `results.heatRisk.idpFiledate` — 16 D-13:
    *   only these two products publish an `idp_filedate`, so every other source's field is
    *   `null`, meaning "this product has no such field", not "unknown"
+   * @param windowBandReported - `{ [sourceId]: true }`, lazily keyed (19-07); an absent
+   *   key means this source recorded no window-band-only answer this poll
    * @returns object keyed by every `SOURCE_IDS` entry, `{ id, displayName, enabled,
    *   reporting, stale, idpFiledate, reportedDays, activeDays, unmappedLabels,
    *   gridAnchor? }` — `gridAnchor` present only on `spc-convective` (D-12)
    */
-  _buildSourceHealth(productToggles, reportedDays, activeDays, unmappedLabels, staleBySource, gridAnchorInfo, results) {
+  _buildSourceHealth(productToggles, reportedDays, activeDays, unmappedLabels, staleBySource, gridAnchorInfo, results, windowBandReported) {
     const displayNames = {
       "spc-convective": "SPC Convective Outlook",
       "spc-fire": "SPC Fire Weather Outlook",
@@ -3713,9 +3742,15 @@ module.exports = NodeHelper.create({
       // acceptance criteria pinned; a reader must be able to trust `enabled: false` to
       // mean `reporting` is also `false` even if a future source's own gate regresses.
       const isAdvisory = ADVISORY_SOURCE_IDS.includes(sourceId);
+      // 19-07/carried-in item 2: OR the day-grid signal with the window-band-only signal
+      // so a source that only answered via a window-band span (no day-grid entry at all
+      // this poll) still reports `reporting: true` rather than false-negative silence
+      // while its own entries render in the band. `reportedDays` is read, never written,
+      // by this OR — a window-band-only poll keeps `reportedDays[sourceId]` empty.
       const reporting = !enabled ? false : (isAdvisory
         ? staleBySource[sourceId] !== true
-        : (reportedDays[sourceId] ? reportedDays[sourceId].size : 0) > 0);
+        : ((reportedDays[sourceId] ? reportedDays[sourceId].size : 0) > 0) ||
+          windowBandReported[sourceId] === true);
 
       const idpFiledate =
         sourceId === "wpc-hazards" ? (results.hazardsOutlook.idpFiledate ?? null) :
@@ -5023,6 +5058,11 @@ module.exports = NodeHelper.create({
       const reportedDays = {};
       const activeDays = {};
       const unmappedLabels = {};
+      // Carried-in item 2 (19-07): a source whose only live content this poll is a
+      // window-band span (no per-day grid entry at all) still genuinely answered — this
+      // accumulator is the day-independent twin to `reportedDays`, lazily keyed the same
+      // way, with no seeded roster for the same WR-03 reason.
+      const windowBandReported = {};
 
       // Record that `sourceId` produced ANY reading for `gridDay` (present, whether or
       // not it was above that source's no-risk floor).
@@ -5049,7 +5089,13 @@ module.exports = NodeHelper.create({
         unmappedLabels[sourceId].push(truncated);
       };
 
-      const gridNotes = { noteReported, noteActive, noteUnmapped };
+      // Record that `sourceId` answered this poll in window-band form — a reading with
+      // no day-grid association by design (RPT-04). Never touches `reportedDays`.
+      const noteWindowBandReported = (sourceId) => {
+        windowBandReported[sourceId] = true;
+      };
+
+      const gridNotes = { noteReported, noteActive, noteUnmapped, noteWindowBandReported };
 
       // MERGE-01/D-01: re-bucket the two wave-2 sources onto the SPC grid, reading the
       // SAME in-memory values (`gridMatches`/`gridTuples`) their legacy blocks were built
@@ -5150,7 +5196,7 @@ module.exports = NodeHelper.create({
       // `reportingSourceCount`).
       const sourceHealth = this._buildSourceHealth(
         productToggles, reportedDays, activeDays, unmappedLabels, staleBySource,
-        gridAnchorInfo, results
+        gridAnchorInfo, results, windowBandReported
       );
       // CR-01: hazardsPayload is `null` when the hazardsOutlook runner rejects (the
       // settle loop's documented `payload: null` substitution). `_buildGridSummary`'s own
