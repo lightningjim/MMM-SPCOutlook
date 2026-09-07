@@ -388,7 +388,7 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 19-04-PLAN.md — frontend: render-mechanism decision, helper hoist, `dayReportDetail`, three empty states, top stale badge, compact per-day line (D-01/02/03/08)
+- [x] 19-04-PLAN.md — frontend: render-mechanism decision, helper hoist, `dayReportDetail`, three empty states, top stale badge, compact per-day line (D-01/02/03/08)
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
@@ -437,7 +437,7 @@ Phases execute in numeric order: 14 → 15 → 16 → 17 → 18 → 19
 | 16. WPC Day 3–7 / CPC Day 8–14 Hazards Outlook | v2.0 | 8/8 | Complete    | 2026-08-27 |
 | 17. NWS/WPC HeatRisk & Parallelized Fetching | v2.0 | 9/9 | Complete    | 2026-09-01 |
 | 18. Merge, Precedence & Unified Payload Schema | v2.0 | 16/16 | Complete    | 2026-09-06 |
-| 19. Unified Day Report — getDom() Rewrite | v2.0 | 3/9 | In Progress|  |
+| 19. Unified Day Report — getDom() Rewrite | v2.0 | 4/9 | In Progress|  |
 
 ## Backlog
 
