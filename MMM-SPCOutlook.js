@@ -522,8 +522,8 @@
         wrapper.innerHTML += "<span style=\"color: #0059E0\">" + line + " in effect.</span><br/>"
       }
       // Phase 19 (RPT-01/RPT-02/RPT-03): one compact line per day, replacing every legacy
-      // per-product day render section (day1-3, extended days 4-8, fire weather, the ERO/
-      // WSSI renderDayBlock calls, the HeatRisk loop, and the HazardsOutlook day3-14 grid).
+      // per-product day render section (day1-3, extended days 4-8, fire weather, the shared
+      // ERO/WSSI per-day renderer, the HeatRisk loop, and the HazardsOutlook day3-14 grid).
       // Bound on the payload's own 14 always-present keys (18 D-02/WR-08), never a literal
       // day count. A missing/malformed `days` object or an individual day skips rather than
       // throwing (T-19-16).
