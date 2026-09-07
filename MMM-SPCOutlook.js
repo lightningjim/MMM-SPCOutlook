@@ -29,7 +29,14 @@
     // from "HeatRisk had no reading" — if a Level-1 day never reached the payload, MERGE-03
     // would either leak WPC's coarse binary Hazardous Heat flag through or suppress it on no
     // evidence.
-    showMinorHeat: false
+    showMinorHeat: false,
+    // Phase 19 (RPT-02): frontend-only display mode, the same sense as showMinorHeat above —
+    // it filters/expands a payload the backend has already fully emitted (this.spcrisk.days),
+    // so it goes into neither buildRequestPayload's products object nor node_helper.js's
+    // SUB_TOGGLES. Default false renders the compact one-line-per-day summary; true expands
+    // every day into its dimension sub-rows (D-04's per-day auto-expand independently
+    // promotes a specific day to the same expanded rendering regardless of this flag).
+    dayReportDetail: false
   },
 
   // WR-05: config comes from the user's MagicMirror config.js and is never validated by
@@ -182,18 +189,14 @@
   },
 
   getDom: function() {
+    // D-01: the weekday comes from the payload's resolved UTC date, never from
+    // dowToText(dow + N) — WPC's "Day N" boundary differs from SPC's (Pitfall 9), so
+    // offset arithmetic drifts by one; used only via hazardsWeekdayFromDate below.
     const dowToText = (day) => {
       const weekday = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
       if (day >= 7) day -= 7;
       return weekday[day];
     }
-    const cigLabel = (cig) => {
-      if (cig === 3) return "③ ";
-      if (cig === 2) return "② ";
-      if (cig === 1) return "① ";
-      return "";
-    };
-    const fireRiskToColor = { 0: "aaaaaa", 1: "FF7F00", 2: "FF0000", 3: "FF00FF" };
     const PROX_MIN_WEIGHT = 0.1;
     const cigLabelFromTierString = (tier) => {
       if (tier === "CIG3") return "③";
@@ -218,15 +221,6 @@
       if (tierLabel === "") return false;
       return true;
     };
-    // True if any categorical/cig entry on a day's proximity subtree is renderable.
-    const hasAnyRenderableProximity = (proximity) => {
-      if (!proximity) return false;
-      return hasRenderableProximity(proximity.categorical)
-        || hasRenderableProximity(proximity.cig)
-        || hasRenderableProximity(proximity.torCig)
-        || hasRenderableProximity(proximity.hailCig)
-        || hasRenderableProximity(proximity.windCig);
-    };
     const proximityBadge = (prox, mode) => {
       if (!hasRenderableProximity(prox)) return "";
       const weight = prox.value - Math.trunc(prox.value);
@@ -245,6 +239,37 @@
     const escapeHtml = (value) => String(value).replace(/[&<>"']/g, (ch) => (
       { "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" }[ch]
     ));
+    // T-16-19: an unvalidated `color` reaching `style="color:#..."` is an attribute
+    // injection vector, and is also the `color:#undefined` IN-08 class. Substitute a
+    // safe default rather than interpolating an unvalidated value. Relocated (Phase 19
+    // RPT-06/WR-06) above every render branch so both the day loop and the band apply it.
+    const validHazardColor = (color) => (
+      typeof color === "string" && /^[0-9a-fA-F]{6}$/.test(color) ? color : "aaaaaa"
+    );
+    // T-16-20: the MapServer imposes no length bound on a remote label, and 18 D-07 renders
+    // unmapped remote labels verbatim, so a malformed or hostile 1 MB string would
+    // otherwise become a 1 MB DOM node on a Raspberry Pi. Truncation applies at the
+    // render boundary only — the payload keeps the full value for the backend's merge.
+    // Truncated BEFORE escaping so the bound counts source characters, not entity
+    // expansions (T-16-22). Relocated (Phase 19 RPT-06/WR-06) above every render branch,
+    // one shared helper for the one call-site class the unified day loop now uses.
+    const HAZARDS_LABEL_MAX_CHARS = 60;
+    const truncateHazardLabel = (label) => {
+      const text = String(label);
+      return text.length > HAZARDS_LABEL_MAX_CHARS
+        ? text.slice(0, HAZARDS_LABEL_MAX_CHARS) + "…"
+        : text;
+    };
+    // D-01: the weekday comes from the payload's resolved UTC date, never from
+    // dowToText(dow + N) — WPC's "Day N" boundary differs from SPC's (Pitfall 9), so
+    // offset arithmetic drifts by one; the backend already resolved the real date.
+    // Returns null when the date is unparseable rather than leaking NaN/undefined.
+    // Relocated (Phase 19 RPT-06) above every render branch, in scope for the unified
+    // day loop.
+    const hazardsWeekdayFromDate = (dateStr) => {
+      const dt = new Date(String(dateStr) + "T00:00:00Z");
+      return isFinite(dt.getTime()) ? dowToText(dt.getUTCDay()) : null;
+    };
     // WR-09/CV-03: the one place the frontend names productRegistry.js's `kml-advisory`
     // rows. Each key is a row's `id` (which is also its key inside the payload's
     // `advisories` object) and each value is that row's `configFlag`. This mapping cannot be
@@ -252,51 +277,24 @@
     // it is stated once here rather than spelled out at the gate and again at the render.
     // A Phase 16/17 kml-advisory row adds one line here and nothing else.
     const ADVISORY_SOURCES = { spcMD: "showSPCMD", mpd: "showMPD" };
-    // WR-08/CV-03: node_helper derives every day span from PRODUCT_REGISTRY (`row.days`) and
-    // states the rule outright — "no literal day count survives outside the registry" — while
-    // the frontend enumerated five ERO terms and three WSSI terms by hand, in four places.
-    // Raising PRODUCT_REGISTRY.excessiveRain.days from 5 to 7 therefore produced a correct
-    // 28-key payload whose days 6-7 never rendered and never disqualified the no-risk
-    // short-circuit, with no error at either end. The frontend runs in a browser context and
-    // cannot require the registry, so the span is read off the block the backend actually
-    // shipped: an `arcgis-day-layers` block carries exactly one `day{N}Risk` key per day
-    // (D-05 guarantees the full block is present regardless of the toggle), which makes the
-    // key count the span. Anything that is not such a block yields 0 and renders nothing.
-    const dayRiskCount = (block) => {
-      if (!block || typeof block !== "object") return 0;
-      return Object.keys(block).filter((k) => /^day\d+Risk$/.test(k)).length;
+    // Phase 19 (RPT-02): hazardTaxonomy.js's eight dimensions, stated rather than derived —
+    // the frontend runs in a browser context and cannot require the backend's taxonomy
+    // module. Widest value is 12 characters ("Flash Flood"/"Heavy Precip"), which is what
+    // the detail-mode 13-character dimension field (plan 19-05) is sized against.
+    const DIMENSION_LABELS = {
+      "convective": "Convective", "flash-flood": "Flash Flood", "winter": "Winter",
+      "heat": "Heat", "cold": "Cold", "wind": "Wind", "fire": "Fire",
+      "heavy-precip": "Heavy Precip"
     };
-    // True when any day in an arcgis-day-layers block carries a tier other than "NONE".
-    // Strict !== so a missing/undefined key is NOT counted as a risk (IN-08's trap: `!=
-    // "NONE"` is true for undefined, which would render a row with `color:#undefined`).
-    const blockHasRisk = (block) => {
-      const days = dayRiskCount(block);
-      for (let d = 1; d <= days; d++) {
-        if (block[`day${d}Risk`] !== "NONE") return true;
-      }
-      return false;
+    // Phase 19 (RPT-02): the six DAY_SOURCE_IDS, stated rather than derived, same rationale
+    // as DIMENSION_LABELS above. The payload's own sources[id].displayName carries the long
+    // form (e.g. "SPC Convective Outlook") — these short names are the approved
+    // attribution contract for detail-mode source attribution (plan 19-05), not the long
+    // displayName.
+    const SOURCE_SHORT_NAMES = {
+      "spc-convective": "SPC", "spc-fire": "SPC Fire", "wpc-ero": "WPC ERO",
+      "wpc-wssi": "WSSI", "wpc-hazards": "WPC Hazards", "heatrisk": "HeatRisk"
     };
-    // WR-08: hazardsOutlook day keys have no `Risk` suffix (`day3`, not `day3Risk`), so this
-    // regex is disjoint from dayRiskCount's — the two never cross-match. The span is derived
-    // from the block's own keys, never a literal 3..14 range, matching WR-08's rule that no
-    // literal day count survives outside the registry. Tolerates a missing/non-object block
-    // (returns false) and a day entry whose `hazards` is absent or not an array (skipped),
-    // the same version-skew tolerance enabledAdvisories() already applies to advisories.
-    // 16-REVIEW WR-04: the gate and the renderer must share ONE definition of "renderable",
-    // the same remedy `enabledAdvisories()` already applies to the advisory band. They used
-    // to be two predicates that drifted: the gate counted every band entry while the
-    // renderer dropped entries whose window had already elapsed. A payload whose windowBand
-    // held only elapsed entries therefore disqualified the no-risk short-circuit, rendered
-    // nothing at all (the "Extended Hazards:" heading is written inside the loop, AFTER the
-    // `continue`), fell through to the contentMarker comparison, and printed "No Severe
-    // Weather Risk (unconfirmed)" on data that was neither stale nor degraded — a FALSE
-    // staleness signal, and the exact trust erosion D-15's asymmetry was written to avoid.
-    // It is the mirror image of the backend's CR-01.
-    //
-    // A negative `offsetEnd` is reachable: `_bucketHazardMatch` rejects an inverted span but
-    // imposes no lower bound on the band path, so a backfill, a correction, or a multi-day
-    // upstream stall can put a wholly-past window here.
-    //
     // 16-REVIEW WR-01: `hazardsLabelDisplayable` is this end's half of D-09/D-10. Every
     // other product row is gated on its own config at BOTH ends; the hazards renderers
     // used to render whatever labels arrived, so correctness depended entirely on the
@@ -337,65 +335,6 @@
         hazardsLabelDisplayable(entry.label)
       ));
     };
-    // Companion for the day grid — same asymmetry in the smaller direction: the gate counted
-    // `hazards.length` while renderHazardsDays additionally required each hazard to be a
-    // non-null object and skipped the row when none survived.
-    const renderableDayHazards = (day) => {
-      if (!day || typeof day !== "object" || !Array.isArray(day.hazards)) return [];
-      // WR-01: the same second-line-of-defense label gate the band applies, so the day
-      // grid and the band cannot disagree about what this config permits either.
-      return day.hazards.filter((h) => h && typeof h === "object" && hazardsLabelDisplayable(h.label));
-    };
-    const hazardsOutlookHasAnyDay = (block) => {
-      if (!block || typeof block !== "object") return false;
-      const dayKeys = Object.keys(block).filter((k) => /^day\d+$/.test(k));
-      for (const key of dayKeys) {
-        if (renderableDayHazards(block[key]).length > 0) return true;
-      }
-      return false;
-    };
-    // True when the block carries at least one RENDERABLE window entry. Same missing/
-    // non-object tolerance as hazardsOutlookHasAnyDay.
-    const hazardsOutlookHasWindowEntries = (block) => renderableWindowEntries(block).length > 0;
-    // D-03: the SOLE source of both the getDom() no-risk gate term and the HeatRisk render
-    // loop for this poll's heatRisk block. This is the third phase running that a new
-    // product must join the no-risk short-circuit, and the second in which the gate and the
-    // render loop could disagree — Phase 15 shipped a production defect of exactly this
-    // shape (a gate term that made every MPD invisible). Deriving both from one expression
-    // makes that disagreement unrepresentable rather than merely commented: a day whose
-    // category is below the display floor can never simultaneously fail to render here AND
-    // disqualify the all-clear above, because both callers read this same array.
-    //
-    // Tolerates a missing/non-object block (version skew from an older helper, or the
-    // toggle simply being off) the same way hazardsOutlookHasAnyDay does. The day span is
-    // derived from the block's own keys (WR-08's rule: no literal day count survives
-    // outside the registry) rather than a hardcoded 1..7 — this file cannot require
-    // productRegistry.js to read PRODUCT_REGISTRY.heatRisk.days, so the block's own keys are
-    // the only span the frontend can observe.
-    //
-    // `showMinorHeat` is read off `this.config` by the caller and passed in here — it never
-    // crosses the wire (D-02), so this predicate never reads `this.spcrisk` for the floor.
-    // Strict `=== true` on the floor selection, matching the backend's own CFG-01 default
-    // handling, so an absent or typo'd config value takes the stricter floor rather than a
-    // truthiness accident.
-    const heatRiskDaysToRender = (block, showMinorHeat) => {
-      if (!block || typeof block !== "object") return [];
-      const floor = showMinorHeat === true ? 1 : 2; // D-01
-      const dayKeys = Object.keys(block)
-        .filter((k) => /^day\d+$/.test(k))
-        .sort((a, b) => Number(a.slice(3)) - Number(b.slice(3)));
-      const days = [];
-      for (const key of dayKeys) {
-        const day = block[key];
-        // null fails this check (category 0 is affirmatively "no risk"; null is "no
-        // reading at all" — D-02/Phase 18 MERGE-03 depend on telling those apart, so
-        // neither may render here regardless of the floor).
-        if (day && typeof day.category === "number" && day.category >= floor) {
-          days.push({ d: Number(key.slice(3)), category: day.category });
-        }
-      }
-      return days;
-    };
     // WR-09: every other product row is gated on its own toggle (`this.config.showExcessiveRain
     // && ...`, `this.config.showWinterImpact && ...`); the advisory band was not, so it
     // rendered whatever arrived. That was safe only because _runKmlAdvisoryRow returns [] when
@@ -415,82 +354,121 @@
       }
       return lines;
     };
+    // D-05: this is its own labeled region, below the day rows — deliberately NOT
+    // folded into the advisory band (15 D-05). That band holds things in effect NOW
+    // (MDs/MPDs are 1-6h nowcasts); "in effect" wording does not apply to a 5-to-7-day
+    // forecast window. Unchanged by Phase 19's day-loop rewrite — RPT-04 relocates this
+    // band's position in plan 19-06, not its rendering.
+    const renderHazardsWindowBand = (block) => {
+      // ERO-03 / 15 D-09: absence is silence applies to the band as a whole — a
+      // missing/non-object block or an empty/non-array windowBand renders nothing,
+      // not even the heading.
+      if (renderableWindowEntries(block).length === 0) {
+        return;
+      }
+      let headingWritten = false;
+      // D-07: ordering is the payload array's order, untouched — the backend already
+      // applied the registry order (span start, ties broken by registry order);
+      // re-sorting here would put the ordering rule at two sites.
+      //
+      // WR-04: iterate the SHARED predicate, not `block.windowBand` with a local copy of
+      // the filter. The "a wholly-elapsed window is not a forecast, and rendering it
+      // would be worse than silence" rule now lives in exactly one place
+      // (renderableWindowEntries) and the no-risk gate reads the same definition, so the
+      // two cannot disagree about whether this band has anything to say.
+      for (const entry of renderableWindowEntries(block)) {
+        if (!headingWritten) {
+          wrapper.innerHTML += "Extended Hazards:<br/>";
+          headingWritten = true;
+        }
+        // D-08/D-06: both weekday and offset carry the feature's own observed span,
+        // never the layer's nominal window (D-06) — a D8-14 layer can carry a 2-day
+        // feature. Omit the weekday pair rather than leak NaN when either date is
+        // unparseable; the offset segment survives on its own.
+        const startWeekday = hazardsWeekdayFromDate(entry.startDate);
+        const endWeekday = hazardsWeekdayFromDate(entry.endDate);
+        const singleDay = entry.offsetStart === entry.offsetEnd;
+        let weekdaySegment = "";
+        if (startWeekday && endWeekday) {
+          weekdaySegment = (singleDay ? startWeekday : startWeekday + "–" + endWeekday) + " ";
+        }
+        // WR-06: coerce rather than trust the payload's types. These were the only
+        // payload-sourced values in either hazards renderer that reached innerHTML
+        // skipping BOTH escapeHtml and a type guard — while the elapsed-window guard
+        // three lines above does type-check `offsetEnd`. They are structurally numbers
+        // today (`Math.round` of a `Number.isFinite`-validated input), so this is not an
+        // exploitable XSS; it is this file's own WR-12 rule that nothing remote-sourced
+        // reaches the DOM without one of the two.
+        const off = (n) => (typeof n === "number" && isFinite(n) ? String(Math.trunc(n)) : "?");
+        const offsetSegment = singleDay
+          ? "(D" + off(entry.offsetStart) + ")"
+          : "(D" + off(entry.offsetStart) + "–" + off(entry.offsetEnd) + ")";
+        const label = "<span style=\"color:#" + validHazardColor(entry.color) + "\">" +
+          escapeHtml(truncateHazardLabel(entry.label)) + "</span>";
+        wrapper.innerHTML += weekdaySegment + offsetSegment + ": " + label + "<br/>";
+      }
+    };
+    // Phase 19 (RPT-01/RPT-02/RPT-03/D-01–D-03): the array of a day's surviving hazard
+    // entries, in payload order (18 D-15 already fixed taxonomy order; never re-sort — RPT-06
+    // checklist row 25). Declared once, called from both the render-decision site and the
+    // render body (WR-04's rule) so the two can never disagree about which days render.
+    const daySurvivors = (day) => {
+      if (!day || typeof day !== "object" || !Array.isArray(day.hazards)) return [];
+      // 17 D-01/D-02, RPT-06 checklist row 30: showMinorHeat is a frontend-only DISPLAY
+      // FLOOR applied to heatrisk-sourced entries specifically — 1 (minor+) when true, 2
+      // (moderate+) by default. wpc-hazards' binary "Hazardous Heat" has no severity ladder
+      // (FLOOR_PREBAKED) and is unaffected. A below-floor heatrisk entry already cleared the
+      // backend's own presence floor (category >= 1) to reach the payload at all; this is
+      // the stricter, frontend-only floor on top of that.
+      const heatFloor = this.config.showMinorHeat === true ? 1 : 2;
+      return day.hazards.filter((h) => {
+        if (!h || typeof h !== "object" || h.suppressedBy !== null) return false;
+        if (h.source === "heatrisk" && typeof h.value === "number" && h.value < heatFloor) return false;
+        return true;
+      });
+    };
+    // D-08: true when a day has no surviving hazard but proximityWeighting is on and the
+    // day's outside-mode categorical proximity is renderable — the one named exception to
+    // D-03's "no survivor, no row" rule, so the shipped v1.2 PROXUI outside-mode behaviour
+    // is not lost at default config.
+    const dayProximityOnly = (day) => (
+      daySurvivors(day).length === 0 &&
+      this.config.proximityWeighting === true &&
+      hasRenderableProximity(day && day.proximity && day.proximity.categorical)
+    );
     const wrapper = document.createElement("div");
+    // Phase 19 (RPT-05/RPT-06): summary is read defensively everywhere below — an absent or
+    // malformed summary can never throw out of getDom(), and can never be trusted to assert
+    // a confident empty state either. A malformed summary falls through both guarded empty-
+    // state branches into the main render, where a missing `days`/`advisories` renders
+    // nothing and the contentMarker fallback below supplies the unconfirmed string — the
+    // same CR-01 containment posture the legacy gate's own comments described.
+    const summary = this.spcrisk && typeof this.spcrisk === "object" ? this.spcrisk.summary : null;
+    const summaryOk = !!(summary && typeof summary === "object");
     if (!this.spcrisk) {
       wrapper.innerHTML = "Loading SPC Outlook...";
     } else if (this.spcrisk.error) {
       wrapper.textContent = "Error: " + this.spcrisk.error;
     } else if (
-      // CR-01: a degraded read is never an all-clear. When a fetch failure zeroes a layer
-      // its value becomes "NONE" — the same value a genuine all-clear produces — so without
-      // this term a total NOAA/DNS/Wi-Fi outage satisfies the whole gate below and renders
-      // as a confident "No Severe Weather Risk". The ⚠ badge lives in the final else, so the
-      // one branch that can show the degrade was unreachable in exactly the case the whole
-      // failed/anyStale/_stale chain exists for. Staleness must disqualify the short-circuit.
-      !this.spcrisk._stale &&
-      this.spcrisk.day1.risk == "NONE" &&
-      this.spcrisk.day2.risk == "NONE" &&
-      this.spcrisk.day3.risk == "NONE" &&
-      !hasAnyRenderableProximity(this.spcrisk.day1.proximity) &&
-      !hasAnyRenderableProximity(this.spcrisk.day2.proximity) &&
-      !hasAnyRenderableProximity(this.spcrisk.day3.proximity) &&
-      !( this.config.extended && this.spcrisk.day48Risk ) &&
-      !(this.spcrisk.fireWeather && (this.spcrisk.fireWeather.day1Risk > 0 || this.spcrisk.fireWeather.day2Risk > 0)) &&
-      !(this.config.extended && this.spcrisk.fireWeather && (
-        this.spcrisk.fireWeather.day3Risk > 0 ||
-        this.spcrisk.fireWeather.day4Risk > 0 ||
-        this.spcrisk.fireWeather.day5Risk > 0 ||
-        this.spcrisk.fireWeather.day6Risk > 0 ||
-        this.spcrisk.fireWeather.day7Risk > 0 ||
-        this.spcrisk.fireWeather.day8Risk > 0
-      )) &&
-      // ERO extension of the no-risk gate (Phase 19 RPT-06 regression target). WR-08: the
-      // day terms are derived from the block's own keys, not enumerated. node_helper builds
-      // this block from PRODUCT_REGISTRY.excessiveRain.days ("no literal day count survives
-      // outside the registry") — with five terms written out here, raising that single knob
-      // from 5 to 7 produced a correct 28-key payload whose days 6-7 never disqualified the
-      // short-circuit and never rendered, with no error anywhere.
-      !(this.config.showExcessiveRain && blockHasRisk(this.spcrisk.excessiveRain)) &&
-      // WSSI extension of the no-risk gate (Phase 19 RPT-06 regression target). Without
-      // this term a day with a genuine MAJOR winter impact and no convective risk would
-      // short-circuit to "No Severe Weather Risk" and the winter row would never render —
-      // the false-negative class this project exists to prevent. WR-08: same derivation as
-      // the ERO term above, tracking PRODUCT_REGISTRY.winterImpact.days.
-      !(this.config.showWinterImpact && blockHasRisk(this.spcrisk.winterImpact)) &&
-      // Hazards Outlook extension of the no-risk gate (Phase 19 RPT-06 regression target). TWO
-      // independent terms, not one OR'd predicate, because this product renders TWO independent
-      // things: the day3-day14 grid and the window band below it. A location can sit inside a
-      // window-band `Hazardous Heat` polygon with every day array empty — Temperature and Wildfire
-      // features route to the band unconditionally (HAZ-02) and never populate a day. With only the
-      // day term, that location renders the literal 'No Severe Weather Risk' while an active
-      // multi-day heat hazard is in the payload. That is not a hypothetical: Phase 15 shipped exactly
-      // this defect, where the gate's missing advisory term made every MPD invisible.
-      !(this.config.showHazardsOutlook && hazardsOutlookHasAnyDay(this.spcrisk.hazardsOutlook)) &&
-      !(this.config.showHazardsOutlook && hazardsOutlookHasWindowEntries(this.spcrisk.hazardsOutlook)) &&
-      // HeatRisk extension of the no-risk gate (Phase 19 RPT-06 regression target). Calls
-      // the exact same expression the render loop below calls (D-03), so a day the user
-      // cannot see (below the showMinorHeat floor) can never suppress this all-clear while
-      // rendering nothing — the disagreement class Phase 15 shipped as a production defect
-      // (the gate term that made every MPD invisible). showMinorHeat is read off
-      // this.config, never this.spcrisk — it never crossed the wire (D-02).
-      !(this.config.showHeatRisk && heatRiskDaysToRender(this.spcrisk.heatRisk, this.config.showMinorHeat).length > 0) &&
-      // Advisory extension of the no-risk gate (Phase 19 RPT-06 regression target). Before
-      // Phase 15 this gate had no advisory term at all, so a location inside an active
-      // discussion with no other risk rendered the literal "No Severe Weather Risk" and the
-      // advisory was never displayed. That is dormant for SPC MDs, which usually accompany
-      // convective risk, but fatal for MPD-01, since a WPC MPD routinely fires with zero SPC
-      // convective risk. WR-09: the term now carries the same per-product toggle the ERO and
-      // WSSI terms above carry, so the gate and the render agree about what is displayable —
-      // an advisory the user's config disabled must not disqualify the short-circuit for a
-      // band that will not render it. enabledAdvisories() tolerates a missing `advisories`
-      // key, and a missing or non-array inner key, from a helper that predates this shape
-      // (version skew) — the same tolerance the optional chaining here used to provide.
-      !(enabledAdvisories().length > 0)
+      // RPT-05/18 D-16: nothing was ever asked, so this is "never checked," not "checked
+      // and clear" — checked first, before the anyHazard discriminator below, so a fully
+      // disabled config is never confused with a genuine all-clear.
+      summaryOk && typeof summary.enabledSourceCount === "number" && summary.enabledSourceCount === 0
     ) {
-      wrapper.innerHTML = "No Severe Weather Risk"
+      wrapper.innerHTML = "No Products Enabled (edit config.js to turn one on)";
+    } else if (
+      // CR-01: staleness disqualifies this short-circuit entirely, preserved verbatim from
+      // the legacy gate's own `!this.spcrisk._stale` term — a degraded read must still reach
+      // the main branch below so the ⚠ badge renders, with "No Severe Weather Risk
+      // (unconfirmed)" supplied underneath it by the contentMarker fallback (unchanged),
+      // rather than a bare confident string standing in for a read that was never confirmed.
+      // Only the source of "no risk" changed, from a ~15-term boolean expression to one
+      // summary.anyHazard read (18's unified merge already unions every day survivor, the
+      // window band and the advisories into this one flag).
+      summaryOk && summary.anyHazard === false && !this.spcrisk._stale
+    ) {
+      wrapper.innerHTML = "No Severe Weather Risk";
     } else {
-      const dow = new Date().getDay();
-      wrapper.innerHTML = "";
       if (this.spcrisk._stale) {
         let staleSuffix = "";
         const asOf = this.spcrisk._staleAsOf;
@@ -503,12 +481,17 @@
         if (typeof asOf === "number" && isFinite(asOf)) {
           staleSuffix = " — " + moment(asOf).fromNow();
         }
+        // D-09: renders first, at the very top of all content, before any day block and
+        // before the band — a document-level status line, not attached to any specific
+        // day or the band.
         wrapper.innerHTML += "<span style=\"color:#FFCC00\">⚠ Stale" + staleSuffix + "</span><br/>";
       }
       // CR-01: everything rendered from here on is actual content. A degraded payload whose
-      // every value is "NONE" now reaches this branch (see the gate above) and would
-      // otherwise render as a bare badge with nothing under it, so the marker lets the tail
-      // of this branch say *what* is unconfirmed rather than leaving a dangling warning.
+      // summary cannot confirm an all-clear now reaches this branch (see the gate above)
+      // and would otherwise render as a bare badge with nothing under it, so the marker lets
+      // the tail of this branch say *what* is unconfirmed rather than leaving a dangling
+      // warning. Defense in depth: the empty-state ladder above catches the normal case,
+      // this catches a gate/render disagreement (Pitfall 9).
       const contentMarker = wrapper.innerHTML;
       // D-05: one advisory band, one colour, each entry prefixed with its issuing source
       // by `label` (SPC MD / WPC MPD entries are concatenated in that order) and MPDs
@@ -538,235 +521,49 @@
         }
         wrapper.innerHTML += "<span style=\"color: #0059E0\">" + line + " in effect.</span><br/>"
       }
-      if(this.spcrisk.day1.risk != "NONE" || hasRenderableProximity(this.spcrisk.day1.proximity?.categorical))
-      {
-        wrapper.innerHTML += dowToText(dow) + " (Day 1): <span style=\"color:#" + this.spcrisk.day1.color + "\">" + this.spcrisk.day1.text + "</span>" + proximityBadge(this.spcrisk.day1.proximity?.categorical, this.spcrisk.day1.risk == "NONE" ? "outside" : "inside") + "<br/>";
-      if(this.spcrisk.day1.probRisk) {
-        let probRiskHTML = ""
-        if (this.spcrisk.day1.torRisk > 0) probRiskHTML += "<i class=\"wi wi-tornado\"></i>" + cigLabel(this.spcrisk.day1.torCig) + proximityBadge(this.spcrisk.day1.proximity?.torCig, this.spcrisk.day1.torCig === 0 ? "outside" : "inside") + 100 * this.spcrisk.day1.torRisk + "% ";
-        if (this.spcrisk.day1.hailRisk > 0) probRiskHTML += "<i class=\"wi wi-meteor\"></i>" + cigLabel(this.spcrisk.day1.hailCig) + proximityBadge(this.spcrisk.day1.proximity?.hailCig, this.spcrisk.day1.hailCig === 0 ? "outside" : "inside") + 100 * this.spcrisk.day1.hailRisk + "% ";
-        if (this.spcrisk.day1.windRisk > 0) probRiskHTML += "<i class=\"wi wi-strong-wind\"></i>" + cigLabel(this.spcrisk.day1.windCig) + proximityBadge(this.spcrisk.day1.proximity?.windCig, this.spcrisk.day1.windCig === 0 ? "outside" : "inside") + 100 * this.spcrisk.day1.windRisk + "% ";
-        wrapper.innerHTML += probRiskHTML+"<br/>";
-      }}
-
-      if(this.spcrisk.day2.risk != "NONE" || hasRenderableProximity(this.spcrisk.day2.proximity?.categorical))
-      {
-        wrapper.innerHTML +=  dowToText(dow+1) + " (Day 2): <span style=\"color:#" + this.spcrisk.day2.color + "\">" + this.spcrisk.day2.text + "</span>" + proximityBadge(this.spcrisk.day2.proximity?.categorical, this.spcrisk.day2.risk == "NONE" ? "outside" : "inside") + "<br/>";
-      if(this.spcrisk.day2.probRisk) {
-        let probRiskHTML = ""
-        if (this.spcrisk.day2.torRisk > 0) probRiskHTML += "<i class=\"wi wi-tornado\"></i>" + cigLabel(this.spcrisk.day2.torCig) + proximityBadge(this.spcrisk.day2.proximity?.torCig, this.spcrisk.day2.torCig === 0 ? "outside" : "inside") + 100 * this.spcrisk.day2.torRisk + "% ";
-        if (this.spcrisk.day2.hailRisk > 0) probRiskHTML += "<i class=\"wi wi-meteor\"></i>" + cigLabel(this.spcrisk.day2.hailCig) + proximityBadge(this.spcrisk.day2.proximity?.hailCig, this.spcrisk.day2.hailCig === 0 ? "outside" : "inside") + 100 * this.spcrisk.day2.hailRisk + "% ";
-        if (this.spcrisk.day2.windRisk > 0) probRiskHTML += "<i class=\"wi wi-strong-wind\"></i>" + cigLabel(this.spcrisk.day2.windCig) + proximityBadge(this.spcrisk.day2.proximity?.windCig, this.spcrisk.day2.windCig === 0 ? "outside" : "inside") + 100 * this.spcrisk.day2.windRisk + "% ";
-        wrapper.innerHTML += probRiskHTML+"<br/>";
-      }}
-      if(this.spcrisk.day3.risk != "NONE" || hasRenderableProximity(this.spcrisk.day3.proximity?.categorical) || hasRenderableProximity(this.spcrisk.day3.proximity?.cig))
-      {
-        const day3CatBadge = proximityBadge(this.spcrisk.day3.proximity?.categorical, this.spcrisk.day3.risk == "NONE" ? "outside" : "inside");
-        const day3CigBadge = proximityBadge(this.spcrisk.day3.proximity?.cig, this.spcrisk.day3.cig === 0 ? "outside" : "inside");
-        const day3DualSep = (day3CatBadge !== "" && day3CigBadge !== "") ? ";" : "";
-        wrapper.innerHTML += dowToText(dow+2) + " (Day 3): <span style=\"color:#" + this.spcrisk.day3.color + "\">" + this.spcrisk.day3.text + cigLabel(this.spcrisk.day3.cig) + day3CatBadge + day3DualSep + day3CigBadge + "</span>";
-        wrapper.innerHTML += "<br/>";
-      }
-      if(this.config.extended)
-      {
-        if(this.spcrisk.day4.probRisk) wrapper.innerHTML += dowToText(dow+3) + " (Day 4): <span style=\"color:#" + this.spcrisk.day4.color + "\">" + this.spcrisk.day4.text + "</span><br/>";
-        if(this.spcrisk.day5.probRisk) wrapper.innerHTML += dowToText(dow+4) + " (Day 5): <span style=\"color:#" + this.spcrisk.day5.color + "\">" + this.spcrisk.day5.text + "</span><br/>";
-        if(this.spcrisk.day6.probRisk) wrapper.innerHTML += dowToText(dow+5) + " (Day 6): <span style=\"color:#" + this.spcrisk.day6.color + "\">" + this.spcrisk.day6.text + "</span><br/>";
-        if(this.spcrisk.day7.probRisk) wrapper.innerHTML += dowToText(dow+6) + " (Day 7): <span style=\"color:#" + this.spcrisk.day7.color + "\">" + this.spcrisk.day7.text + "</span><br/>";
-        if(this.spcrisk.day8.probRisk) wrapper.innerHTML += dowToText(dow+7) + " (Day 8): <span style=\"color:#" + this.spcrisk.day8.color + "\">" + this.spcrisk.day8.text + "</span><br/>";
-      }
-      if (this.spcrisk.fireWeather) {
-        if (this.spcrisk.fireWeather.day1Risk > 0) {
-          wrapper.innerHTML += "Fire Wx (Day 1): <span style=\"color:#" +
-            fireRiskToColor[this.spcrisk.fireWeather.day1Risk] + "\">" +
-            this.spcrisk.fireWeather.day1Text + "</span><br/>";
-        }
-        if (this.spcrisk.fireWeather.day2Risk > 0) {
-          wrapper.innerHTML += "Fire Wx (Day 2): <span style=\"color:#" +
-            fireRiskToColor[this.spcrisk.fireWeather.day2Risk] + "\">" +
-            this.spcrisk.fireWeather.day2Text + "</span><br/>";
-        }
-        if (this.config.extended) {
-          for (let d = 3; d <= 8; d++) {
-            if (this.spcrisk.fireWeather["day" + d + "Risk"] > 0) {
-              wrapper.innerHTML += "Fire Wx (Day " + d + "): <span style=\"color:#" +
-                fireRiskToColor[this.spcrisk.fireWeather["day" + d + "Risk"]] + "\">" +
-                this.spcrisk.fireWeather["day" + d + "Text"] + "</span><br/>";
-            }
+      // Phase 19 (RPT-01/RPT-02/RPT-03): one compact line per day, replacing every legacy
+      // per-product day render section (day1-3, extended days 4-8, fire weather, the shared
+      // ERO/WSSI per-day renderer, the HeatRisk loop, and the HazardsOutlook day3-14 grid).
+      // Bound on the payload's own 14 always-present keys (18 D-02/WR-08), never a literal
+      // day count. A missing/malformed `days` object or an individual day skips rather than
+      // throwing (T-19-16).
+      if (this.spcrisk.days && typeof this.spcrisk.days === "object") {
+        for (let n = 1; n <= 14; n++) {
+          const day = this.spcrisk.days[String(n)];
+          if (!day || typeof day !== "object") continue;
+          const survivors = daySurvivors(day);
+          const proximityOnly = dayProximityOnly(day);
+          // D-03: no survivor and no D-08 exception — this day renders no row and no
+          // marker at all, so the rendered day list is intentionally non-contiguous.
+          if (survivors.length === 0 && !proximityOnly) continue;
+          const weekday = hazardsWeekdayFromDate(day.date);
+          const prefix = "Day " + n + (weekday ? " (" + weekday + ")" : "");
+          if (proximityOnly) {
+            // D-08: one literal space, then proximityBadge()'s own leading-space return —
+            // together the same two-space gap every other compact line uses. Uncolored,
+            // no dimension prefix — this is the one named exception to <Dimension> <Label>.
+            wrapper.innerHTML += prefix + " " +
+              proximityBadge(day.proximity && day.proximity.categorical, "outside") + "<br/>";
+            continue;
           }
-        }
-      }
-      // WR-08: one renderer for every arcgis-day-layers block, with the day span read off
-      // the block the backend shipped rather than written out here. The literal `5` and `3`
-      // these loops used to carry were the frontend half of a contract whose backend half
-      // lives in PRODUCT_REGISTRY.<row>.days — changing the registry knob silently produced
-      // days that never rendered. Nothing here names a day count or a product's key layout.
-      const renderDayBlock = (label, block) => {
-        const days = dayRiskCount(block);
-        for (let d = 1; d <= days; d++) {
-          // Strict !== so an undefined key cannot render a row with `color:#undefined`.
-          if (block["day" + d + "Risk"] !== "NONE") {
-            wrapper.innerHTML += label + " (Day " + d + "): <span style=\"color:#" +
-              block["day" + d + "Color"] + "\">" +
-              block["day" + d + "Text"] + "</span><br/>";
-          }
-        }
-      };
-      // T-16-20: the MapServer imposes no length bound on `label`, and D-11 renders
-      // unmapped remote labels verbatim, so a malformed or hostile 1 MB string would
-      // otherwise become a 1 MB DOM node on a Raspberry Pi. Truncation applies at the
-      // render boundary only — the payload keeps the full value for Phase 18's merge.
-      // Truncated BEFORE escaping so the bound counts source characters, not entity
-      // expansions. 60 chars exceeds every label in the MapServer's ~15-label legend
-      // (longest observed: "Much Above Normal Temperatures", 30 chars), so this can
-      // only ever fire on a malformed or hostile value (T-16-22, accepted).
-      const HAZARDS_LABEL_MAX_CHARS = 60;
-      // Shared by both hazards renderers below (WR-06: a fix applied to one twin and
-      // not the other is this codebase's recurring defect shape) — defined once, used
-      // twice.
-      const truncateHazardLabel = (label) => {
-        const text = String(label);
-        return text.length > HAZARDS_LABEL_MAX_CHARS
-          ? text.slice(0, HAZARDS_LABEL_MAX_CHARS) + "…"
-          : text;
-      };
-      // T-16-19: an unvalidated `color` reaching `style="color:#..."` is an attribute
-      // injection vector, and is also the `color:#undefined` IN-08 class. Substitute a
-      // safe default rather than interpolating an unvalidated value.
-      const validHazardColor = (color) => (
-        typeof color === "string" && /^[0-9a-fA-F]{6}$/.test(color) ? color : "aaaaaa"
-      );
-      // D-01: the weekday comes from the payload's resolved UTC date, never from
-      // dowToText(dow + N) — WPC's "Day N" boundary differs from SPC's (Pitfall 9), so
-      // offset arithmetic drifts by one; the backend already resolved the real date.
-      // Returns null when the date is unparseable rather than leaking NaN/undefined.
-      const hazardsWeekdayFromDate = (dateStr) => {
-        const dt = new Date(String(dateStr) + "T00:00:00Z");
-        return isFinite(dt.getTime()) ? dowToText(dt.getUTCDay()) : null;
-      };
-      // T-16-18/T-16-21: renders the day3..day14 grid. Guarded against a missing/
-      // non-object block (WR-07 — a throw here takes the whole render down).
-      const renderHazardsDays = (block) => {
-        if (!block || typeof block !== "object") return;
-        // WR-08: the day span is derived from the block's own keys, never a literal
-        // 3..14 range — the registry, not this renderer, owns the day count.
-        const dayKeys = Object.keys(block)
-          .filter((k) => /^day\d+$/.test(k))
-          .sort((a, b) => Number(a.slice(3)) - Number(b.slice(3)));
-        for (const key of dayKeys) {
-          const entry = block[key];
-          // WR-04: the same shared-predicate treatment as the band — the gate's notion of
-          // "this day has something to show" and the renderer's must be one definition.
-          // ERO-03 / 15 D-09: absence is silence, applied per day — no row, no "None".
-          const renderableHazards = renderableDayHazards(entry);
-          if (renderableHazards.length === 0) continue;
-          const d = Number(key.slice(3));
-          const weekday = hazardsWeekdayFromDate(entry.date);
-          const weekdaySegment = weekday ? weekday + ", " : "";
-          // D-02: ordering within a row is the payload's array order, untouched — the
-          // backend already applied the registry-declared order; re-sorting here would
-          // put the ordering rule at two sites.
-          const hazardSpans = renderableHazards
-            .map((h) => (
-              "<span style=\"color:#" + validHazardColor(h.color) + "\">" +
-              escapeHtml(truncateHazardLabel(h.label)) + "</span>"
-            ));
-          wrapper.innerHTML += "Hazards (" + weekdaySegment + "Day " + d + "): " +
-            hazardSpans.join(", ") + "<br/>";
-        }
-      };
-      // D-05: this is its own labeled region, below the day rows — deliberately NOT
-      // folded into the advisory band (15 D-05). That band holds things in effect NOW
-      // (MDs/MPDs are 1-6h nowcasts); "in effect" wording does not apply to a 5-to-7-day
-      // forecast window. Accepted cost: Phase 19 relocates two blocks rather than one.
-      const renderHazardsWindowBand = (block) => {
-        // ERO-03 / 15 D-09: absence is silence applies to the band as a whole — a
-        // missing/non-object block or an empty/non-array windowBand renders nothing,
-        // not even the heading.
-        if (renderableWindowEntries(block).length === 0) {
-          return;
-        }
-        let headingWritten = false;
-        // D-07: ordering is the payload array's order, untouched — the backend already
-        // applied the registry order (span start, ties broken by registry order);
-        // re-sorting here would put the ordering rule at two sites.
-        //
-        // WR-04: iterate the SHARED predicate, not `block.windowBand` with a local copy of
-        // the filter. The "a wholly-elapsed window is not a forecast, and rendering it
-        // would be worse than silence" rule now lives in exactly one place
-        // (renderableWindowEntries) and the no-risk gate reads the same definition, so the
-        // two cannot disagree about whether this band has anything to say.
-        for (const entry of renderableWindowEntries(block)) {
-          if (!headingWritten) {
-            wrapper.innerHTML += "Extended Hazards:<br/>";
-            headingWritten = true;
-          }
-          // D-08/D-06: both weekday and offset carry the feature's own observed span,
-          // never the layer's nominal window (D-06) — a D8-14 layer can carry a 2-day
-          // feature. Omit the weekday pair rather than leak NaN when either date is
-          // unparseable; the offset segment survives on its own.
-          const startWeekday = hazardsWeekdayFromDate(entry.startDate);
-          const endWeekday = hazardsWeekdayFromDate(entry.endDate);
-          const singleDay = entry.offsetStart === entry.offsetEnd;
-          let weekdaySegment = "";
-          if (startWeekday && endWeekday) {
-            weekdaySegment = (singleDay ? startWeekday : startWeekday + "–" + endWeekday) + " ";
-          }
-          // WR-06: coerce rather than trust the payload's types. These were the only
-          // payload-sourced values in either hazards renderer that reached innerHTML
-          // skipping BOTH escapeHtml and a type guard — while the elapsed-window guard
-          // three lines above does type-check `offsetEnd`. They are structurally numbers
-          // today (`Math.round` of a `Number.isFinite`-validated input), so this is not an
-          // exploitable XSS; it is this file's own WR-12 rule that nothing remote-sourced
-          // reaches the DOM without one of the two.
-          const off = (n) => (typeof n === "number" && isFinite(n) ? String(Math.trunc(n)) : "?");
-          const offsetSegment = singleDay
-            ? "(D" + off(entry.offsetStart) + ")"
-            : "(D" + off(entry.offsetStart) + "–" + off(entry.offsetEnd) + ")";
-          const label = "<span style=\"color:#" + validHazardColor(entry.color) + "\">" +
-            escapeHtml(truncateHazardLabel(entry.label)) + "</span>";
-          wrapper.innerHTML += weekdaySegment + offsetSegment + ": " + label + "<br/>";
-        }
-      };
-      if (this.config.showExcessiveRain) {
-        renderDayBlock("Excessive Rain", this.spcrisk.excessiveRain);
-      }
-      if (this.config.showWinterImpact) {
-        // D-09 AMENDED: the "!== NONE" gate alone is sufficient here — the registry's
-        // includesFeat (val >= 2) already drops WINTER WEATHER AREA features before
-        // evaluatePolygons ever sees them, so this payload can only ever carry "NONE"
-        // for that case. Do not "fix" this by adding a separate WWA term; the floor is
-        // enforced in productRegistry.js, and recording it at both ends keeps the two
-        // files' coupling visible.
-        renderDayBlock("Winter Impact", this.spcrisk.winterImpact);
-      }
-      // Placement: immediately after Winter Impact and before Hazards Outlook. HeatRisk is
-      // a Days 1-7 product like ERO and WSSI, whereas Hazards Outlook covers Days 3-14, so
-      // this groups the near-term day grids together before the longer-range band. Gated
-      // on the same flag the no-risk gate term uses (WR-09 — gate and render must agree
-      // about what is displayable), and placed before the contentMarker comparison so a
-      // stale payload carrying real heat risk renders its content and not a bare ⚠ badge
-      // (D-16, CR-01).
-      if (this.config.showHeatRisk) {
-        for (const { d } of heatRiskDaysToRender(this.spcrisk.heatRisk, this.config.showMinorHeat)) {
-          const day = this.spcrisk.heatRisk["day" + d];
-          // A day that cleared the floor must never render as a blank row — fall back to
-          // the numeric category if text is missing/empty. escapeHtml/validHazardColor on
-          // every rendered field mirror renderHazardsDays exactly: these values are
-          // module-authored today, but the payload is remote-derived data structurally,
-          // and this also guarantees the raw "NoData" sentinel can never reach the DOM as
-          // a label — it is never mapped to `text`, and would be escaped if it somehow were.
-          const text = day.text ? escapeHtml(day.text) : escapeHtml(String(day.category));
-          wrapper.innerHTML += "Heat Risk (Day " + d + "): <span style=\"color:#" +
-            validHazardColor(day.color) + "\">" + text + "</span><br/>";
+          // Compact line grammar (UI-SPEC "Layout Grammar"): prefix, exactly two literal
+          // spaces, then hazard segments joined by " · " (U+00B7, outside every span).
+          const segments = survivors.map((h) => {
+            const segmentText = (h.dimension !== null && h.dimension !== undefined)
+              ? (DIMENSION_LABELS[h.dimension] || h.dimension) + " " + (h.text || h.label)
+              : (h.text || h.label);
+            return "<span style=\"color:#" + validHazardColor(h.color) + "\">" +
+              escapeHtml(truncateHazardLabel(segmentText)) + "</span>";
+          });
+          wrapper.innerHTML += prefix + "  " + segments.join(" · ") + "<br/>";
         }
       }
       // Gated on the same flag the no-risk gate terms use (WR-09 — gate and render must
       // agree about what is displayable). Placed before the contentMarker comparison so
       // a stale payload carrying real hazards renders its content and not a bare ⚠
-      // badge (D-16, CR-01).
+      // badge (D-16, CR-01). Only the window band renders here — the day3-14 grid this
+      // block used to also render is now covered by the unified day loop above.
       if (this.config.showHazardsOutlook) {
-        renderHazardsDays(this.spcrisk.hazardsOutlook);
         renderHazardsWindowBand(this.spcrisk.hazardsOutlook);
       }
       // CR-01: a stale payload with no renderable risk must not present as a bare ⚠ badge.
