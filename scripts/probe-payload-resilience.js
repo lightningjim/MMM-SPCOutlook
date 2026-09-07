@@ -10292,6 +10292,216 @@ const scenarios = [
         throw new Error(`control: expected day1.risk to be SLGT, got ${outC.day1.risk}`);
       }
     }
+  },
+  {
+    // RPT-03/RPT-06 (19-02): proves the unified days["1"] grid carries the same SPC
+    // proximity subtree the legacy day1 block does, derived exactly once. SAMPLE_RING
+    // covers PROBE_LAT/PROBE_LON (it is the same box every other SPC fixture in this
+    // file uses); HIGHER_RING is a distinct, non-containing polygon whose only job is to
+    // be a higher-tier candidate for computeProximity to find within its 40 km cutoff.
+    name: "rpt03-unified-grid-carries-spc-proximity-subtree",
+    run: async (helper) => {
+      const HIGHER_RING = [
+        [-70.0, 30.0], [-69.9, 30.0], [-69.9, 30.1], [-70.0, 30.1], [-70.0, 30.0]
+      ];
+      const DAY1_BODY = {
+        type: "FeatureCollection",
+        features: [
+          { type: "Feature", properties: { LABEL: "SLGT" }, geometry: { type: "Polygon", coordinates: [SAMPLE_RING] } },
+          { type: "Feature", properties: { LABEL: "ENH" }, geometry: { type: "Polygon", coordinates: [HIGHER_RING] } }
+        ]
+      };
+
+      const runOnce = async (proximityWeighting) => {
+        resetHelper(helper);
+        resetLogs();
+        helper._proximityWeighting = proximityWeighting;
+        helper._products = {};
+        installFetch(helper, [
+          ["day1otlk_cat.lyr.geojson", freshFetch(DAY1_BODY)]
+        ]);
+        const originalPointInPolygon = turfStub.pointInPolygon;
+        const originalPointToLineDistance = turfStub.pointToLineDistance;
+        // Only SAMPLE_RING (the SLGT polygon covering the probe location) is "contained".
+        // HIGHER_RING must read as not-contained, matching computeProximity's own
+        // precondition that a proximity candidate cannot already contain the user (D-07).
+        turfStub.pointInPolygon = (_pt, poly) =>
+          !!(poly && poly.__stubPoly && poly.__stubPoly[0] === SAMPLE_RING);
+        // Any candidate that reaches this stub already survived computeProximity's
+        // "higher tier" and "not contained" gates, so a flat in-range distance is enough
+        // to exercise the weighting math.
+        turfStub.pointToLineDistance = () => 5;
+        try {
+          return await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false);
+        } finally {
+          turfStub.pointInPolygon = originalPointInPolygon;
+          turfStub.pointToLineDistance = originalPointToLineDistance;
+        }
+      };
+
+      const out = await runOnce(true);
+      assertPayloadIntact(out);
+      // Precondition guard: the legacy value under test must exist, or nothing below
+      // proves anything about the unified grid mirroring it.
+      if (typeof out.day1.proximity !== "object" || out.day1.proximity === null) {
+        throw new Error("precondition failed: out.day1.proximity is absent — the legacy value this scenario mirrors was never produced");
+      }
+      if (out.day1.risk !== "SLGT") {
+        throw new Error(`precondition failed: expected day1.risk SLGT, got ${out.day1.risk}`);
+      }
+      if (typeof out.days["1"].proximity !== "object" || out.days["1"].proximity === null) {
+        throw new Error(`out.days["1"].proximity expected a non-null object, got ${JSON.stringify(out.days["1"].proximity)}`);
+      }
+      if (JSON.stringify(out.days["1"].proximity.categorical) !== JSON.stringify(out.day1.proximity.categorical)) {
+        throw new Error(
+          `out.days["1"].proximity.categorical diverged from the legacy out.day1.proximity.categorical: ` +
+          `${JSON.stringify(out.days["1"].proximity.categorical)} vs ${JSON.stringify(out.day1.proximity.categorical)}`
+        );
+      }
+
+      // Control: the identical fixture with proximity weighting off must carry no
+      // proximity field at all — proves the field tracks the flag rather than always
+      // being present (T-19-04).
+      const control = await runOnce(false);
+      if (control.days["1"].proximity !== undefined) {
+        throw new Error(`control: proximity weighting off still produced days["1"].proximity: ${JSON.stringify(control.days["1"].proximity)}`);
+      }
+    }
+  },
+  {
+    // RPT-03/RPT-06 (19-02), D-08 enabler: this is the scenario that would catch the
+    // exact defect this plan exists to prevent — a day whose convective risk floors out
+    // at NONE must still carry its proximity subtree so D-08's proximity-only exception
+    // has data to render.
+    name: "rpt03-unified-grid-keeps-proximity-on-a-no-risk-day",
+    run: async (helper) => {
+      const HIGHER_RING = [
+        [-70.0, 30.0], [-69.9, 30.0], [-69.9, 30.1], [-70.0, 30.1], [-70.0, 30.0]
+      ];
+      const DAY1_BODY = {
+        type: "FeatureCollection",
+        features: [
+          { type: "Feature", properties: { LABEL: "ENH" }, geometry: { type: "Polygon", coordinates: [HIGHER_RING] } }
+        ]
+      };
+
+      resetHelper(helper);
+      resetLogs();
+      helper._proximityWeighting = true;
+      helper._products = {};
+      installFetch(helper, [
+        ["day1otlk_cat.lyr.geojson", freshFetch(DAY1_BODY)]
+      ]);
+      const originalPointInPolygon = turfStub.pointInPolygon;
+      const originalPointToLineDistance = turfStub.pointToLineDistance;
+      // No polygon contains the probe location, so evaluatePolygons floors day1Risk at
+      // NONE while computeProximity still finds ENH within range.
+      turfStub.pointInPolygon = () => false;
+      turfStub.pointToLineDistance = () => 10;
+      let out;
+      try {
+        out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false);
+      } finally {
+        turfStub.pointInPolygon = originalPointInPolygon;
+        turfStub.pointToLineDistance = originalPointToLineDistance;
+      }
+      assertPayloadIntact(out);
+
+      if (out.day1.risk !== "NONE") {
+        throw new Error(`precondition failed: expected day1.risk NONE, got ${out.day1.risk}`);
+      }
+      // Precondition guard: if a spc-convective hazard survived, the NONE case under test
+      // never happened and the assertions below prove nothing about D-08.
+      const spcConvectiveHazards = out.days["1"].hazards.filter((h) => h.source === "spc-convective");
+      if (spcConvectiveHazards.length !== 0) {
+        throw new Error(`precondition failed: expected zero spc-convective hazards on days["1"], got ${JSON.stringify(spcConvectiveHazards)}`);
+      }
+      if (typeof out.days["1"].proximity !== "object" || out.days["1"].proximity === null) {
+        throw new Error(`days["1"].proximity expected present on a NONE-risk day, got ${JSON.stringify(out.days["1"].proximity)}`);
+      }
+      if (typeof out.days["1"].proximity.categorical !== "object" || out.days["1"].proximity.categorical === null) {
+        throw new Error(`days["1"].proximity.categorical expected present, got ${JSON.stringify(out.days["1"].proximity.categorical)}`);
+      }
+      if (out.days["1"].proximity.categorical.value !== out.day1.proximity.categorical.value ||
+          out.days["1"].proximity.categorical.nextTier !== out.day1.proximity.categorical.nextTier) {
+        throw new Error(
+          `days["1"].proximity.categorical diverged from the legacy day1.proximity.categorical: ` +
+          `${JSON.stringify(out.days["1"].proximity.categorical)} vs ${JSON.stringify(out.day1.proximity.categorical)}`
+        );
+      }
+    }
+  },
+  {
+    // RPT-03/RPT-06 (19-02): pins day 3's shape asymmetry — its proximity subtree carries
+    // a `cig` key, never the per-hazard-type torCig/hailCig/windCig keys days 1-2 use
+    // (RESEARCH.md Pitfall 1's "a renderer will assume away" case).
+    name: "rpt03-unified-grid-day3-proximity-uses-the-cig-key-not-the-per-type-keys",
+    run: async (helper) => {
+      const HIGHER_RING = [
+        [-70.0, 30.0], [-69.9, 30.0], [-69.9, 30.1], [-70.0, 30.1], [-70.0, 30.0]
+      ];
+      const DAY3_CAT_BODY = {
+        type: "FeatureCollection",
+        features: [
+          { type: "Feature", properties: { LABEL: "SLGT" }, geometry: { type: "Polygon", coordinates: [SAMPLE_RING] } },
+          { type: "Feature", properties: { LABEL: "ENH" }, geometry: { type: "Polygon", coordinates: [HIGHER_RING] } }
+        ]
+      };
+      const DAY3_PROB_BODY = {
+        type: "FeatureCollection",
+        features: [
+          { type: "Feature", properties: { LABEL: "0.45" }, geometry: { type: "Polygon", coordinates: [SAMPLE_RING] } }
+        ]
+      };
+      const DAY3_CIG_BODY = {
+        type: "FeatureCollection",
+        features: [
+          { type: "Feature", properties: { LABEL: "CIG1" }, geometry: { type: "Polygon", coordinates: [SAMPLE_RING] } },
+          { type: "Feature", properties: { LABEL: "CIG2" }, geometry: { type: "Polygon", coordinates: [HIGHER_RING] } }
+        ]
+      };
+
+      resetHelper(helper);
+      resetLogs();
+      helper._proximityWeighting = true;
+      helper._products = {};
+      installFetch(helper, [
+        ["day3otlk_cat.lyr.geojson", freshFetch(DAY3_CAT_BODY)],
+        ["day3otlk_prob.lyr.geojson", freshFetch(DAY3_PROB_BODY)],
+        ["day3otlk_cigprob.lyr.geojson", freshFetch(DAY3_CIG_BODY)]
+      ]);
+      const originalPointInPolygon = turfStub.pointInPolygon;
+      const originalPointToLineDistance = turfStub.pointToLineDistance;
+      // SAMPLE_RING is the "contained" polygon in every one of the three fetches above
+      // (SLGT, the 0.45 probability polygon, and CIG1); HIGHER_RING never contains the
+      // probe location in any of them.
+      turfStub.pointInPolygon = (_pt, poly) =>
+        !!(poly && poly.__stubPoly && poly.__stubPoly[0] === SAMPLE_RING);
+      turfStub.pointToLineDistance = () => 5;
+      let out;
+      try {
+        out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false);
+      } finally {
+        turfStub.pointInPolygon = originalPointInPolygon;
+        turfStub.pointToLineDistance = originalPointToLineDistance;
+      }
+      assertPayloadIntact(out);
+
+      if (out.day3.risk !== "SLGT") {
+        throw new Error(`precondition failed: expected day3.risk SLGT, got ${out.day3.risk}`);
+      }
+      if (typeof out.days["3"].proximity !== "object" || out.days["3"].proximity === null) {
+        throw new Error(`days["3"].proximity expected present, got ${JSON.stringify(out.days["3"].proximity)}`);
+      }
+      if (!("cig" in out.days["3"].proximity)) {
+        throw new Error(`days["3"].proximity expected a "cig" key, got ${JSON.stringify(out.days["3"].proximity)}`);
+      }
+      for (const key of ["torCig", "hailCig", "windCig"]) {
+        if (key in out.days["3"].proximity) {
+          throw new Error(`days["3"].proximity unexpectedly carries a "${key}" key — day 3 uses only categorical/cig: ${JSON.stringify(out.days["3"].proximity)}`);
+        }
+      }
+    }
   }
 ];
 
