@@ -39,3 +39,23 @@ whether a standalone fix to `_runHeatRiskProduct`'s legacy-bucketing filter is w
 interim (mirror the unified path's approach: push tuples to the legacy bucket before the
 `_todayUtcMs`-relative filter, or use the same nominal-anchor-based day computation the unified
 path already uses instead of raw `_todayUtcMs()`).
+
+## Resolution (2026-09-07, Phase 19-09)
+
+Discharged, not fixed. Plan 19-06 made `spcrisk.days[]` / `spcrisk.windowBand` the sole render
+path and pinned it with the permanent probe scenario `rpt01-getdom-reads-no-legacy-payload-block`
+(`scripts/probe-payload-resilience.js:12385-12409`). Plan 19-09 re-ran the sole-reader proof
+against the finished renderer at base commit `30a893c201a697a1a98342a7a2f2f20c46b0836b` and
+confirmed `getDom()` reads zero legacy accessor strings, including `spcrisk.heatRisk` — so the
+`node_helper.js:1152-1153` filter this todo names can no longer reach the screen through any
+render path that exists today.
+
+**Important precision:** discharged means unreachable **on screen**, not deleted from the
+**emitted payload**. `_runHeatRiskProduct`'s day-offset filter still executes every poll and the
+legacy `heatRisk.day1..day7` block it populates (day 7 still dropped ~12h/24h) still crosses the
+backend->frontend socket — it simply has no reader. The defect disappears entirely only once the
+backend emission itself is deleted, which is now a separately-tracked, separately-scoped item:
+`.planning/todos/pending/2026-09-07-delete-legacy-payload-block-emission-and-migrate-probe-suite.md`.
+
+Full reasoning, the sole-reader proof's command and output, and the measured deletion cost are
+recorded in `.planning/phases/19-unified-day-report-getdom-rewrite/19-LEGACY-RETIREMENT.md`.
