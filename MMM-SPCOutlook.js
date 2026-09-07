@@ -597,7 +597,15 @@
         // today (`Math.round` of a `Number.isFinite`-validated input), so this is not an
         // exploitable XSS; it is this file's own WR-12 rule that nothing remote-sourced
         // reaches the DOM without one of the two.
-        const off = (n) => (typeof n === "number" && isFinite(n) ? String(Math.trunc(n)) : "?");
+        // Phase 19 gap closure (19-08 Run B, operator-observed): `offsetStart`/`offsetEnd`
+        // are 0-BASED offsets from today (`_hazardDayOffset`'s contract: "0 = today"), but
+        // `D<n>` here — like `Day N` on every day block above, and like the NWS product
+        // names these features come from — is 1-BASED. Rendering the raw offset put
+        // "Wed (D2)" under a day list whose own Day 1 was Monday, i.e. the band disagreed
+        // with the grid directly above it about what day it meant. The backend's grid path
+        // already applied this same `+ 1` inline; both now go through the one named
+        // conversion so they cannot drift apart again.
+        const off = (n) => (typeof n === "number" && isFinite(n) ? String(Math.trunc(n) + 1) : "?");
         const offsetSegment = singleDay
           ? "(D" + off(entry.offsetStart) + ")"
           : "(D" + off(entry.offsetStart) + "–" + off(entry.offsetEnd) + ")";

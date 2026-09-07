@@ -2736,13 +2736,38 @@ module.exports = NodeHelper.create({
    * (`[3,7]` / `[8,14]`), NOT merely "same duration, any position." A 5-day feature
    * positioned off-window is genuinely day-resolved information and belongs in the day
    * rows, not the window band — do not "fix" this into a duration check.
-   * @param offsetStart - a feature's start offset (from _hazardDayOffset)
-   * @param offsetEnd - a feature's end offset (from _hazardDayOffset)
-   * @param dayRange - the layer's own [first, last] nominal window
+   * Phase 19 gap closure (19-08): the two arguments are 0-BASED offsets from today
+   * (`_hazardDayOffset`'s own contract: "0 = today"), while `dayRange` holds 1-BASED NWS
+   * product day numbers — `[3,7]` is the "Day 3-7 Hazards Outlook", where Day 1 is today.
+   * Comparing them directly meant a feature genuinely spanning the nominal window carried
+   * offsets `[2,6]` and could never equal `[3,7]`, so this guard could not fire at all: such
+   * a feature fell through to the day buckets and was repeated on every day, advertising
+   * exactly the daily resolution D-04 exists to suppress. Converting to day numbers here
+   * keeps the LOCKED reading intact (still exact alignment, still not a duration check) and
+   * only makes it reachable. Note this closes the Phase 16 deferred row "live confirmation
+   * of D-04's full-window guard" from the code end — both Precipitation layers returned zero
+   * features nationwide on 2026-08-26 and 2026-08-27, which is why a guard that could never
+   * fire was never observed failing to.
+   * @param offsetStart - a feature's start offset (from _hazardDayOffset, 0 = today)
+   * @param offsetEnd - a feature's end offset (from _hazardDayOffset, 0 = today)
+   * @param dayRange - the layer's own [first, last] nominal window, in 1-based NWS day numbers
    * @returns true only on exact alignment to dayRange
    */
   _isFullNominalWindow(offsetStart, offsetEnd, dayRange) {
-    return offsetStart === dayRange[0] && offsetEnd === dayRange[1];
+    return this.hazardOffsetToDayNumber(offsetStart) === dayRange[0] &&
+           this.hazardOffsetToDayNumber(offsetEnd) === dayRange[1];
+  },
+
+  /**
+   * The single conversion from `_hazardDayOffset`'s 0-based offset to the 1-based day
+   * number every other surface in this module speaks — grid keys (`days["1"]` is today),
+   * the frontend's `Day N` prefix, and the NWS product conventions `dayRange` encodes.
+   * `_addHazardsOutlookGridEntries` already did this inline as `... + 1`; this is that same
+   * `+ 1`, named, so the window band and the full-window guard cannot drift from the grid
+   * again. Non-numeric input passes through untouched for the caller's own guards to reject.
+   */
+  hazardOffsetToDayNumber(offset) {
+    return typeof offset === "number" && isFinite(offset) ? offset + 1 : offset;
   },
 
   /**

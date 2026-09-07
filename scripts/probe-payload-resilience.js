@@ -4354,6 +4354,115 @@ const scenarios = [
     // given a two-day "Heavy Rain" span (offsets 3-4, NOT the full [3,7] nominal window, so
     // it must bucket per-day rather than route to the window band) and a one-day "Heavy
     // Snow" (offset 5).
+    // D-04 / 19-08 gap closure: a Precipitation feature spanning its layer's ENTIRE nominal
+    // window is window-level information — repeating it identically on every day would
+    // advertise a daily resolution the data does not have. `_isFullNominalWindow` is that
+    // guard, and it could not fire: it compared `_hazardDayOffset`'s 0-BASED offsets
+    // ("0 = today") against `dayRange`'s 1-BASED NWS product day numbers (`[3,7]` = the
+    // "Day 3-7 Hazards Outlook"). A feature truly spanning the window carried offsets [2,6]
+    // and never equalled [3,7], so it fell through to the day buckets — exactly the spread
+    // D-04 exists to suppress. Phase 16 deferred live confirmation of this guard because both
+    // Precipitation layers returned zero features nationwide on 2026-08-26 and 08-27, which is
+    // why a guard that could never fire was never observed failing to.
+    //
+    // This scenario is two-way, and the control is the load-bearing half: it pins the LOCKED
+    // reading (exact alignment, NOT duration) and would itself have failed BEFORE the fix,
+    // because offsets [3,7] used to be what spuriously matched dayRange [3,7].
+    //   HAZARDS_NOW_MS is 2026-08-26, so NWS Day 1 = Aug 26 (offset 0), Day 3 = Aug 28
+    //   (offset 2) and Day 7 = Sep 1 (offset 6).
+    //   Case 1: Aug 28 -> Sep 1 = offsets [2,6] = day numbers 3-7 = the nominal window -> BAND.
+    //   Case 2: Aug 29 -> Sep 2 = offsets [3,7] = day numbers 4-8, same 5-day duration but
+    //           off-window -> DAY ROWS. This is precisely the span that used to match
+    //           dayRange [3,7] spuriously, which is what makes it the load-bearing control.
+    //
+    // NOTE (separate, pre-existing, not fixed here): the LEGACY `hazardsOutlook.dayN` keys are
+    // labelled by raw offset — `day3.date` is `todayUtc + 3 days` (node_helper.js:920), i.e.
+    // Aug 29, which is NWS Day 4. The legacy block is therefore one higher than the NWS day it
+    // holds, and cannot represent an offset-2 (NWS Day 3) feature at all since its keys start
+    // at day3. The unified `days[]` grid is unaffected — it is 1-based with days["1"] = today.
+    // 19-09 retires the legacy block, which is why this is documented rather than fixed.
+    // Mutation to prove RED (1): revert _isFullNominalWindow to compare raw offsets —
+    //   case 1 goes RED (the band empties and day3..day7 fill).
+    // Mutation to prove RED (2): change _isFullNominalWindow to a duration check
+    //   (offsetEnd - offsetStart === dayRange[1] - dayRange[0]) — the control goes RED.
+    name: "haz-full-nominal-window-routes-to-the-band-and-an-off-window-span-does-not",
+    run: async (helper) => {
+      resetHelper(helper);
+      resetLogs();
+      helper._nowMs = () => HAZARDS_NOW_MS;
+      helper._products = { showHazardsOutlook: true };
+      const originalPointInPolygon = turfStub.pointInPolygon;
+      turfStub.pointInPolygon = () => true;
+      const runWith = async (feature, etag) => {
+        resetHelper(helper);
+        resetLogs();
+        helper._nowMs = () => HAZARDS_NOW_MS;
+        helper._products = { showHazardsOutlook: true };
+        turfStub.pointInPolygon = () => true;
+        installHttp(helper, hazardsRoutes({
+          4: () => httpResponse({ body: hazardsCollection([feature]), etag })
+        }));
+        const out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, { showHazardsOutlook: true });
+        assertPayloadIntact(out);
+        assertHazardsBlockIntact(out);
+        return out;
+      };
+      const dayHazardCount = (out, from, to) => {
+        let n = 0;
+        for (let d = from; d <= to; d++) n += out.hazardsOutlook[`day${d}`].hazards.length;
+        return n;
+      };
+      try {
+        // --- Case 1: exactly the nominal Day 3-7 window -> the band, and no day rows ---
+        const full = await runWith(
+          hazardsFeature({ label: "Heavy Rain", startDate: Date.UTC(2026, 7, 28), endDate: Date.UTC(2026, 8, 1) }),
+          "haz-fullwindow-v1"
+        );
+        const inBand = full.hazardsOutlook.windowBand.filter((e) => e.label === "Heavy Rain");
+        if (inBand.length !== 1) {
+          throw new Error(
+            `D-04: a Precipitation feature spanning the entire nominal Day 3-7 window must route to ` +
+            `the window band, got windowBand=${JSON.stringify(full.hazardsOutlook.windowBand)}`
+          );
+        }
+        if (inBand[0].offsetStart !== 2 || inBand[0].offsetEnd !== 6) {
+          throw new Error(
+            `precondition failed: band entry must carry the 0-based offsets [2,6] that correspond ` +
+            `to day numbers 3-7, got [${inBand[0].offsetStart},${inBand[0].offsetEnd}]`
+          );
+        }
+        if (dayHazardCount(full, 3, 14) !== 0) {
+          throw new Error(
+            `D-04: a full-nominal-window feature must NOT also spread across the day rows — that is ` +
+            `the daily resolution the guard exists to suppress. day3-14 carried ` +
+            `${dayHazardCount(full, 3, 14)} entries`
+          );
+        }
+
+        // --- Case 2 (control): same 5-day duration, shifted one day off-window -> day rows ---
+        const off = await runWith(
+          hazardsFeature({ label: "Heavy Rain", startDate: Date.UTC(2026, 7, 29), endDate: Date.UTC(2026, 8, 2) }),
+          "haz-offwindow-v1"
+        );
+        if (off.hazardsOutlook.windowBand.length !== 0) {
+          throw new Error(
+            `control: an off-window span is genuinely day-resolved information and must NOT reach the ` +
+            `band — "full nominal window" is exact alignment, not duration. Got ` +
+            `${JSON.stringify(off.hazardsOutlook.windowBand)}`
+          );
+        }
+        // Legacy keys are offset-labelled (see NOTE above), so offsets [3,7] land on day3-day7.
+        if (dayHazardCount(off, 3, 7) === 0) {
+          throw new Error(
+            `control: an off-window span must spread across its own day rows, got none`
+          );
+        }
+      } finally {
+        turfStub.pointInPolygon = originalPointInPolygon;
+      }
+    }
+  },
+  {
     name: "hazards-precip-spread-buckets-every-day-in-span",
     run: async (helper) => {
       resetHelper(helper);
@@ -11902,6 +12011,74 @@ const scenarios = [
     // block, never above or interleaved with them. Four fixture parts — a day-1 survivor,
     // an SPC MD, a WPC MPD, a window-band entry — with a precondition guard, so the
     // ordering assertion below cannot pass on a partially-empty render.
+    // 19-08 gap closure, operator-observed on the mirror: the band printed "Wed (D2)" beneath
+    // a day list whose own Day 1 was Monday — Wednesday is Day 3. `offsetStart`/`offsetEnd` are
+    // 0-BASED offsets from today (`_hazardDayOffset`: "0 = today"); `D<n>`, like `Day N` on
+    // every day block above it, is 1-BASED. The band was disagreeing with the grid directly
+    // above it about which day it meant.
+    //
+    // The fixture uses offsetStart 2 / offsetEnd 6 — the true nominal Day 3-7 window — so the
+    // scenario also documents the offset-vs-day-number relationship the sibling
+    // `haz-full-nominal-window-routes-to-the-band` scenario depends on.
+    // Control: the single-day form, which takes a different branch (no en dash).
+    // Mutation to prove RED: drop the `+ 1` from the `off` helper in MMM-SPCOutlook.js's
+    // window-band renderer.
+    name: "rpt04-band-day-numbers-are-1-based-like-every-day-block-above-them",
+    run: async (_helper) => {
+      const frontend = loadFrontendModule();
+      const config = {
+        lat: PROBE_LAT, lon: PROBE_LON, extended: false, updateInterval: 60,
+        proximityWeighting: false, showSPCMD: true, showMPD: true, showHazardsOutlook: true
+      };
+      const spanPayload = unifiedPayload({
+        windowBand: [{
+          label: "Hazardous Heat", color: "a80000", mapped: true,
+          startDate: "2026-09-09", endDate: "2026-09-13", offsetStart: 2, offsetEnd: 6
+        }]
+      });
+      spanPayload.days["1"].hazards = [convectiveEntryGridOneTwo({})];
+      spanPayload.summary.anyHazard = true;
+      if (spanPayload.windowBand[0].offsetStart !== 2) {
+        throw new Error("precondition failed: fixture must carry a 0-based offsetStart of 2");
+      }
+      const spanRendered = renderDom(frontend, { config, spcrisk: spanPayload });
+      if (!spanRendered.includes("Day 1 (")) {
+        throw new Error(`precondition failed: fixture must render a Day 1 block to compare against: ${spanRendered}`);
+      }
+      if (!spanRendered.includes("(D3–7)")) {
+        throw new Error(
+          `RPT-04: a window-band span at offsets 2-6 must render as "(D3–7)" — the same 1-based ` +
+          `day numbering the Day N blocks above it use — got: ${spanRendered}`
+        );
+      }
+      if (spanRendered.includes("(D2–6)")) {
+        throw new Error(
+          `RPT-04: band rendered the raw 0-based offsets "(D2–6)"; Day 1 is today, so offset 2 is ` +
+          `Day 3: ${spanRendered}`
+        );
+      }
+
+      // Control: the single-day branch builds its string separately and must convert too.
+      const singlePayload = unifiedPayload({
+        windowBand: [{
+          label: "High Winds", color: "6e6e6e", mapped: true,
+          startDate: "2026-09-09", endDate: "2026-09-09", offsetStart: 2, offsetEnd: 2
+        }]
+      });
+      singlePayload.days["1"].hazards = [convectiveEntryGridOneTwo({})];
+      singlePayload.summary.anyHazard = true;
+      const singleRendered = renderDom(frontend, { config, spcrisk: singlePayload });
+      if (!singleRendered.includes("(D3)")) {
+        throw new Error(
+          `control: a single-day window-band entry at offset 2 must render "(D3)", got: ${singleRendered}`
+        );
+      }
+      if (singleRendered.includes("(D2)")) {
+        throw new Error(`control: single-day branch still rendering the raw offset: ${singleRendered}`);
+      }
+    }
+  },
+  {
     name: "rpt04-band-renders-below-every-day-block",
     run: async (_helper) => {
       const frontend = loadFrontendModule();
