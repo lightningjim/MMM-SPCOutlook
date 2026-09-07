@@ -3550,7 +3550,7 @@ module.exports = NodeHelper.create({
    *   `_resolveGridDayPrecedence`; mutated in place to add `autoExpand`
    */
   _resolveGridDayAutoExpand(day) {
-    let autoExpand = false;
+    let significantEntry = false;
     for (const entry of day.hazards) {
       if (entry.suppressedBy !== null) continue; // only a winning entry may trigger
       if (entry.dimension === null) continue; // D-07: no resolved taxonomy meaning
@@ -3561,11 +3561,42 @@ module.exports = NodeHelper.create({
       // a predicate — T-19-07's guard, mutation-proven in the probe suite.
       if (typeof entry.value !== "number") continue;
       if (significance(entry.value)) {
-        autoExpand = true;
+        significantEntry = true;
         break;
       }
     }
-    day.autoExpand = autoExpand;
+    // Phase 19 gap closure (19-08 Run B, operator-observed): significance alone was not a
+    // sufficient trigger. On a single-source day the expansion restates the compact header
+    // verbatim (D-06 requires exactly that) and adds only the source attribution — three
+    // lines to add one word, which is what the operator saw on a HeatRisk-only Extreme day.
+    // So an expansion must also DELIVER something the header cannot already show. Two ways
+    // it can, OR-ed:
+    //
+    //   (a) Two or more distinct sources contribute to the day. Multiple sources are what
+    //       produce the `also:` competitor rows — the disagreement between sources is real
+    //       information, and per-row attribution is only meaningful once there is more than
+    //       one source to attribute to. Counted over every entry, winners AND suppressed
+    //       competitors, because a suppressed competitor is precisely what renders as an
+    //       `also:` row.
+    //   (b) The day carries a convective `detail` sub-object. Convective is the only
+    //       dimension with one (attached at :3263), and it holds the probabilistic
+    //       tornado/hail/wind breakdown and proximity badge — content with no representation
+    //       on the compact line at all. This clause is why the rule does not regress the
+    //       case 19-03 explicitly protected when it rejected a dimension-count trigger: a
+    //       single high-end convective day is the most serious display this module produces
+    //       and must still auto-expand on its own.
+    //
+    // The significance floor is unchanged and still gates everything — this narrows when a
+    // day expands, never widens it.
+    const distinctSources = new Set();
+    let hasConvectiveDetail = false;
+    for (const entry of day.hazards) {
+      if (entry.dimension === null) continue; // same D-07 exclusion as the floor loop above
+      if (entry.source) distinctSources.add(entry.source);
+      if (entry.detail && typeof entry.detail === "object") hasConvectiveDetail = true;
+    }
+    const expansionAddsSomething = distinctSources.size >= 2 || hasConvectiveDetail;
+    day.autoExpand = significantEntry && expansionAddsSomething;
   },
 
   /**

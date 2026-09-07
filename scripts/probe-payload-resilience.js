@@ -11028,6 +11028,14 @@ const scenarios = [
     // cutoff (ENH, value 4) must set days["1"].autoExpand true. Control: the identical
     // fixture one tier lower (SLGT, value 3) must NOT trigger — proving the flag tracks the
     // locked threshold rather than mere presence of an entry.
+    //
+    // 19-08 gap closure: autoExpand is now `significance AND expansion-adds-something`, so
+    // this scenario's fixture must satisfy the second clause for the FIRST clause to be the
+    // thing under test. It supplies a real day-1 tornado probability, which makes the entry
+    // carry its `detail` sub-object and satisfies clause (b) — leaving the significance floor
+    // as the only variable between the ENH case and the SLGT control. Without this the
+    // scenario would go green for the wrong reason (both cases false, one of them because
+    // the fixture carried no detail rather than because it missed the floor).
     // Mutation to prove RED: change the significance predicate call in
     // _resolveGridDayAutoExpand to a bare truthiness test on entry.value.
     name: "rpt02-autoexpand-true-when-a-winning-entry-clears-its-own-significance-floor",
@@ -11038,6 +11046,12 @@ const scenarios = [
           { type: "Feature", properties: { LABEL: "ENH" }, geometry: { type: "Polygon", coordinates: [SAMPLE_RING] } }
         ]
       };
+      const SPC_TOR_BODY_LOCAL = {
+        type: "FeatureCollection",
+        features: [
+          { type: "Feature", properties: { LABEL: "5" }, geometry: { type: "Polygon", coordinates: [SAMPLE_RING] } }
+        ]
+      };
       const originalPointInPolygon = turfStub.pointInPolygon;
       const runWithBody = async (body) => {
         resetHelper(helper);
@@ -11046,6 +11060,7 @@ const scenarios = [
         turfStub.pointInPolygon = () => true;
         installHttp(helper, [
           ["day1otlk_cat.lyr.geojson", () => httpResponse({ body, etag: "rpt02-autoexpand-v1" })],
+          ["day1otlk_torn.lyr.geojson", () => httpResponse({ body: SPC_TOR_BODY_LOCAL, etag: "rpt02-autoexpand-tor-v1" })],
           [".lyr.geojson", () => httpResponse({ body: EMPTY_FEATURE_COLLECTION, etag: "rpt02-autoexpand-empty-v1" })]
         ]);
         const out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, {});
@@ -11057,6 +11072,12 @@ const scenarios = [
         const entry = enh.days["1"].hazards.find((h) => h.source === "spc-convective");
         if (!entry || entry.value !== 4 || entry.suppressedBy !== null) {
           throw new Error(`precondition failed: expected a surviving spc-convective entry with value 4 (ENH) on day 1, got ${JSON.stringify(entry)}`);
+        }
+        // Precondition guard (15 D-10): the fixture must actually carry `detail`, or the
+        // assertion below would be observing the expansion-adds-something clause rather than
+        // the significance floor this scenario exists to pin.
+        if (!entry.detail || typeof entry.detail !== "object") {
+          throw new Error(`precondition failed: fixture must produce a convective detail sub-object so the significance floor is the only variable, got ${JSON.stringify(entry)}`);
         }
         if (enh.days["1"].autoExpand !== true) {
           throw new Error(`RPT-02: expected days["1"].autoExpand === true for an ENH-tier surviving entry, got ${JSON.stringify(enh.days["1"].autoExpand)}`);
@@ -11074,6 +11095,98 @@ const scenarios = [
         }
         if (slgt.days["1"].autoExpand !== false) {
           throw new Error(`control: expected days["1"].autoExpand === false for a SLGT-tier (below the >=4 ENH floor) entry, got ${JSON.stringify(slgt.days["1"].autoExpand)}`);
+        }
+      } finally {
+        turfStub.pointInPolygon = originalPointInPolygon;
+      }
+    }
+  },
+  {
+    // RPT-02/D-04, 19-08 gap closure: clearing the significance floor is NECESSARY but no
+    // longer SUFFICIENT. The expansion must also deliver something the compact header cannot
+    // already show, because D-06 requires the expanded block to restate that header verbatim
+    // — on a single-source day with no detail the whole expansion adds one word (the source
+    // attribution) across three lines. Operator-observed on a HeatRisk-only Extreme day
+    // during 19-08's Run B.
+    //
+    // Case 1 (the narrowing): an above-floor ENH convective entry, alone on its day, with
+    // every probabilistic layer empty so `_addSpcGridEntries`'s own `hasDetail` check omits
+    // the detail sub-object. One source, no detail -> autoExpand FALSE even though the floor
+    // is cleared. This is the exact fixture shape that used to return true.
+    // Case 2 (control, clause a): the identical convective fixture plus an above-floor
+    // spc-fire CRIT reading on the same day. Two distinct sources -> autoExpand TRUE.
+    // The control is what proves the gate is not simply never firing.
+    //
+    // Clause (b) — a single-source convective day WITH detail still expanding — is pinned by
+    // rpt02-autoexpand-true-when-a-winning-entry-clears-its-own-significance-floor above,
+    // whose fixture supplies a real tornado probability and asserts autoExpand === true off
+    // one source. Between the two scenarios both OR-branches are covered in both directions.
+    //
+    // Mutation to prove RED (1): drop `&& expansionAddsSomething` from the final assignment
+    // in _resolveGridDayAutoExpand — case 1 goes RED (false became true).
+    // Mutation to prove RED (2): change `distinctSources.size >= 2` to `>= 1` — case 1 goes
+    // RED. Change it to `>= 3` and the case-2 control goes RED.
+    name: "rpt02-autoexpand-requires-a-second-source-when-the-day-carries-no-detail",
+    run: async (helper) => {
+      const SPC_ENH_BODY_LOCAL = {
+        type: "FeatureCollection",
+        features: [
+          { type: "Feature", properties: { LABEL: "ENH" }, geometry: { type: "Polygon", coordinates: [SAMPLE_RING] } }
+        ]
+      };
+      const FIRE_CRIT_BODY_LOCAL = {
+        type: "FeatureCollection",
+        features: [
+          { type: "Feature", properties: { LABEL: "CRIT" }, geometry: { type: "Polygon", coordinates: [SAMPLE_RING] } }
+        ]
+      };
+      const originalPointInPolygon = turfStub.pointInPolygon;
+      const runWith = async (routes) => {
+        resetHelper(helper);
+        resetLogs();
+        helper._products = {};
+        turfStub.pointInPolygon = () => true;
+        installHttp(helper, [
+          ["day1otlk_cat.lyr.geojson", () => httpResponse({ body: SPC_ENH_BODY_LOCAL, etag: "rpt02-gate-cat-v1" })],
+          ...routes,
+          [".lyr.geojson", () => httpResponse({ body: EMPTY_FEATURE_COLLECTION, etag: "rpt02-gate-empty-v1" })]
+        ]);
+        const out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, {});
+        assertPayloadIntact(out);
+        return out;
+      };
+      try {
+        // --- Case 1: one source, no detail, above floor -> must NOT auto-expand ---
+        const solo = await runWith([]);
+        const soloDay = solo.days["1"];
+        const soloEntry = soloDay.hazards.find((h) => h.source === "spc-convective");
+        if (!soloEntry || soloEntry.value !== 4 || soloEntry.suppressedBy !== null) {
+          throw new Error(`precondition failed: expected a surviving above-floor spc-convective ENH entry (value 4) on day 1, got ${JSON.stringify(soloEntry)}`);
+        }
+        // Precondition guard (15 D-10): if the fixture accidentally produced a detail
+        // sub-object, clause (b) would satisfy the gate and this case would prove nothing.
+        if (soloEntry.detail !== undefined) {
+          throw new Error(`precondition failed: case 1 fixture must produce NO detail sub-object (all probabilistic layers empty), got ${JSON.stringify(soloEntry.detail)}`);
+        }
+        const soloSources = new Set(soloDay.hazards.filter((h) => h.dimension !== null).map((h) => h.source));
+        if (soloSources.size !== 1) {
+          throw new Error(`precondition failed: case 1 must have exactly one contributing source, got ${JSON.stringify([...soloSources])}`);
+        }
+        if (soloDay.autoExpand !== false) {
+          throw new Error(`RPT-02: an above-floor single-source day carrying no detail must NOT auto-expand — the expansion would restate the compact header and add only the source name — got autoExpand === ${JSON.stringify(soloDay.autoExpand)}`);
+        }
+
+        // --- Case 2 (control): a second source on the same day -> must auto-expand ---
+        const paired = await runWith([
+          ["day1fw_windrh.lyr.geojson", () => httpResponse({ body: FIRE_CRIT_BODY_LOCAL, etag: "rpt02-gate-fire-v1" })]
+        ]);
+        const pairedDay = paired.days["1"];
+        const pairedSources = new Set(pairedDay.hazards.filter((h) => h.dimension !== null).map((h) => h.source));
+        if (!pairedSources.has("spc-convective") || !pairedSources.has("spc-fire")) {
+          throw new Error(`precondition failed: case 2 must have both spc-convective and spc-fire contributing to day 1, got ${JSON.stringify([...pairedSources])}`);
+        }
+        if (pairedDay.autoExpand !== true) {
+          throw new Error(`control: two distinct sources on an above-floor day must auto-expand (the second source is what produces the 'also:'/attribution content), got autoExpand === ${JSON.stringify(pairedDay.autoExpand)}`);
         }
       } finally {
         turfStub.pointInPolygon = originalPointInPolygon;
