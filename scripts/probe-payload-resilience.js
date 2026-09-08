@@ -12627,6 +12627,99 @@ const scenarios = [
     }
   },
   {
+    // 19-REVIEW BL-02: two co-equal survivors on ONE dimension. `_addHazardsOutlookGridEntries`
+    // dedupes a wpc-hazards day by LABEL, not by dimension, and hazardTaxonomy.js maps
+    // `Heavy Snow` and `Freezing Rain` both onto `winter`; `_resolveGridDayPrecedence` leaves
+    // `suppressedBy: null` on both because both come from the winning source. The sub-row
+    // grouper assigned the first by arrival order and pushed the second into `competitors`,
+    // so detail mode rendered a peer as an `also:` row — D-05's SUPPRESSED-competitor shape —
+    // while the compact header above it presented the same two entries as peers. Two modes
+    // contradicting each other about one entry is the class CR-02/03/04's collapse exists to
+    // make unrepresentable.
+    // Mutation to prove RED: restore `if (h.suppressedBy === null && !group.winner)` as the
+    // winner test (the second survivor reappears as `also: Freezing Rain`).
+    name: "bl02-two-co-equal-survivors-on-one-dimension-are-peers-not-also-rows",
+    run: async (_helper) => {
+      const frontend = loadFrontendModule();
+      const config = {
+        lat: PROBE_LAT, lon: PROBE_LON, extended: false, updateInterval: 60,
+        proximityWeighting: false, showHazardsOutlook: true
+      };
+      const coWinnerEntry = (label) => ({
+        dimension: "winter", source: "wpc-hazards", label, text: label,
+        value: null, color: "6fa8dc", suppressedBy: null
+      });
+      const payload = unifiedPayload({});
+      payload.days["5"].hazards = [coWinnerEntry("Heavy Snow"), coWinnerEntry("Freezing Rain")];
+      payload.summary.anyHazard = true;
+      payload.summary.activeDays = [5];
+      payload.summary.dimensions = ["winter"];
+
+      // (a) Detail mode: both survivors are winner-shaped rows, and no `also:` is claimed
+      // over either of them.
+      const detail = renderDom(frontend, {
+        config: { ...config, dayReportDetail: true }, spcrisk: payload
+      });
+      if (!detail.includes("Heavy Snow") || !detail.includes("Freezing Rain")) {
+        throw new Error(`both co-equal survivors must render in detail mode, got: ${detail}`);
+      }
+      if (detail.includes("also:")) {
+        throw new Error(
+          `a second suppressedBy:null entry is a peer, not a suppressed competitor — ` +
+          `detail mode must not claim an "also:" relationship: ${detail}`
+        );
+      }
+
+      // (b) The dimension label is written once for the GROUP — the first winner row carries
+      // it and the co-winner row's field is blank — so the two rows read as one labelled
+      // block rather than as two unrelated dimensions. Counted over the monospaced sub-row
+      // spans only; the compact header above legitimately prefixes each entry with its own
+      // dimension and is asserted separately in (c).
+      const subRowDimensionFields = detail.match(/monospace">Winter/g) || [];
+      if (subRowDimensionFields.length !== 1) {
+        throw new Error(
+          `the dimension field belongs to the group, not to each row — expected exactly one ` +
+          `sub-row carrying "Winter", got ${subRowDimensionFields.length}: ${detail}`
+        );
+      }
+      if (!/monospace">\s{2,}Freezing Rain/.test(detail)) {
+        throw new Error(
+          `the co-winner row must leave the dimension field blank and stay column-aligned ` +
+          `with the winner row above it, got: ${detail}`
+        );
+      }
+
+      // (c) The two modes agree: the compact header presents the same two entries, so
+      // neither mode says anything about the pair the other contradicts.
+      const compact = renderDom(frontend, { config, spcrisk: payload });
+      if (!compact.includes("Heavy Snow") || !compact.includes("Freezing Rain")) {
+        throw new Error(`the compact header must present both survivors, got: ${compact}`);
+      }
+
+      // (d) Control: `also:` is NOT retired — a genuinely suppressed competitor on the same
+      // dimension still renders as one, which is what makes (a) an assertion about the
+      // suppression relationship rather than about the row shape.
+      const suppressedPayload = unifiedPayload({});
+      suppressedPayload.days["5"].hazards = [
+        coWinnerEntry("Heavy Snow"),
+        { ...coWinnerEntry("Freezing Rain"), source: "wpc-wssi", suppressedBy: "wpc-hazards" }
+      ];
+      suppressedPayload.summary.anyHazard = true;
+      suppressedPayload.summary.activeDays = [5];
+      suppressedPayload.summary.dimensions = ["winter"];
+      const suppressedDetail = renderDom(frontend, {
+        config: { ...config, dayReportDetail: true, showWinterImpact: true },
+        spcrisk: suppressedPayload
+      });
+      if (!suppressedDetail.includes("also: ")) {
+        throw new Error(
+          `a suppressedBy!==null competitor must still render as an "also:" row, ` +
+          `got: ${suppressedDetail}`
+        );
+      }
+    }
+  },
+  {
     // 19-REVIEW WR-02: the compact header and its own detail sub-row shared the CR-02/03/04
     // FILTER but still coerced an entry's text two different ways — `h.text || h.label` on
     // the compact line (which renders the literal word "undefined" for an entry carrying

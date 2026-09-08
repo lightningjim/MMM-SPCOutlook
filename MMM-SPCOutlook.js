@@ -501,22 +501,36 @@
       for (const h of displayable) {
         let group;
         if (h.dimension === null || h.dimension === undefined) {
-          group = { dimension: null, winner: null, competitors: [] };
+          group = { dimension: null, winner: null, coWinners: [], competitors: [] };
           groups.push(group);
         } else {
           group = groupByDimension.get(h.dimension);
           if (!group) {
-            group = { dimension: h.dimension, winner: null, competitors: [] };
+            group = { dimension: h.dimension, winner: null, coWinners: [], competitors: [] };
             groupByDimension.set(h.dimension, group);
             groups.push(group);
           }
         }
         // The array already carries survivors-before-suppressed order within a dimension
         // (node_helper.js D-15), so the first suppressedBy===null entry encountered is the
-        // winner; anything else on the dimension is a competitor, defensively including a
-        // second suppressedBy===null entry should the resolution invariant ever be violated.
-        if (h.suppressedBy === null && !group.winner) {
-          group.winner = h;
+        // winner.
+        //
+        // 19-REVIEW BL-02: everything else used to become a `competitor`, INCLUDING a second
+        // `suppressedBy === null` entry, on the stated assumption that a co-equal survivor
+        // would be an invariant violation. It is not: `_addHazardsOutlookGridEntries` dedupes
+        // a wpc-hazards day by LABEL (`h.source === "wpc-hazards" && h.label === match.label`),
+        // not by dimension, and hazardTaxonomy.js maps several labels onto one dimension
+        // (`Heavy Snow`/`Freezing Rain`/`Heavy Ice` → winter, `Hazardous Heat`/`Excessive
+        // Heat` → heat, `High Winds`/`Significant Waves` → wind, …). `_resolveGridDayPrecedence`
+        // then leaves `suppressedBy: null` on BOTH, because both come from the winning source.
+        // Rendering the second as an `also:` row asserted D-05's suppressed-competitor
+        // relationship over two peers — while the compact header one line above presented
+        // them as peers, i.e. the two modes contradicting each other about the same entry,
+        // the class CR-02/03/04's collapse exists to make unrepresentable. Co-winners are now
+        // distinguished by what the payload SAYS (`suppressedBy`) rather than by arrival
+        // order, and render as full winner-shaped rows.
+        if (h.suppressedBy === null) {
+          if (!group.winner) group.winner = h; else group.coWinners.push(h);
         } else {
           group.competitors.push(h);
         }
@@ -537,9 +551,19 @@
         // D-07: the convective sub-row's inside-mode proximity badge and three-shape
         // probabilistic sub-line are relocated here, detail-only — every other dimension
         // has no `detail` sub-object at all, so this is a no-op for them.
-        const augment = group.dimension === "convective"
-          ? convectiveDetailAugment(day, group.winner)
-          : { labelSuffix: "", subLineHtml: "" };
+        // 19-REVIEW BL-02: the dimension field is written on the group's FIRST winner row
+        // only; a co-winner row leaves it blank, exactly as the `also:` rows below do, so the
+        // dimension still reads as one labelled block and the co-winner is visibly a peer of
+        // the row above it rather than a subordinate of it. Padded to the first row's own
+        // rendered width rather than to DIMENSION_FIELD_WIDTH, so an unmapped dimension whose
+        // payload string overruns the field (WR-04's own-account truncation above) still
+        // columns correctly.
+        const blankDimensionField = "".padEnd(dimensionField.length);
+        // D-07: the convective augment is read PER ENTRY, not once for the group — its whole
+        // input is `entry.detail` (plus the day's proximity subtree), so a co-winner carrying
+        // its own detail keeps its own probabilistic sub-line and an entry without one
+        // contributes nothing. Every non-convective dimension has no `detail` at all, so this
+        // is a no-op for them.
         // WR-04: truncate the label content itself, then pad — the 60-char bound counts
         // source characters (T-16-22), never the dimension field or the padding, and the
         // ellipsis can only ever land at the end of the label rather than mid-column.
@@ -552,12 +576,21 @@
         // different strings and could cut the same label at two different points. T-16-22's
         // stated intent is that the bound counts SOURCE characters; the badge and the prefix
         // are neither source-controlled nor unbounded.
-        const labelContent = truncateHazardLabel(entryText(group.winner)) + augment.labelSuffix;
-        const paddedFieldContent = dimensionField + labelContent.padEnd(DETAIL_LABEL_FIELD_WIDTH);
-        html += "<span style=\"white-space:pre-wrap\">" + "  " +
-          detailColoredSpan(group.winner.color, paddedFieldContent) +
-          detailSourceAttribution(group.winner.source) + "</span><br/>";
-        if (augment.subLineHtml) html += augment.subLineHtml;
+        const winnerRows = [group.winner].concat(group.coWinners);
+        for (let i = 0; i < winnerRows.length; i++) {
+          const entry = winnerRows[i];
+          const augment = group.dimension === "convective"
+            ? convectiveDetailAugment(day, entry)
+            : { labelSuffix: "", subLineHtml: "" };
+          const labelContent = truncateHazardLabel(entryText(entry)) + augment.labelSuffix;
+          const paddedFieldContent =
+            (i === 0 ? dimensionField : blankDimensionField) +
+            labelContent.padEnd(DETAIL_LABEL_FIELD_WIDTH);
+          html += "<span style=\"white-space:pre-wrap\">" + "  " +
+            detailColoredSpan(entry.color, paddedFieldContent) +
+            detailSourceAttribution(entry.source) + "</span><br/>";
+          if (augment.subLineHtml) html += augment.subLineHtml;
+        }
         for (const competitor of group.competitors) {
           // 17 literal spaces (2 + the dimension field width + 2 more), derived rather than
           // hardcoded so it stays in step with DIMENSION_FIELD_WIDTH above.
