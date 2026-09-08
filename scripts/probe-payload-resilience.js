@@ -12627,6 +12627,74 @@ const scenarios = [
     }
   },
   {
+    // 19-REVIEW WR-05: `extractPolygons` did `f.properties.LABEL || ""` with no coercion, so
+    // a numeric (or object) LABEL propagated verbatim into the grid hazard entries, where
+    // `_resolveGridDayPrecedence`'s comparator calls `a.label.localeCompare(b.label)` and
+    // threw "localeCompare is not a function". That throw is outside extractPolygons'
+    // per-feature containment and lands in getSpcOutlook's shared catch — the same "one bad
+    // feature blanks days 1-8, fire weather and the ERO together" outcome WR-08 exists to
+    // prevent. `LABEL` is a remote attribute; the probability layers' own `parseFloat(label)`
+    // toValue admits a numeric one without complaint.
+    // Mutations to prove RED: (1) restore `f.properties.LABEL || ""` (part (a) fails);
+    // (2) restore `a.label.localeCompare(b.label)` (part (b) throws).
+    name: "wr05-a-non-string-upstream-label-never-throws-out-of-the-poll",
+    run: async (helper) => {
+      resetHelper(helper);
+      resetLogs();
+
+      // (a) The boundary: a numeric LABEL comes back out as a string, so nothing downstream
+      // has to know it was ever anything else.
+      const numericLabelBody = {
+        type: "FeatureCollection",
+        features: [{
+          type: "Feature",
+          properties: { LABEL: 45 },
+          geometry: { type: "Polygon", coordinates: [SAMPLE_RING] }
+        }]
+      };
+      const polys = helper.extractPolygons(
+        numericLabelBody,
+        (label) => (label === "" ? 0 : parseFloat(label)),
+        (label, val) => val > 0,
+        "probe day4 probability layer"
+      );
+      if (polys.length !== 1) {
+        throw new Error(
+          `precondition: the probability layers' own toValue admits a numeric LABEL, so the ` +
+          `feature must survive extraction, got ${polys.length} polygons`
+        );
+      }
+      if (typeof polys[0].label !== "string") {
+        throw new Error(
+          `a remote LABEL must be coerced at the boundary rather than propagating its own ` +
+          `type into the grid, got ${typeof polys[0].label}`
+        );
+      }
+
+      // (b) The comparator is total regardless, for the other entry paths into `day.hazards`
+      // that do not come through extractPolygons at all.
+      const day = {
+        date: "2026-09-10", windowStart: null, windowEnd: null,
+        hazards: [
+          // TWO numeric labels, not one beside a string: the engine is free to call the
+          // comparator as (a, b) or (b, a), so a single numeric label proves nothing when it
+          // happens to land in `b`. With both numeric, `a.label.localeCompare` throws in
+          // either argument order.
+          { dimension: null, source: "some-future-source", label: 45, text: "45",
+            value: null, color: "e69138", suppressedBy: null },
+          { dimension: null, source: "some-future-source", label: 30, text: "30",
+            value: null, color: "e69138", suppressedBy: null },
+          { dimension: null, source: "some-future-source", label: "Novel Hazard",
+            text: "Novel Hazard", value: null, color: "e69138", suppressedBy: null }
+        ]
+      };
+      helper._resolveGridDayPrecedence(day);
+      if (day.hazards.length !== 3) {
+        throw new Error(`the precedence pass must not drop entries, got ${JSON.stringify(day.hazards)}`);
+      }
+    }
+  },
+  {
     // 19-REVIEW WR-04: the sub-row grouper discarded any group with no winner. A
     // `dimension: null` entry (D-07's unmapped passthrough) always gets a fresh group with
     // `winner: null`, so one carrying `suppressedBy !== null` landed in its own group's

@@ -2055,7 +2055,16 @@ module.exports = NodeHelper.create({
     const polygons = [];
     geojson.features.forEach(f =>{
       if (!f || typeof f.properties !== "object" || f.properties === null || !f.geometry) return;
-      const label = f.properties.LABEL || "";
+      // 19-REVIEW WR-05: coerced at the BOUNDARY. `LABEL` is a remote attribute and its type
+      // is not ours to assume — a numeric or object LABEL used to propagate verbatim through
+      // this function into the grid hazard entries, where `_resolveGridDayPrecedence`'s
+      // comparator does `a.label.localeCompare(b.label)` and threw "localeCompare is not a
+      // function". That throw is OUTSIDE this function's per-feature containment and lands in
+      // getSpcOutlook's shared catch — precisely the "one bad feature blanks days 1-8, fire
+      // weather and the ERO together" outcome WR-08's note below exists to prevent. Every
+      // other consumer already coerces (`dimensionOf` does `String(label)`, heatrisk emits
+      // `String(category)`); this was the last site trusting the raw type.
+      const label = f.properties.LABEL == null ? "" : String(f.properties.LABEL);
       const value = toValue(label, f);
       if (!includesFeat(label, value)) return;
 
@@ -3571,7 +3580,13 @@ module.exports = NodeHelper.create({
       if (survivorDiff !== 0) return survivorDiff;
       const rankDiff = rankIndex(a) - rankIndex(b);
       if (rankDiff !== 0) return rankDiff;
-      return a.label.localeCompare(b.label);
+      // 19-REVIEW WR-05: total over any label type. The boundary coercion in
+      // `extractPolygons` is the fix; this is the second line of defence, because a
+      // comparator that throws takes the WHOLE poll to `{ error }` from inside
+      // getSpcOutlook's shared catch, and this file has several other entry paths into
+      // `day.hazards` (heatrisk, wpc-hazards, the KML products) that would each have to be
+      // trusted individually otherwise.
+      return String(a.label).localeCompare(String(b.label));
     });
   },
 
