@@ -11765,9 +11765,18 @@ const scenarios = [
       };
       const payload = unifiedPayload({});
       payload.days["2"].proximity = { categorical: { value: 2.3, nextTier: "MRGL" } };
-      // A real payload derives anyHazard from this same grid entry (19-02); stated
-      // directly here to isolate D-08's render behavior from that derivation.
-      payload.summary.anyHazard = true;
+      // 19-REVIEW CR-01: this scenario used to set `payload.summary.anyHazard = true` here
+      // "to isolate D-08's render behavior from that derivation". That opted it out of the
+      // ONE derivation deciding whether the D-08 branch runs at all, so it was green against
+      // a payload the backend cannot emit: `_buildGridSummary` computes `anyHazard` with NO
+      // proximity term, so the real payload for the only situation D-08 exists for (nothing
+      // active anywhere, a nearby polygon edge) carries `anyHazard: false` and the no-risk
+      // short-circuit swallowed the entire render. The fixture's own default is left in
+      // place deliberately — it is what the backend would really emit here — which makes the
+      // assertion below fail RED without the gate's `!anyProximityOnlyDay()` term.
+      if (payload.summary.anyHazard !== false) {
+        throw new Error("fixture drift: this scenario must run against the anyHazard the backend really emits (false)");
+      }
       const rendered = renderDom(frontend, { config, spcrisk: payload });
       // Phase 19 (plan 19-05): the D-08 line is now wrapped in a white-space:pre-wrap span
       // (RPT-06 "Space padding survives to the screen") so the two-space gap (one literal
@@ -11787,13 +11796,72 @@ const scenarios = [
       }
 
       // Control (b): a sub-PROX_MIN_WEIGHT (0.1) fractional weight renders no day line
-      // either, pinning PROXUI-05's noise floor.
+      // either, pinning PROXUI-05's noise floor. 19-REVIEW CR-01: also runs against the
+      // backend's own `anyHazard: false`, so it pins the OTHER direction of the new gate
+      // term — a below-floor proximity must not hold the no-risk short-circuit open, i.e.
+      // `anyProximityOnlyDay` reads the same noise floor the render does.
       const belowFloorPayload = unifiedPayload({});
       belowFloorPayload.days["2"].proximity = { categorical: { value: 2.05, nextTier: "MRGL" } };
-      belowFloorPayload.summary.anyHazard = true;
       const belowFloorRendered = renderDom(frontend, { config, spcrisk: belowFloorPayload });
       if (belowFloorRendered.includes("Day 2 (")) {
         throw new Error(`control: a sub-PROX_MIN_WEIGHT proximity value should render no Day 2 line, got: ${belowFloorRendered}`);
+      }
+      if (!belowFloorRendered.startsWith("No Hazards Forecast")) {
+        throw new Error(`control: a below-floor proximity must still reach the no-risk all-clear, got: ${belowFloorRendered}`);
+      }
+    }
+  },
+  {
+    // 19-REVIEW CR-01: the gate-side half of D-08, kept as its own scenario because the
+    // defect was not in the render branch at all — that branch was correct and probe-green.
+    // It was that `summary.anyHazard === false` short-circuited the whole render before the
+    // day loop could reach it, and `anyHazard` has no proximity term, so the branch was
+    // unreachable against every payload the backend is capable of emitting. The pre-19 gate
+    // carried three `!hasAnyRenderableProximity(dayN.proximity)` terms; parity checklist rows
+    // 33/34 recorded `dayProximityOnly` as their successor at the RENDER site only and never
+    // mentioned this second, load-bearing use at the GATE site.
+    // Mutation to prove RED: drop `&& !anyProximityOnlyDay()` from the no-risk gate.
+    name: "cr01-proximity-only-day-survives-the-no-risk-short-circuit",
+    run: async (_helper) => {
+      const frontend = loadFrontendModule();
+      const config = {
+        lat: PROBE_LAT, lon: PROBE_LON, extended: false, updateInterval: 60,
+        proximityWeighting: true
+      };
+      // Exactly what the backend emits for "nothing active anywhere, a nearby polygon edge":
+      // every day quiet, no window band, no advisories — so `anyDayHazard`, `windowBandCount`
+      // and `advisoryCount` are all zero and `anyHazard` is false — plus one day carrying a
+      // renderable outside-mode categorical proximity subtree.
+      const payload = unifiedPayload({});
+      payload.days["1"].proximity = { categorical: { value: 0.3, nextTier: "MRGL" } };
+      const rendered = renderDom(frontend, { config, spcrisk: payload });
+      if (!/Day 1 \([A-Za-z]+\)  0\.3 \(near MRGL\)/.test(rendered)) {
+        throw new Error(`expected the D-08 row to survive the anyHazard:false gate, got: ${rendered}`);
+      }
+      // The display must not simultaneously assert an all-clear over data it is showing.
+      if (rendered.includes("No Hazards Forecast")) {
+        throw new Error(`expected no all-clear string alongside a rendered D-08 row, got: ${rendered}`);
+      }
+
+      // Control (a): with proximityWeighting off, the same payload is a genuine all-clear —
+      // the new gate term reads the config exactly as the render branch does, so it cannot
+      // hold the short-circuit open for a row that would not render.
+      const offRendered = renderDom(frontend, {
+        config: { ...config, proximityWeighting: false }, spcrisk: payload
+      });
+      if (offRendered !== "No Hazards Forecast") {
+        throw new Error(`control: proximityWeighting:false should reach the confident all-clear, got: ${offRendered}`);
+      }
+
+      // Control (b): a stale payload still bypasses the short-circuit entirely (CR-01's
+      // staleness doctrine), so the ⚠ badge renders above the D-08 row.
+      const stalePayload = unifiedPayload({});
+      stalePayload.days["1"].proximity = { categorical: { value: 0.3, nextTier: "MRGL" } };
+      stalePayload._stale = true;
+      stalePayload._staleAsOf = null;
+      const staleRendered = renderDom(frontend, { config, spcrisk: stalePayload });
+      if (!staleRendered.includes("⚠ Stale") || !staleRendered.includes("(near MRGL)")) {
+        throw new Error(`control: a stale proximity-only payload should render both the badge and the row, got: ${staleRendered}`);
       }
     }
   },

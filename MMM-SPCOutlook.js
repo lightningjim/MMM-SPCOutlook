@@ -747,6 +747,25 @@
       this.config.proximityWeighting === true &&
       hasRenderableProximity(day && day.proximity && day.proximity.categorical)
     );
+    // 19-REVIEW CR-01: the D-08 exception's half of WR-04's "gate and render read the same
+    // predicate" rule. `summary.anyHazard` is `anyDayHazard || windowBandCount > 0 ||
+    // advisoryCount > 0` (node_helper.js's `_buildGridSummary`), where `anyDayHazard` is
+    // purely a `suppressedBy === null` scan over `day.hazards` — PROXIMITY IS NOT A TERM IN
+    // IT. So on the only payload D-08 exists for (nothing active anywhere, a nearby polygon
+    // edge) `anyHazard` is false, the no-risk short-circuit below fired, and the proximity
+    // row was unreachable against any payload the backend can actually emit. The pre-19 gate
+    // carried three `!hasAnyRenderableProximity(dayN.proximity)` terms
+    // (`9143705:MMM-SPCOutlook.js:434-436`) that the rewrite dropped; this is their
+    // successor, expressed through `dayProximityOnly` — the SAME predicate the render branch
+    // consults — so the gate and the row it starves cannot drift apart again.
+    const anyProximityOnlyDay = () => {
+      const days = this.spcrisk && this.spcrisk.days;
+      if (!days || typeof days !== "object") return false;
+      for (let n = 1; n <= 14; n++) {
+        if (dayProximityOnly(days[String(n)])) return true;
+      }
+      return false;
+    };
     // Phase 19 gap closure (19-08 Run A, operator decision): the all-clear string is
     // "No Hazards Forecast", not the legacy "No Severe Weather Risk". v1.x was an
     // SPC-convective-only module and "severe weather" was accurate then; v2.0 merged in
@@ -846,7 +865,12 @@
       // Only the source of "no risk" changed, from a ~15-term boolean expression to one
       // summary.anyHazard read (18's unified merge already unions every day survivor, the
       // window band and the advisories into this one flag).
-      summaryOk && summary.anyHazard === false && !this.spcrisk._stale
+      //
+      // 19-REVIEW CR-01: ...with one term `anyHazard` structurally cannot supply. It unions
+      // survivors, the band and the advisories — never proximity — so D-08's proximity-only
+      // day is content this short-circuit would otherwise assert an all-clear over while the
+      // payload holds the data. See `anyProximityOnlyDay` above.
+      summaryOk && summary.anyHazard === false && !this.spcrisk._stale && !anyProximityOnlyDay()
     ) {
       wrapper.innerHTML = NO_HAZARD_TEXT;
     } else {
