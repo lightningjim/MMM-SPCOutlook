@@ -5493,19 +5493,24 @@ const scenarios = [
       // Phase 19: `summary.anyHazard` now travels with the payload as a single value
       // computed once upstream, rather than being re-derived from this instance's own
       // config at render time (the legacy gate's own design). A frontend instance whose
-      // config diverges from the state that produced the payload therefore can no longer
-      // privately confirm a clean all-clear for content it cannot see — it honestly
-      // degrades to "(unconfirmed)" via the same contentMarker fallback CR-01 already
-      // relies on, rather than asserting a confidence the render has no basis for.
+      // config diverges from the state that produced the payload therefore cannot privately
+      // confirm a clean all-clear for content it cannot see.
+      //
+      // 19-REVIEW WR-01 (operator decision): this degrade used to be "(unconfirmed)", and
+      // that was the wrong word for it. The poll here was clean and fresh; nothing about the
+      // read was unconfirmed. What actually happened is that this instance's own
+      // showHazardsOutlook setting hid content the payload really carried, which is now its
+      // own third string. "(unconfirmed)" stays reserved for a read that was not confirmed —
+      // see the stale control in rpt05-stale-quiet-payload-... for that case.
       const disabledConfig = { ...config, showHazardsOutlook: false };
       const disabledRendered = renderDom(frontend, { config: disabledConfig, spcrisk: payload });
       if (disabledRendered.includes("Hazardous Heat")) {
         throw new Error(`control: content the config disabled leaked into the render: ${disabledRendered}`);
       }
-      if (!disabledRendered.includes("No Hazards Forecast (unconfirmed)")) {
+      if (disabledRendered !== "No Hazards Forecast (filtered by settings)") {
         throw new Error(
-          `control: a populated windowBand payload the config can't display should degrade to the ` +
-          `unconfirmed variant (CR-01), not a bare or unexpected render: ${disabledRendered}`
+          `control: a fresh payload whose windowBand content this config gated out should say so ` +
+          `explicitly, not claim the read was unconfirmed: ${JSON.stringify(disabledRendered)}`
         );
       }
     }
@@ -11510,36 +11515,111 @@ const scenarios = [
     }
   },
   {
-    // RPT-05/18 D-16: "never checked" (no products enabled) must never be confused with
-    // "checked and clear." Pins the empty-state ladder's first branch, checked before the
-    // anyHazard discriminator.
-    name: "rpt05-no-products-enabled-is-not-an-all-clear",
-    run: async (_helper) => {
-      const frontend = loadFrontendModule();
-      const config = {
-        lat: PROBE_LAT, lon: PROBE_LON, extended: false, updateInterval: 60,
-        proximityWeighting: false
-      };
-      const payload = unifiedPayload({});
-      payload.summary.enabledSourceCount = 0;
-      const rendered = renderDom(frontend, { config, spcrisk: payload });
-      if (rendered !== "No Products Enabled (edit config.js to turn one on)") {
-        throw new Error(`expected the exact no-products-enabled string, got: ${JSON.stringify(rendered)}`);
-      }
-      if (rendered.includes("No Hazards Forecast")) {
-        throw new Error(`no-products-enabled output must not contain the all-clear substring: ${rendered}`);
-      }
+    // 19-REVIEW WR-02 (operator decision): the RPT-05/18 D-16 "No Products Enabled" branch is
+    // RETIRED, and this scenario replaces the probe that used to cover it. That probe set
+    // `payload.summary.enabledSourceCount = 0` by hand — a payload the backend cannot emit —
+    // so the suite reported coverage for a branch that could never fire. A probe asserting an
+    // impossible state is worse than no probe: it reads as proof.
+    //
+    // Two halves, because the retirement rests on a product FACT and the fact has to stay
+    // pinned or the reasoning rots: (a) the backend floor really is 2 and the D-16 field is
+    // still emitted, (b) the frontend branch really is gone.
+    name: "rpt05-no-products-enabled-branch-is-retired-and-its-count-has-a-floor-of-two",
+    run: async (helper) => {
+      const originalPointInPolygon = turfStub.pointInPolygon;
+      turfStub.pointInPolygon = () => false;
+      try {
+        resetLogs();
+        helper._nowMs = () => MERGE_NOW_MS;
+        // EVERY configurable product flag off — the most disabled a user can make this
+        // module. `spc-convective` and `spc-fire` have no configFlag in productRegistry.js
+        // and no flag in MMM-SPCOutlook.js's defaults, so there is nothing further to turn
+        // off; that is the whole reason the retired branch was unreachable.
+        const toggles = {
+          showExcessiveRain: false, showWinterImpact: false, showMPD: false,
+          showSPCMD: false, showHazardsOutlook: false, showDrought: false, showHeatRisk: false
+        };
+        helper._products = toggles;
+        installFetch(helper, [[".lyr.geojson", freshFetch(EMPTY_FEATURE_COLLECTION)]]);
+        const out = await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, false, toggles);
+        assertPayloadIntact(out);
 
-      // Control: enabledSourceCount 1 with anyHazard false is a genuine "checked and
-      // clear" all-clear — proving the branch above keys off the count, not off emptiness.
-      const controlPayload = unifiedPayload({});
-      controlPayload.summary.enabledSourceCount = 1;
-      const controlRendered = renderDom(frontend, { config, spcrisk: controlPayload });
-      if (controlRendered !== "No Hazards Forecast") {
-        throw new Error(
-          `control: enabledSourceCount 1 with anyHazard false should render the confident all-clear, ` +
-          `got: ${JSON.stringify(controlRendered)}`
-        );
+        // (a1) D-16 locks seven flat summary fields. The display fix must not silently drop
+        // one as a side effect, so the field is still emitted and still a number.
+        if (typeof out.summary.enabledSourceCount !== "number") {
+          throw new Error(
+            `D-16: summary.enabledSourceCount must still be emitted as a number even though no ` +
+            `display branch reads it any more, got ${JSON.stringify(out.summary.enabledSourceCount)}`
+          );
+        }
+        // (a2) The product fact the retirement rests on: a floor of exactly the two always-on
+        // SPC sources, with every configurable toggle off. If a future change ever gives
+        // spc-convective or spc-fire a configFlag, this assertion fails and whoever made that
+        // change is told to revisit the retired branch.
+        if (out.summary.enabledSourceCount !== 2) {
+          throw new Error(
+            `WR-02: with every configurable product flag off, enabledSourceCount should be ` +
+            `exactly 2 (spc-convective and spc-fire are always-on and have no configFlag), got ` +
+            `${out.summary.enabledSourceCount}. If the always-on core became configurable, the ` +
+            `retired "No Products Enabled" branch may be reachable again — revisit that decision.`
+          );
+        }
+        if (!out.sources["spc-convective"].enabled || !out.sources["spc-fire"].enabled) {
+          throw new Error(
+            `WR-02: expected both always-on sources to report enabled:true regardless of toggles, got ` +
+            JSON.stringify({ convective: out.sources["spc-convective"].enabled, fire: out.sources["spc-fire"].enabled })
+          );
+        }
+
+        // (b1) The frontend branch is gone: even the impossible payload the retired probe
+        // manufactured now renders an ordinary all-clear rather than the special string.
+        const frontend = loadFrontendModule();
+        const config = {
+          lat: PROBE_LAT, lon: PROBE_LON, extended: false, updateInterval: 60,
+          proximityWeighting: false
+        };
+        const impossiblePayload = unifiedPayload({});
+        impossiblePayload.summary.enabledSourceCount = 0;
+        const rendered = renderDom(frontend, { config, spcrisk: impossiblePayload });
+        if (rendered.includes("No Products Enabled")) {
+          throw new Error(`the retired "No Products Enabled" branch still fires: ${rendered}`);
+        }
+        if (rendered !== "No Hazards Forecast") {
+          throw new Error(
+            `an empty payload with no ungated content should render the confident all-clear ` +
+            `regardless of enabledSourceCount, got: ${JSON.stringify(rendered)}`
+          );
+        }
+        // (b2) Control: the count is now inert to the render. Same payload, a different
+        // count, byte-identical output — which is what "retired" means and what a lingering
+        // read of the field anywhere in getDom() would break.
+        const controlPayload = unifiedPayload({});
+        controlPayload.summary.enabledSourceCount = 8;
+        const controlRendered = renderDom(frontend, { config, spcrisk: controlPayload });
+        if (controlRendered !== rendered) {
+          throw new Error(
+            `summary.enabledSourceCount still changes the render (0 -> ${JSON.stringify(rendered)}, ` +
+            `8 -> ${JSON.stringify(controlRendered)}); it must be diagnostic-only now`
+          );
+        }
+        // (b3) The literal string is gone from the source, not merely unreachable.
+        const fs = require("fs");
+        const path = require("path");
+        const source = fs.readFileSync(path.join(__dirname, "..", "MMM-SPCOutlook.js"), "utf-8");
+        const stripped = source.split("\n")
+          .filter((line) => {
+            const trimmed = line.trim();
+            return !trimmed.startsWith("//") && !trimmed.startsWith("*");
+          })
+          .join("\n");
+        if (stripped.includes("No Products Enabled")) {
+          throw new Error("the retired empty-state string is still present in MMM-SPCOutlook.js outside comments");
+        }
+        if (stripped.includes("enabledSourceCount")) {
+          throw new Error("getDom still reads summary.enabledSourceCount outside comments; the branch is retired");
+        }
+      } finally {
+        turfStub.pointInPolygon = originalPointInPolygon;
       }
     }
   },
@@ -11953,6 +12033,274 @@ const scenarios = [
       const order = [rendered.indexOf("Wind Advisory"), rendered.indexOf("Damaging Wind Risk")];
       if (order[0] === -1 || order[1] === -1 || order[0] > order[1]) {
         throw new Error(`expected competitors in payload order (Comp1 before Comp2), got: ${rendered}`);
+      }
+    }
+  },
+  {
+    // 19-REVIEW WR-01 (operator decision): the three-way empty-render split. All three states
+    // used to render "(unconfirmed)", which is a word CR-01 makes load-bearing — it is
+    // reserved for a read that was NOT confirmed, and spending it on a clean poll trains the
+    // operator to ignore it. Restoring the CR-03/CR-04 gates turned the middle case from rare
+    // into ordinary, which is what forced the decision.
+    //
+    //   1. stale / malformed summary            -> "(unconfirmed)"    [outranks case 2]
+    //   2. fresh, content existed, config hid it -> "(filtered by settings)"
+    //   3. fresh, genuinely nothing to show      -> "No Hazards Forecast"
+    //
+    // Mutation to prove RED: invert the `unconfirmed` precedence at the contentMarker
+    // fallback, or drop the anyUngatedContent() branch.
+    name: "wr01-empty-render-distinguishes-unconfirmed-from-filtered-from-genuinely-clear",
+    run: async (_helper) => {
+      const frontend = loadFrontendModule();
+      const baseConfig = {
+        lat: PROBE_LAT, lon: PROBE_LON, extended: false, updateInterval: 60,
+        proximityWeighting: false
+      };
+      // One gated entry, on a source with a configFlag, so a single toggle decides whether
+      // this payload's only content is visible.
+      const gatedPayload = () => {
+        const p = unifiedPayload({});
+        p.days["4"].hazards = [{
+          dimension: "heavy-precip", source: "wpc-ero", label: "MDT", text: "ERO Moderate",
+          value: 3, color: "e06666", suppressedBy: null
+        }];
+        p.summary.anyHazard = true;
+        return p;
+      };
+
+      // Case 3: nothing anywhere, fresh, well-formed summary -> the confident string.
+      const clear = renderDom(frontend, { config: baseConfig, spcrisk: unifiedPayload({}) });
+      if (clear !== "No Hazards Forecast") {
+        throw new Error(`case 3: a genuine all-clear must stay the confident string, got: ${JSON.stringify(clear)}`);
+      }
+
+      // Case 2: the payload carried content and this instance's toggle hid all of it.
+      const filtered = renderDom(frontend, { config: baseConfig, spcrisk: gatedPayload() });
+      if (filtered !== "No Hazards Forecast (filtered by settings)") {
+        throw new Error(
+          `case 2: a fresh payload whose only content this config gated out must say so, got: ` +
+          JSON.stringify(filtered)
+        );
+      }
+      // ... and the control that proves case 2 is about the GATE and not about emptiness:
+      // the same payload with the toggle on renders the content instead of any empty state.
+      const visible = renderDom(frontend, {
+        config: { ...baseConfig, showExcessiveRain: true }, spcrisk: gatedPayload()
+      });
+      if (!visible.includes("ERO Moderate")) {
+        throw new Error(`control: showExcessiveRain:true should render the content, got: ${visible}`);
+      }
+
+      // Case 1 beats case 2: the SAME filtered payload, stale, says "(unconfirmed)". This is
+      // the precedence rule — if the read was not confirmed, that outranks explaining a
+      // config filter, because a stale payload's content is not trustworthy enough for the
+      // display to make claims about why it is hidden.
+      const stalePayload = gatedPayload();
+      stalePayload._stale = true;
+      stalePayload._staleAsOf = Date.now() - 3600000;
+      const staleRendered = renderDom(frontend, { config: baseConfig, spcrisk: stalePayload });
+      if (!staleRendered.includes("No Hazards Forecast (unconfirmed)")) {
+        throw new Error(`case 1: staleness must outrank the filtered form, got: ${staleRendered}`);
+      }
+      if (staleRendered.includes("filtered by settings")) {
+        throw new Error(`case 1: a stale payload must not claim the emptiness is a config filter: ${staleRendered}`);
+      }
+      if (!staleRendered.includes("⚠ Stale")) {
+        throw new Error(`vacuity guard failed: the stale badge did not render: ${staleRendered}`);
+      }
+
+      // Case 1 also covers a malformed summary: the payload cannot be trusted to assert a
+      // confident empty state, so it must not be trusted to assert a confident EXPLANATION
+      // of an empty state either.
+      const malformed = gatedPayload();
+      malformed.summary = "not an object";
+      const malformedRendered = renderDom(frontend, { config: baseConfig, spcrisk: malformed });
+      if (!malformedRendered.includes("No Hazards Forecast (unconfirmed)")) {
+        throw new Error(`a malformed summary must stay unconfirmed, got: ${malformedRendered}`);
+      }
+
+      // The discriminator's scope is the WHOLE render, not just the day grid. Both other
+      // gated regions must produce case 2 on their own.
+      const bandPayload = unifiedPayload({
+        windowBand: [{
+          label: "Hazardous Heat", color: "a80000", mapped: true,
+          startDate: "2026-09-09", endDate: "2026-09-13", offsetStart: 2, offsetEnd: 6
+        }]
+      });
+      bandPayload.summary.anyHazard = true;
+      const bandFiltered = renderDom(frontend, { config: baseConfig, spcrisk: bandPayload });
+      if (bandFiltered !== "No Hazards Forecast (filtered by settings)") {
+        throw new Error(`showHazardsOutlook gating the band must produce case 2, got: ${JSON.stringify(bandFiltered)}`);
+      }
+
+      const advisoryPayload = unifiedPayload({});
+      advisoryPayload.advisories = { spcMD: [{ label: "SPC MD 2108" }], mpd: [] };
+      advisoryPayload.summary.anyHazard = true;
+      const advisoryFiltered = renderDom(frontend, {
+        config: { ...baseConfig, showSPCMD: false }, spcrisk: advisoryPayload
+      });
+      if (advisoryFiltered !== "No Hazards Forecast (filtered by settings)") {
+        throw new Error(`ADVISORY_SOURCES gating the advisory band must produce case 2, got: ${JSON.stringify(advisoryFiltered)}`);
+      }
+
+      // showMinorHeat and showDrought are display gates too, not just the product toggles.
+      const heatPayload = unifiedPayload({});
+      heatPayload.days["3"].hazards = [{
+        dimension: "heat", source: "heatrisk", label: "1", text: "HeatRisk Minor",
+        value: 1, color: "ffeda0", suppressedBy: null
+      }];
+      heatPayload.summary.anyHazard = true;
+      const heatFiltered = renderDom(frontend, {
+        config: { ...baseConfig, showHeatRisk: true }, spcrisk: heatPayload
+      });
+      if (heatFiltered !== "No Hazards Forecast (filtered by settings)") {
+        throw new Error(`the showMinorHeat floor must count as a display gate, got: ${JSON.stringify(heatFiltered)}`);
+      }
+
+      const droughtPayload = unifiedPayload({});
+      droughtPayload.days["3"].hazards = [{
+        dimension: "heavy-precip", source: "wpc-hazards", label: "Severe Drought",
+        text: "Severe Drought", value: null, color: "996633", suppressedBy: null
+      }];
+      droughtPayload.summary.anyHazard = true;
+      const droughtFiltered = renderDom(frontend, {
+        config: { ...baseConfig, showHazardsOutlook: true }, spcrisk: droughtPayload
+      });
+      if (droughtFiltered !== "No Hazards Forecast (filtered by settings)") {
+        throw new Error(`the showDrought sub-toggle must count as a display gate, got: ${JSON.stringify(droughtFiltered)}`);
+      }
+
+      // A structurally-unrenderable payload is NOT "filtered by settings": a wholly-elapsed
+      // window entry is not a forecast under ANY config, and a suppressed-only day has no
+      // winner under any config. Both must stay case 3, or the new string would start
+      // blaming the user's settings for the payload's own shape.
+      const elapsedPayload = unifiedPayload({
+        windowBand: [{
+          label: "Hazardous Heat", color: "a80000", mapped: true,
+          startDate: "2026-08-01", endDate: "2026-08-02", offsetStart: -3, offsetEnd: -1
+        }]
+      });
+      elapsedPayload.summary.anyHazard = true;
+      const elapsedRendered = renderDom(frontend, {
+        config: { ...baseConfig, showHazardsOutlook: true }, spcrisk: elapsedPayload
+      });
+      if (elapsedRendered !== "No Hazards Forecast") {
+        throw new Error(
+          `a wholly-elapsed window entry is unrenderable under any config and must not be blamed ` +
+          `on settings, got: ${JSON.stringify(elapsedRendered)}`
+        );
+      }
+      const suppressedPayload = unifiedPayload({});
+      suppressedPayload.days["3"].hazards = [{
+        dimension: "wind", source: "spc-convective", label: "ENH", text: "Enhanced",
+        value: 4, color: "e06666", suppressedBy: "wpc-hazards"
+      }];
+      suppressedPayload.summary.anyHazard = true;
+      const suppressedRendered = renderDom(frontend, { config: baseConfig, spcrisk: suppressedPayload });
+      if (suppressedRendered !== "No Hazards Forecast") {
+        throw new Error(
+          `a suppressed-only day has no winner under any config and must not be blamed on ` +
+          `settings, got: ${JSON.stringify(suppressedRendered)}`
+        );
+      }
+      // Same for an always-on source: nothing gates spc-convective, so an all-clear caused by
+      // its absence can never be the user's settings.
+      const alwaysOnPayload = unifiedPayload({});
+      alwaysOnPayload.days["3"].hazards = [{
+        dimension: "convective", source: "spc-convective", label: "ENH", text: "Enhanced",
+        value: 4, color: "e06666", suppressedBy: null
+      }];
+      alwaysOnPayload.summary.anyHazard = true;
+      const alwaysOnRendered = renderDom(frontend, { config: baseConfig, spcrisk: alwaysOnPayload });
+      if (!alwaysOnRendered.includes("Enhanced")) {
+        throw new Error(`control: an always-on source must render with no toggles set, got: ${alwaysOnRendered}`);
+      }
+    }
+  },
+  {
+    // 19-REVIEW WR-01: the structural half. The discriminator needs an UNGATED reading of
+    // "what would have rendered", and the obvious way to get one — writing a second,
+    // ungated copy of the survivor logic — would reintroduce exactly the CR-02/CR-03/CR-04
+    // drift that was just collapsed into one predicate. The single predicate is
+    // parameterized instead. This pins that: both readings must come from one implementation,
+    // so a gate added in future is understood by the discriminator for free.
+    // Mutation to prove RED: give getDom a second, hand-written ungated survivor filter.
+    name: "wr01-gated-and-ungated-readings-share-one-predicate",
+    run: async (_helper) => {
+      const fs = require("fs");
+      const path = require("path");
+      const source = fs.readFileSync(path.join(__dirname, "..", "MMM-SPCOutlook.js"), "utf-8");
+      const stripped = source.split("\n")
+        .filter((line) => {
+          const trimmed = line.trim();
+          return !trimmed.startsWith("//") && !trimmed.startsWith("*");
+        })
+        .join("\n");
+
+      // Exactly one definition of each of the three gate-bearing predicates, and each takes
+      // the applyDisplayGates parameter rather than existing in a gated and an ungated twin.
+      const definitions = {
+        "hazardEntryDisplayable": /const hazardEntryDisplayable = \(h, applyDisplayGates\) =>/g,
+        "dayDisplayableHazards": /const dayDisplayableHazards = \(day, applyDisplayGates\) =>/g,
+        "daySurvivors": /const daySurvivors = \(day, applyDisplayGates\) =>/g,
+        "renderableWindowEntries": /const renderableWindowEntries = \(windowBand, applyDisplayGates\) =>/g,
+        "enabledAdvisories": /const enabledAdvisories = \(applyDisplayGates\) =>/g
+      };
+      for (const [name, re] of Object.entries(definitions)) {
+        const count = (stripped.match(re) || []).length;
+        if (count !== 1) {
+          throw new Error(
+            `expected exactly one parameterized definition of ${name}, found ${count}. The ungated ` +
+            `reading must be the SAME predicate with its gates switched off, never a second copy.`
+          );
+        }
+      }
+
+      // The gates themselves are named exactly once each, inside that one predicate — a
+      // second reader of any of them outside it is the drift this asserts against.
+      const gateReads = {
+        "DAY_SOURCE_FLAGS": 2,       // the const, and the one read in hazardEntryDisplayable
+        "showMinorHeat": 2,          // the `defaults` declaration, and the one heatFloor read
+        "hazardsLabelDisplayable": 3 // the const, the day-side read, the band-side read
+      };
+      for (const [token, expected] of Object.entries(gateReads)) {
+        const count = (stripped.match(new RegExp(token, "g")) || []).length;
+        if (count !== expected) {
+          throw new Error(
+            `expected ${token} to appear exactly ${expected} time(s) outside comments, found ${count}. ` +
+            `A new reader of a display gate is how the gated and ungated readings drift apart.`
+          );
+        }
+      }
+
+      // Exactly one caller passes `false`, and it is the discriminator.
+      if (!stripped.includes("const anyUngatedContent = ()")) {
+        throw new Error("expected the discriminator to be a single named function, anyUngatedContent");
+      }
+      const ungatedCallSites = [
+        "daySurvivors(days[String(n)], false)",
+        ", false).length > 0",          // renderableWindowEntries(..., false)
+        "enabledAdvisories(false)"
+      ];
+      for (const callSite of ungatedCallSites) {
+        if (!stripped.includes(callSite)) {
+          throw new Error(`expected the discriminator to read \`${callSite}\` — one ungated call per gated region`);
+        }
+      }
+      // And nothing OUTSIDE the discriminator switches the gates off: every `false` argument
+      // must sit within anyUngatedContent's own body.
+      const discriminator = stripped.slice(
+        stripped.indexOf("const anyUngatedContent = ()"),
+        stripped.indexOf("const wrapper = document.createElement")
+      );
+      const falseArgsTotal = (stripped.match(/\(false\)|, false\)/g) || []).length;
+      const falseArgsInDiscriminator = (discriminator.match(/\(false\)|, false\)/g) || []).length;
+      if (falseArgsTotal !== falseArgsInDiscriminator || falseArgsTotal !== 3) {
+        throw new Error(
+          `expected exactly three applyDisplayGates:false arguments, all inside anyUngatedContent; ` +
+          `found ${falseArgsTotal} in the file and ${falseArgsInDiscriminator} in the discriminator. ` +
+          `Any render path that switches the display gates off is a bug, not a shortcut.`
+        );
       }
     }
   },
@@ -12950,17 +13298,21 @@ const scenarios = [
         throw new Error(`control (a): a genuine all-clear no longer renders the plain no-risk line, got: ${emptyRendered}`);
       }
 
-      // Control (b, WR-09): the same populated payload with showHazardsOutlook:false must
-      // still degrade to the honest "(unconfirmed)" variant — content the config disabled
-      // must not leak, but the payload's own anyHazard still disqualifies a confident
-      // all-clear this instance's own config cannot back up.
+      // Control (b, WR-09): the same populated payload with showHazardsOutlook:false must not
+      // leak the band's content, and the payload's own anyHazard still disqualifies a
+      // confident all-clear this instance's config cannot back up.
+      //
+      // 19-REVIEW WR-01 (operator decision): the degrade is now the explicit
+      // "(filtered by settings)" rather than "(unconfirmed)". Nothing here is unconfirmed —
+      // the payload is fresh and its summary is well-formed; the content was hidden by this
+      // instance's own toggle, and the string now says which of those two happened.
       const disabledConfig = { ...config, showHazardsOutlook: false };
       const disabledRendered = renderDom(frontend, { config: disabledConfig, spcrisk: payload });
       if (disabledRendered.includes("Hazardous Heat")) {
         throw new Error(`control (b): content the config disabled leaked into the render: ${disabledRendered}`);
       }
-      if (!disabledRendered.includes("No Hazards Forecast (unconfirmed)")) {
-        throw new Error(`control (b): expected the unconfirmed degrade (CR-01), got: ${disabledRendered}`);
+      if (!disabledRendered.includes("No Hazards Forecast (filtered by settings)")) {
+        throw new Error(`control (b): expected the filtered-by-settings degrade, got: ${disabledRendered}`);
       }
     }
   },

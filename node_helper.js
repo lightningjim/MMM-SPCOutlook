@@ -3676,7 +3676,9 @@ module.exports = NodeHelper.create({
    * @returns { anyHazard, dimensions, activeDays, windowStart, windowEnd,
    *   enabledSourceCount, reportingSourceCount, bandDiagnostics: { windowBandCount,
    *   advisoryCount } } — D-16's seven fields flat and exactly as locked, plus D-20's
-   *   nested `bandDiagnostics` extension
+   *   nested `bandDiagnostics` extension. `enabledSourceCount` is diagnostic-only as of
+   *   19-REVIEW WR-02 (no renderer reads it; its zero case is unreachable because the
+   *   always-on core cannot be disabled) — see the note at its computation below.
    */
   _buildGridSummary(gridDays, windowBand, advisories, sourceHealth, anchorInfo) {
     void anchorInfo; // parameter-contract only; see JSDoc above
@@ -3712,6 +3714,25 @@ module.exports = NodeHelper.create({
     // insertion-ordered, not taxonomy-ordered).
     const dimensions = DIMENSION_ORDER.filter((dimension) => dimensionsSeen.has(dimension));
 
+    // 19-REVIEW WR-02 (operator decision): `enabledSourceCount` is DIAGNOSTIC-ONLY. It is
+    // still emitted because D-16 locks these seven flat fields and a display change must not
+    // quietly break a locked payload contract, but no renderer reads it any more — the
+    // frontend's "No Products Enabled" empty state that used to key off
+    // `enabledSourceCount === 0` has been retired (MMM-SPCOutlook.js's empty-state ladder).
+    //
+    // The zero case is unreachable in principle, not merely unreached: `_buildSourceHealth`
+    // below marks `spc-convective` and `spc-fire` `enabled: true` unconditionally
+    // (`isAlwaysOn`), and neither has a `configFlag` in productRegistry.js or a flag in
+    // MMM-SPCOutlook.js's `defaults` — they are the always-on core and no user config turns
+    // them off. So this count has a hard floor of 2. That is a product fact rather than a
+    // wiring bug, and the operator declined to make the always-on core configurable purely to
+    // make a display branch reachable. The user-facing state that branch was reaching for is
+    // now served by the frontend's "(filtered by settings)" string, driven by what actually
+    // got filtered rather than by a count that cannot reach zero.
+    //
+    // `rpt05-no-products-enabled-branch-is-retired-and-its-count-has-a-floor-of-two` pins both
+    // halves, so a future change that DOES make the core configurable fails loudly here and
+    // sends whoever made it back to that decision.
     let enabledSourceCount = 0;
     let reportingSourceCount = 0;
     for (const sourceId of Object.keys(sourceHealth)) {

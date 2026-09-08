@@ -557,12 +557,16 @@
       if (HAZARDS_DROUGHT_KEYS.includes(key) && this.config.showDrought !== true) return false;
       return true;
     };
-    const renderableWindowEntries = (windowBand) => {
+    // WR-01: `applyDisplayGates` has the same meaning and the same default as it does on
+    // hazardEntryDisplayable above. The elapsed-window term is structural (a wholly-elapsed
+    // window is not a forecast under any config) and always applies; only the showDrought /
+    // excluded-label filter is a display gate.
+    const renderableWindowEntries = (windowBand, applyDisplayGates) => {
       if (!Array.isArray(windowBand)) return [];
       return windowBand.filter((entry) => (
         entry && typeof entry === "object" &&
         !(typeof entry.offsetEnd === "number" && entry.offsetEnd < 0) &&
-        hazardsLabelDisplayable(entry.label)
+        (applyDisplayGates === false || hazardsLabelDisplayable(entry.label))
       ));
     };
     // WR-09: every other product row is gated on its own toggle (`this.config.showExcessiveRain
@@ -575,11 +579,14 @@
     // every poll and the losing instance renders advisories its own config disabled.
     // WR-07: the Array.isArray filter is the tolerance the gate already applies — an absent
     // or junk key contributes nothing rather than throwing out of getDom.
-    const enabledAdvisories = () => {
+    // WR-01: `applyDisplayGates` again, same meaning and default — false collects every
+    // advisory the payload carries regardless of this instance's per-source toggles, which is
+    // what the empty-render discriminator needs and what nothing else may use.
+    const enabledAdvisories = (applyDisplayGates) => {
       const advisories = (this.spcrisk && this.spcrisk.advisories) || {};
       const lines = [];
       for (const key of Object.keys(ADVISORY_SOURCES)) {
-        if (!this.config[ADVISORY_SOURCES[key]]) continue;
+        if (applyDisplayGates !== false && !this.config[ADVISORY_SOURCES[key]]) continue;
         if (Array.isArray(advisories[key])) lines.push(...advisories[key]);
       }
       return lines;
@@ -680,8 +687,17 @@
     // decides visibility now reads this single predicate; the ONLY thing that separates a
     // winner from an `also:` competitor is the `suppressedBy` term, which lives in
     // daySurvivors below rather than here (D-05's competitor rows must still render).
-    const hazardEntryDisplayable = (h) => {
+    //
+    // 19-REVIEW WR-01: `applyDisplayGates` exists so the empty-render discriminator can ask
+    // "what WOULD have rendered with this instance's settings ignored?" without a second,
+    // separately-maintained copy of this predicate — writing one would reintroduce exactly the
+    // CR-02/CR-03/CR-04 drift this function was created to collapse. False keeps only the
+    // structural terms (a well-formed entry); true adds the three config-driven display gates.
+    // It is true by default, so every render path gets the gates without asking and only the
+    // discriminator has to opt out.
+    const hazardEntryDisplayable = (h, applyDisplayGates) => {
       if (!h || typeof h !== "object") return false;
+      if (applyDisplayGates === false) return true;
       // 17 D-01/D-02, RPT-06 checklist row 30: showMinorHeat is a frontend-only DISPLAY
       // FLOOR applied to heatrisk-sourced entries specifically — 1 (minor+) when true, 2
       // (moderate+) by default. wpc-hazards' binary "Hazardous Heat" has no severity ladder
@@ -710,17 +726,17 @@
     // order (18 D-15 already fixed taxonomy order; never re-sort — RPT-06 checklist row 25).
     // This is what detail mode's sub-rows iterate, so a competitor is subject to exactly the
     // same floor/toggle/label gates as a winner.
-    const dayDisplayableHazards = (day) => {
+    const dayDisplayableHazards = (day, applyDisplayGates) => {
       if (!day || typeof day !== "object" || !Array.isArray(day.hazards)) return [];
-      return day.hazards.filter(hazardEntryDisplayable);
+      return day.hazards.filter((h) => hazardEntryDisplayable(h, applyDisplayGates));
     };
     // Phase 19 (RPT-01/RPT-02/RPT-03/D-01–D-03): the array of a day's surviving hazard
     // entries. Declared once, called from both the render-decision site and the render body
     // (WR-04's rule) so the two can never disagree about which days render — and now derived
     // from dayDisplayableHazards rather than re-filtering `day.hazards`, so the compact
     // header and the expanded sub-rows cannot disagree about which ENTRIES render either.
-    const daySurvivors = (day) => (
-      dayDisplayableHazards(day).filter((h) => h.suppressedBy === null)
+    const daySurvivors = (day, applyDisplayGates) => (
+      dayDisplayableHazards(day, applyDisplayGates).filter((h) => h.suppressedBy === null)
     );
     // D-08: true when a day has no surviving hazard but proximityWeighting is on and the
     // day's outside-mode categorical proximity is renderable — the one named exception to
@@ -743,6 +759,43 @@
     // the state the confident string is forbidden to claim.
     const NO_HAZARD_TEXT = "No Hazards Forecast";
     const NO_HAZARD_TEXT_UNCONFIRMED = NO_HAZARD_TEXT + " (unconfirmed)";
+    // 19-REVIEW WR-01 (operator decision): the third form. The confident string asserts
+    // "upstream was checked and there is nothing"; the unconfirmed form asserts "this
+    // all-clear was never confirmed". Neither is honest about a fresh, fully confirmed
+    // payload that DID carry content which this instance's own settings then hid — saying
+    // "No Hazards Forecast" hides a config mistake, and saying "(unconfirmed)" slanders a
+    // clean poll and trains the operator to ignore the word that CR-01 makes load-bearing.
+    // Declared beside its two siblings for the same reason they are declared together: the
+    // three forms describe three different states and must never drift into each other.
+    const NO_HAZARD_TEXT_FILTERED = NO_HAZARD_TEXT + " (filtered by settings)";
+    // WR-01: "would ANYTHING have rendered if this instance's display settings were ignored?"
+    // — the discriminator between the confident and the filtered form, and the ONLY caller
+    // that passes `applyDisplayGates: false`. It reads the same three predicates the render
+    // path reads (`daySurvivors`, `renderableWindowEntries`, `enabledAdvisories`), just with
+    // the gates off, so a future gate added to any of them is automatically understood here
+    // too — there is no second copy of the survivor logic to keep in step.
+    //
+    // Scope is the WHOLE render, not just the day grid: the window band is gated on
+    // `showHazardsOutlook` and the advisory sub-section on `ADVISORY_SOURCES`, so content
+    // hidden by either is equally "filtered by settings".
+    //
+    // `proximityWeighting` is deliberately NOT treated as a display gate. Unlike the gates
+    // above it travels in buildRequestPayload's request and changes what the backend
+    // computes, so "off" is not a display filter over content that exists — and D-08's
+    // proximity-only row reads it identically whether or not the gates are applied, so it
+    // could never distinguish the two readings anyway.
+    const anyUngatedContent = () => {
+      const days = this.spcrisk && this.spcrisk.days;
+      if (days && typeof days === "object") {
+        for (let n = 1; n <= 14; n++) {
+          if (daySurvivors(days[String(n)], false).length > 0) return true;
+        }
+      }
+      if (renderableWindowEntries(this.spcrisk && this.spcrisk.windowBand, false).length > 0) {
+        return true;
+      }
+      return enabledAdvisories(false).length > 0;
+    };
     const wrapper = document.createElement("div");
     // Phase 19 gap closure (19-08 Run B, operator-observed): UI-SPEC's "Layout Grammar"
     // defines the detail sub-row column contract as character offsets "measured from the
@@ -770,13 +823,21 @@
     } else if (this.spcrisk.error) {
       wrapper.textContent = "Error: " + this.spcrisk.error;
     } else if (
-      // RPT-05/18 D-16: nothing was ever asked, so this is "never checked," not "checked
-      // and clear" — checked first, before the anyHazard discriminator below, so a fully
-      // disabled config is never confused with a genuine all-clear.
-      summaryOk && typeof summary.enabledSourceCount === "number" && summary.enabledSourceCount === 0
-    ) {
-      wrapper.innerHTML = "No Products Enabled (edit config.js to turn one on)";
-    } else if (
+      // 19-REVIEW WR-02 (operator decision): the RPT-05/18 D-16 "No Products Enabled" branch
+      // that used to sit here is RETIRED. It could not fire against any payload the backend
+      // is capable of emitting: `_buildSourceHealth` marks `spc-convective` and `spc-fire`
+      // `enabled: true` unconditionally (node_helper.js, `isAlwaysOn`), and neither has a
+      // `configFlag` in productRegistry.js or a flag in this file's own `defaults` — they are
+      // the always-on core and there is no config that turns them off. So
+      // `summary.enabledSourceCount` has a hard floor of 2. That is a product fact, not a
+      // wiring bug, and the operator declined to add toggles for the always-on core to make
+      // the branch reachable. The real user-facing state this branch was reaching for — "your
+      // settings are why this is empty" — is answered instead by NO_HAZARD_TEXT_FILTERED at
+      // the contentMarker fallback below, which is driven by what actually got filtered
+      // rather than by a count that cannot reach zero. `summary.enabledSourceCount` itself
+      // is still emitted (D-16 locks the field) and is documented as diagnostic-only in
+      // node_helper.js's `_buildGridSummary`.
+      //
       // CR-01: staleness disqualifies this short-circuit entirely, preserved verbatim from
       // the legacy gate's own `!this.spcrisk._stale` term — a degraded read must still reach
       // the main branch below so the ⚠ badge renders, with "No Hazards Forecast
@@ -947,7 +1008,32 @@
       // nothing to fall back to. Either way the one thing the display can honestly assert
       // is that this all-clear was not confirmed against upstream.
       if (wrapper.innerHTML === contentMarker) {
-        wrapper.innerHTML += NO_HAZARD_TEXT_UNCONFIRMED;
+        // 19-REVIEW WR-01 (operator decision): three states reach this line, and they used to
+        // all say "(unconfirmed)".
+        //
+        // 1. The payload is stale, or its summary is malformed and so cannot be trusted to
+        //    assert anything. Unchanged: "(unconfirmed)" is exactly right, and it OUTRANKS
+        //    case 2 — if the read was not confirmed, say so first. Explaining a config filter
+        //    on top of an unconfirmed read would be describing the second-most-important fact
+        //    about the screen. This is CR-01's doctrine and it wins.
+        // 2. The payload is fresh and confirmed and DID carry renderable content, and this
+        //    instance's own display settings hid all of it. Before the CR-03/CR-04 gates were
+        //    restored this state was rare because almost nothing was gated; restoring them
+        //    made it ordinary (a user with every product toggle off now lands here on any day
+        //    SPC itself is quiet). Saying "(unconfirmed)" here slanders a clean poll and
+        //    erodes the word CR-01 depends on; saying nothing at all hides a config mistake
+        //    behind an authoritative all-clear.
+        // 3. The payload is fresh and confirmed and there was genuinely nothing to show. The
+        //    confident string, same as the summary.anyHazard short-circuit above would have
+        //    produced — this is the case where the two paths must agree.
+        const unconfirmed = !summaryOk || !!this.spcrisk._stale;
+        if (unconfirmed) {
+          wrapper.innerHTML += NO_HAZARD_TEXT_UNCONFIRMED;
+        } else if (anyUngatedContent()) {
+          wrapper.innerHTML += NO_HAZARD_TEXT_FILTERED;
+        } else {
+          wrapper.innerHTML += NO_HAZARD_TEXT;
+        }
       }
     }
     return wrapper;
