@@ -1,34 +1,36 @@
 ---
 phase: 19
-fixed_at: 2026-09-08T01:14:21Z
+fixed_at: 2026-09-08T02:35:00Z
 review_path: .planning/phases/19-unified-day-report-getdom-rewrite/19-REVIEW.md
 iteration: 1
 findings_in_scope: 11
-fixed: 9
-skipped: 2
-status: partial
+fixed: 11
+skipped: 0
+status: all_fixed
 probe_result_before: "157 passed, 0 failed, 0 skipped"
-probe_result_after: "166 passed, 0 failed, 0 skipped"
+probe_result_after: "168 passed, 0 failed, 0 skipped"
+passes: 2
 ---
 
 # Phase 19: Code Review Fix Report
 
-**Fixed at:** 2026-09-08T01:14:21Z
+**Fixed at:** 2026-09-08T02:35:00Z
 **Source review:** `.planning/phases/19-unified-day-report-getdom-rewrite/19-REVIEW.md`
-**Iteration:** 1
+**Iteration:** 1 (two passes — WR-01 and WR-02 were skipped in pass 1 pending an operator
+decision, which was made and implemented in pass 2)
 
 **Summary:**
 - Findings in scope: 11 (4 critical, 7 warning; `fix_scope: critical_warning`, so the 5 Info findings were not attempted)
-- Fixed: 9
-- Skipped: 2
+- Fixed: 11
+- Skipped: 0
 
 **Verification standard.** Every fix was verified with `node -c` plus a full run of
 `scripts/probe-payload-resilience.js`, the project's mutation-tested probe suite (15 D-10 makes
 it the phase's verification standard). Every new assertion was mutation-tested: the production
 code was broken, the probe confirmed RED with the expected message, and the code was restored
 and re-verified green. The suite went from **157 passed / 0 failed / 0 skipped** to
-**166 passed / 0 failed / 0 skipped** (9 new scenarios; 7 pre-existing scenarios were amended,
-see CR-03 below).
+**168 passed / 0 failed / 0 skipped** (11 new scenarios, 1 replaced; 9 pre-existing scenarios
+were amended — see CR-03 and WR-01 below).
 
 `node_helper.js`'s payload emission was deliberately **not** changed. It emits the full grid
 regardless of product toggles by contract (`node_helper.js:4192-4198`), and cannot do otherwise:
@@ -175,61 +177,80 @@ sweep alone.
 `scenario.run(helper)`. Per-scenario calls are kept rather than deleted: several scenarios reset
 *mid*-run to set up a control, and those calls are still load-bearing.
 
-## Skipped Issues
-
 ### WR-01: A fully confirmed, fresh payload can render "(unconfirmed)"
 
-**File:** `MMM-SPCOutlook.js:699-701, 851-853`
-**Reason:** Skipped on the coordinator's explicit instruction — **blocked on a user product
-decision.** I had implemented a candidate fix (gate the `contentMarker` fallback on
-`summaryOk && !this.spcrisk._stale`, so a fresh payload emptied only by frontend filters gets
-the confident `NO_HAZARD_TEXT` while a stale or malformed-summary payload keeps the unconfirmed
-form) and reverted it uncommitted when the correction arrived.
+**Files modified:** `MMM-SPCOutlook.js`, `scripts/probe-payload-resilience.js`, `19-PARITY-CHECKLIST.md`
+**Commit:** `11d81b0` (shared with WR-02 — the operator decided them as one coupled question)
+**Applied fix:** The empty-render exit is now a three-way split.
 
-**The user must see the coupling:** the CR-03/CR-04 fix *increases how often this fires.*
-Restoring the per-product toggle and label gates means frontend-only filtering can now empty the
-render on a fresh, fully confirmed payload — for example a user with every product toggle off
-and a real convective-free day. Before this fix pass that combination rendered content it should
-not have; now it renders `"No Hazards Forecast (unconfirmed)"`, which per the phase's own CR-01
-doctrine is a word reserved for a read that was *not* confirmed. Resolving it properly needs a
-decision the phase never made: a distinct third string, or splitting "nothing forecast" from
-"nothing you have enabled" (which is arguably what the unreachable `enabledSourceCount === 0`
-branch in WR-02 was reaching for). Both are new user-facing copy.
+| state | string |
+|---|---|
+| stale, or malformed summary | `No Hazards Forecast (unconfirmed)` — unchanged |
+| fresh + confirmed, content existed, this instance's config hid all of it | `No Hazards Forecast (filtered by settings)` — new |
+| fresh + confirmed, genuinely nothing to show | `No Hazards Forecast` |
 
-**Original issue:** The confident all-clear short-circuit reads `summary.anyHazard`, computed by
-the backend before any frontend-only filter, so when `anyHazard === true` but every entry is
-filtered out on the frontend, control falls into the main branch, nothing renders, and the
-`contentMarker` fallback emits `"No Hazards Forecast (unconfirmed)"` on a payload that was fully
-confirmed against upstream.
+Case 1 outranks case 2, per the decision: if the read was not confirmed, that is the more
+important fact about the screen, and explaining a config filter on top of it would be
+describing the second-most-important one. A malformed summary is grouped with stale — a payload
+that cannot be trusted to assert a confident empty state cannot be trusted to assert a confident
+*explanation* of one either.
+
+**The discriminator does not get its own copy of the survivor logic.** Writing a second, ungated
+survivor filter would have reintroduced exactly the CR-02/CR-03/CR-04 drift collapsed one commit
+earlier. Instead `hazardEntryDisplayable`, `dayDisplayableHazards`, `daySurvivors`,
+`renderableWindowEntries` and `enabledAdvisories` each take an `applyDisplayGates` parameter that
+defaults on, and `anyUngatedContent()` is the only caller that passes `false`. A gate added to
+any of them in future is understood by the discriminator for free.
+`wr01-gated-and-ungated-readings-share-one-predicate` pins this structurally: exactly one
+parameterized definition of each predicate, exactly three `false` arguments, all inside the
+discriminator.
+
+Scope is the whole render, not just the day grid — the `showHazardsOutlook`-gated window band and
+the `ADVISORY_SOURCES`-gated advisories each produce case 2 on their own, and so do the
+`showMinorHeat` floor and the `showDrought` sub-toggle. Two deliberate exclusions, both probed:
+
+- **`proximityWeighting` is not a display gate.** Unlike the others it travels in
+  `buildRequestPayload`'s request and changes what the backend computes, so "off" is not a
+  display filter over content that exists. D-08's proximity-only row also reads it identically
+  under both readings, so it could not distinguish them anyway.
+- **Structurally-unrenderable content stays case 3.** A wholly-elapsed window entry is not a
+  forecast under any config and a suppressed-only day has no winner under any config. Calling
+  either one "filtered by settings" would be a lie in the other direction — blaming the user for
+  the payload's own shape.
+
+Wording is the operator's verbatim choice and matches the existing parenthetical-suffix style.
+Two pre-existing controls that asserted the old "(unconfirmed)" degrade were updated, with their
+rationale rewritten rather than just their expected string swapped. Mutation-verified RED four
+ways: inverted precedence, dropped filtered branch, day-grid-only discriminator, and a
+discriminator using the *gated* reading.
 
 ### WR-02: The "No Products Enabled" empty state is unreachable
 
-**File:** `MMM-SPCOutlook.js:683-689`; `node_helper.js:3792, 3695-3700`
-**Reason:** Skipped — **the correct resolution is a product decision the user has not made**, and
-the briefing said to skip rather than guess in exactly this case. The finding is accurate:
-`_buildSourceHealth` marks `spc-convective`/`spc-fire` `enabled: true` unconditionally, so
-`enabledSourceCount` has a floor of 2 and the branch cannot fire against any real payload. But
-both offered resolutions change product behavior in ways Phase 18 D-16 decided otherwise:
+**Files modified:** `MMM-SPCOutlook.js`, `node_helper.js`, `scripts/probe-payload-resilience.js`, `19-PARITY-CHECKLIST.md`
+**Commit:** `11d81b0`
+**Applied fix:** The frontend branch is deleted. The finding is not a wiring bug:
+`_buildSourceHealth`'s `isAlwaysOn` marks `spc-convective` and `spc-fire` `enabled: true`
+unconditionally, and neither has a `configFlag` in `productRegistry.js` or a flag in the module
+`defaults`, so `summary.enabledSourceCount` has a hard floor of 2 and the branch was unreachable
+*in principle*. The operator declined to make the always-on core configurable, and no config
+flags were added for it. The user-facing state that branch was reaching for is now served by
+WR-01's case 2, driven by what actually got filtered rather than by a count that cannot reach
+zero.
 
-1. *Delete the branch and the probe, and drop the field from the D-16 contract.* This removes a
-   documented payload field and the module's ability to ever distinguish "nothing was asked" from
-   "checked and clear" — a distinction 18 D-16 deliberately introduced.
-2. *Change the discriminator* (`reportingSourceCount === 0`, or a count restricted to
-   toggle-gated sources). Each means something materially different on screen.
-   `reportingSourceCount === 0` is a total-outage state, which is `_stale`'s job and would
-   collide with CR-01's staleness doctrine. A toggle-gated count would make the string fire for a
-   user running only the two always-on SPC products, telling them "No Products Enabled" while
-   SPC convective is working — a false statement.
+**The field itself stays emitted.** `_buildGridSummary`'s JSDoc locks D-16's seven flat summary
+fields, and a display fix must not silently break a payload contract as a side effect. It is now
+documented inline as diagnostic-only, with the reachability reasoning and a pointer to the probe
+that pins it.
 
-Option 2's toggle-gated variant is also now entangled with WR-01: with the CR-03/CR-04 gates
-restored, "no toggle-gated product is enabled" and "everything was filtered out on the frontend"
-are the same user-visible situation, so these two findings should be decided **together**, as one
-copy decision, not resolved independently.
-
-**Recommendation for the user:** decide WR-01 and WR-02 as a single question — what should the
-display say when the payload is fresh and confirmed but this instance's own config leaves nothing
-to show? Whichever string answers that also determines whether `enabledSourceCount` should be
-repaired or retired.
+**The old probe was replaced, not deleted.** `rpt05-no-products-enabled-is-not-an-all-clear` set
+`payload.summary.enabledSourceCount = 0` by hand — a payload the backend cannot emit — so the
+suite reported coverage for a branch that could never fire, which reads as proof. Its
+replacement, `rpt05-no-products-enabled-branch-is-retired-and-its-count-has-a-floor-of-two`, pins
+both halves of the reasoning: the backend still emits the D-16 field and its floor really is 2
+with every configurable flag off, and the frontend branch is gone, inert to the count, and absent
+from the source. Mutation-verified RED by making `spc-fire` configurable (which fails the
+floor-of-2 assertion with a message telling the next engineer to revisit the retirement decision)
+and by reinstating the branch.
 
 ## Not Attempted (out of scope)
 
@@ -238,8 +259,19 @@ repaired or retired.
 and is a two-line change (`Array.from(text).slice(...).join("")`); it is the cheapest of the five
 to pick up in a follow-up.
 
+## Follow-up for the reviewer
+
+Rows 39 and 40 were added to `19-PARITY-CHECKLIST.md` and row 4 (CR-01's staleness
+disqualifier) was extended to record the new precedence, since the contentMarker fallback
+beneath that gate is no longer an unconditional `"(unconfirmed)"`.
+
+Worth a human eye: `"No Hazards Forecast (filtered by settings)"` is the one genuinely new
+user-facing string this fix pass introduces, and it now fires in a situation that used to be
+rare — a user with product toggles off on a quiet day. It is probe-proven but, like every
+wording question, not probe-*validated*.
+
 ---
 
-_Fixed: 2026-09-08T01:14:21Z_
+_Fixed: 2026-09-08T02:35:00Z_
 _Fixer: Claude (gsd-code-fixer)_
-_Iteration: 1_
+_Iteration: 1, pass 2_
