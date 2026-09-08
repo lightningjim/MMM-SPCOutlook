@@ -436,8 +436,15 @@
     const renderDaySubRows = (day) => {
       const groups = [];
       const groupByDimension = new Map();
-      for (const h of (Array.isArray(day.hazards) ? day.hazards : [])) {
-        if (!h || typeof h !== "object") continue;
+      // 19-REVIEW CR-02/CR-03/CR-04: iterate the SHARED display predicate, never
+      // `day.hazards` directly. Re-reading the raw list here was the structural cause of all
+      // three findings — the compact header one line above renders daySurvivors(day), and a
+      // sub-row list derived from a different filter contradicted it (a below-floor HeatRisk
+      // row, a disabled product's row, an excluded hazards label). dayDisplayableHazards is
+      // daySurvivors' own source list minus only the winner/competitor split, so the two can
+      // no longer separate. Declared below this function but always in scope by the time the
+      // day loop calls it (see WR-06 on this file's forward-reference pattern).
+      for (const h of dayDisplayableHazards(day)) {
         let group;
         if (h.dimension === null || h.dimension === undefined) {
           group = { dimension: null, winner: null, competitors: [] };
@@ -614,12 +621,38 @@
         wrapper.innerHTML += weekdaySegment + offsetSegment + ": " + label + "<br/>";
       }
     };
-    // Phase 19 (RPT-01/RPT-02/RPT-03/D-01–D-03): the array of a day's surviving hazard
-    // entries, in payload order (18 D-15 already fixed taxonomy order; never re-sort — RPT-06
-    // checklist row 25). Declared once, called from both the render-decision site and the
-    // render body (WR-04's rule) so the two can never disagree about which days render.
-    const daySurvivors = (day) => {
-      if (!day || typeof day !== "object" || !Array.isArray(day.hazards)) return [];
+    // 19-REVIEW CR-03: the day path's half of WR-09, restored. Pre-19 every per-product day
+    // section carried its own `this.config.showX &&` term (`9143705:MMM-SPCOutlook.js:731`,
+    // `:734`, `:750`, `:768`); the unified loop carried none, so correctness depended
+    // entirely on the backend never emitting a disabled product. It does emit them, by
+    // design and by necessity: node_helper.js:4192-4198 states the grid is "always present,
+    // regardless of this._products.showHazardsOutlook", and node_helper's `_products` is
+    // SHARED across MagicMirror instances of the same module type (node_helper.js:727 —
+    // "whichever polled first decided for both"), so backend-side display filtering is
+    // impossible in principle. Fetch policy is the backend's; display policy is per-instance
+    // and therefore has to live here.
+    //
+    // Each key is a DAY_SOURCE_IDS source id and each value is that source's registry
+    // `configFlag`. `spc-convective` and `spc-fire` have no registry configFlag — they are
+    // always-on (14 D-08) — and are intentionally absent rather than mapped to a nonexistent
+    // flag. The fail-safe direction documented at lines 497-508 is preserved: an UNLISTED
+    // source is never hidden, so a future source that forgets this table degrades to today's
+    // (visible) behaviour rather than silently disappearing.
+    const DAY_SOURCE_FLAGS = {
+      "wpc-ero": "showExcessiveRain",
+      "wpc-wssi": "showWinterImpact",
+      "wpc-hazards": "showHazardsOutlook",
+      "heatrisk": "showHeatRisk"
+    };
+    // 19-REVIEW CR-02/CR-03/CR-04: the ONE definition of "may this hazard entry be shown at
+    // all", consulted by every day-side consumer. CR-02 existed because renderDaySubRows
+    // re-derived its own hazard list from `day.hazards` and re-implemented only part of this,
+    // so an expanded day contradicted the compact header one line above it. Everything that
+    // decides visibility now reads this single predicate; the ONLY thing that separates a
+    // winner from an `also:` competitor is the `suppressedBy` term, which lives in
+    // daySurvivors below rather than here (D-05's competitor rows must still render).
+    const hazardEntryDisplayable = (h) => {
+      if (!h || typeof h !== "object") return false;
       // 17 D-01/D-02, RPT-06 checklist row 30: showMinorHeat is a frontend-only DISPLAY
       // FLOOR applied to heatrisk-sourced entries specifically — 1 (minor+) when true, 2
       // (moderate+) by default. wpc-hazards' binary "Hazardous Heat" has no severity ladder
@@ -627,12 +660,39 @@
       // backend's own presence floor (category >= 1) to reach the payload at all; this is
       // the stricter, frontend-only floor on top of that.
       const heatFloor = this.config.showMinorHeat === true ? 1 : 2;
-      return day.hazards.filter((h) => {
-        if (!h || typeof h !== "object" || h.suppressedBy !== null) return false;
-        if (h.source === "heatrisk" && typeof h.value === "number" && h.value < heatFloor) return false;
-        return true;
-      });
+      if (h.source === "heatrisk" && typeof h.value === "number" && h.value < heatFloor) return false;
+      // CR-03: strict `!== true`, matching the showDrought/showMinorHeat convention exactly —
+      // an absent or non-boolean flag behaves like false, per CFG-01's default.
+      const flag = DAY_SOURCE_FLAGS[h.source];
+      if (flag && this.config[flag] !== true) return false;
+      // CR-04: the 16-REVIEW WR-01 second-line-of-defense label filter, restored to the day
+      // path. Pre-19 `renderableDayHazards` (`9143705:MMM-SPCOutlook.js:343-348`) ran every
+      // hazards-outlook day hazard through it "so the day grid and the band cannot disagree
+      // about what this config permits either"; after the rewrite `renderableWindowEntries`
+      // was its only caller and the day rows rendered drought/flooding labels unfiltered.
+      // Scoped to `wpc-hazards` because that is the product whose vocabulary these lists
+      // restate (and the exact scope the pre-19 caller had) — applying it to every source
+      // would let a listed label hide another product's entry, the one direction the
+      // fail-safe note at lines 503-508 forbids.
+      if (h.source === "wpc-hazards" && !hazardsLabelDisplayable(h.label)) return false;
+      return true;
     };
+    // Every displayable entry for a day, winners AND suppressed competitors, in payload
+    // order (18 D-15 already fixed taxonomy order; never re-sort — RPT-06 checklist row 25).
+    // This is what detail mode's sub-rows iterate, so a competitor is subject to exactly the
+    // same floor/toggle/label gates as a winner.
+    const dayDisplayableHazards = (day) => {
+      if (!day || typeof day !== "object" || !Array.isArray(day.hazards)) return [];
+      return day.hazards.filter(hazardEntryDisplayable);
+    };
+    // Phase 19 (RPT-01/RPT-02/RPT-03/D-01–D-03): the array of a day's surviving hazard
+    // entries. Declared once, called from both the render-decision site and the render body
+    // (WR-04's rule) so the two can never disagree about which days render — and now derived
+    // from dayDisplayableHazards rather than re-filtering `day.hazards`, so the compact
+    // header and the expanded sub-rows cannot disagree about which ENTRIES render either.
+    const daySurvivors = (day) => (
+      dayDisplayableHazards(day).filter((h) => h.suppressedBy === null)
+    );
     // D-08: true when a day has no surviving hazard but proximityWeighting is on and the
     // day's outside-mode categorical proximity is renderable — the one named exception to
     // D-03's "no survivor, no row" rule, so the shipped v1.2 PROXUI outside-mode behaviour

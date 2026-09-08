@@ -3606,7 +3606,11 @@ const scenarios = [
       const frontend = loadFrontendModule();
       const config = {
         lat: PROBE_LAT, lon: PROBE_LON, extended: false, updateInterval: 60,
-        proximityWeighting: false, showExcessiveRain: false, showWinterImpact: false
+        // 19-REVIEW CR-03: the fixture below is a `wpc-ero` entry, so this scenario needs
+        // ERO's own toggle on to reach its actual subject (day span). It previously read
+        // `showExcessiveRain: false` and still expected the entry to render — i.e. it was
+        // silently pinning the missing per-product frontend gate.
+        proximityWeighting: false, showExcessiveRain: true, showWinterImpact: false
       };
       // Phase 19: WR-08's day-span concern (a frontend loop hand-enumerating fewer days
       // than the registry declares) is now closed by construction — the unified day loop
@@ -11489,7 +11493,10 @@ const scenarios = [
       const frontend = loadFrontendModule();
       const config = {
         lat: PROBE_LAT, lon: PROBE_LON, extended: false, updateInterval: 60,
-        proximityWeighting: false
+        // 19-REVIEW CR-03: the three-segment fixture below spans spc-convective (always-on),
+        // wpc-hazards and heatrisk, so the two toggle-gated sources need their own toggles on
+        // for this scenario to reach its actual subject (the " · " separator grammar).
+        proximityWeighting: false, showHazardsOutlook: true, showHeatRisk: true
       };
       const payload = unifiedPayload({});
       const day3Hazards = [
@@ -11531,7 +11538,10 @@ const scenarios = [
       const frontend = loadFrontendModule();
       const config = {
         lat: PROBE_LAT, lon: PROBE_LON, extended: false, updateInterval: 60,
-        proximityWeighting: false
+        // 19-REVIEW CR-03: the suppressed fixture entry is `wpc-hazards`, so its toggle must
+        // be on for the control below (clearing suppressedBy makes Day 2 render) to isolate
+        // the `suppressedBy` field as the reason Day 2 is skipped rather than the toggle.
+        proximityWeighting: false, showHazardsOutlook: true
       };
       const survivorEntry = (dimension, text) => ({
         dimension, source: "spc-convective", label: text.toUpperCase(), text, value: 4,
@@ -11658,7 +11668,9 @@ const scenarios = [
       const frontend = loadFrontendModule();
       const config = {
         lat: PROBE_LAT, lon: PROBE_LON, extended: false, updateInterval: 60,
-        proximityWeighting: false
+        // 19-REVIEW CR-03: the truncation half of this scenario uses a `wpc-hazards` entry,
+        // so that product's toggle must be on for it to reach the render at all.
+        proximityWeighting: false, showHazardsOutlook: true
       };
       const hostile = `<img src=x onerror="alert(1)&'">`;
       const payload = unifiedPayload({});
@@ -11714,7 +11726,9 @@ const scenarios = [
       const frontend = loadFrontendModule();
       const config = {
         lat: PROBE_LAT, lon: PROBE_LON, extended: false, updateInterval: 60,
-        proximityWeighting: false, dayReportDetail: true
+        // 19-REVIEW CR-03: the fixture's second entry is `heatrisk`, whose toggle must be on
+        // for the "— HeatRisk" attribution assertion below to have anything to attribute.
+        proximityWeighting: false, dayReportDetail: true, showHeatRisk: true
       };
       const payload = unifiedPayload({});
       // Precondition guard: the fixture's sources entries must carry LONG displayName
@@ -11813,7 +11827,13 @@ const scenarios = [
       const frontend = loadFrontendModule();
       const config = {
         lat: PROBE_LAT, lon: PROBE_LON, extended: false, updateInterval: 60,
-        proximityWeighting: false, dayReportDetail: true
+        // 19-REVIEW CR-03/CR-02: the winner is `wpc-wssi` and the two competitors are
+        // `wpc-hazards` and `wpc-ero`, so all three toggles must be on. This is also the
+        // scenario that pins CR-02's structural half: an `also:` competitor is now subject to
+        // exactly the same display gates as the winner above it, so a competitor from a
+        // DISABLED product must not appear beneath an enabled winner.
+        proximityWeighting: false, dayReportDetail: true,
+        showWinterImpact: true, showHazardsOutlook: true, showExcessiveRain: true
       };
       const payload = unifiedPayload({});
       payload.days["2"].hazards = [
@@ -11839,6 +11859,259 @@ const scenarios = [
       const order = [rendered.indexOf("Wind Advisory"), rendered.indexOf("Damaging Wind Risk")];
       if (order[0] === -1 || order[1] === -1 || order[0] > order[1]) {
         throw new Error(`expected competitors in payload order (Comp1 before Comp2), got: ${rendered}`);
+      }
+    }
+  },
+  {
+    // 19-REVIEW CR-03 (WR-09 regression): every toggle-gated day source is gated on its own
+    // `this.config.showX` at the FRONTEND, not just at the fetch. The backend deliberately
+    // emits the full grid regardless of toggles (node_helper.js:4192-4198, "always present,
+    // regardless of this._products.showHazardsOutlook") and cannot do otherwise: `_products`
+    // is shared across MagicMirror instances of the same module type (node_helper.js:727,
+    // "whichever polled first decided for both"), so instance A can be handed a payload built
+    // from instance B's toggles. Fetch policy is the backend's; display policy is this file's.
+    //
+    // The mapping is productRegistry.js's own `configFlag` per row; spc-convective and
+    // spc-fire have no configFlag (always-on, 14 D-08) and are asserted to render under an
+    // all-false config, which is what keeps this scenario from degenerating into
+    // "everything is hidden".
+    // Mutation to prove RED: delete the DAY_SOURCE_FLAGS term from hazardEntryDisplayable.
+    name: "cr03-day-rows-honor-every-per-product-toggle",
+    run: async (_helper) => {
+      const frontend = loadFrontendModule();
+      const gatedEntries = {
+        "4": { dimension: "heavy-precip", source: "wpc-ero", label: "MDT", text: "ERO Moderate", value: 3, color: "e06666", suppressedBy: null },
+        "5": { dimension: "winter", source: "wpc-wssi", label: "MAJOR", text: "WSSI Major", value: 4, color: "eb7e82", suppressedBy: null },
+        "6": { dimension: "cold", source: "wpc-hazards", label: "Much Below Normal Temperatures", text: "Hazards Cold", value: null, color: "63be7b", suppressedBy: null },
+        "7": { dimension: "heat", source: "heatrisk", label: "3", text: "HeatRisk Major", value: 3, color: "e22f33", suppressedBy: null }
+      };
+      const alwaysOnEntries = {
+        "1": { dimension: "convective", source: "spc-convective", label: "ENH", text: "Convective Always", value: 4, color: "e06666", suppressedBy: null },
+        "2": { dimension: "fire", source: "spc-fire", label: "CRIT", text: "Fire Always", value: 2, color: "ff787d", suppressedBy: null }
+      };
+      const buildPayload = () => {
+        const p = unifiedPayload({});
+        for (const [dayKey, entry] of Object.entries({ ...alwaysOnEntries, ...gatedEntries })) {
+          p.days[dayKey].hazards = [{ ...entry }];
+        }
+        p.summary.anyHazard = true;
+        return p;
+      };
+      const baseConfig = {
+        lat: PROBE_LAT, lon: PROBE_LON, extended: false, updateInterval: 60,
+        proximityWeighting: false
+      };
+      const allFlags = {
+        showExcessiveRain: true, showWinterImpact: true, showHazardsOutlook: true, showHeatRisk: true
+      };
+
+      // (a) Every toggle off: not one gated product's text survives, while both always-on
+      // SPC products still render. The always-on half is the vacuity guard.
+      const offRendered = renderDom(frontend, { config: baseConfig, spcrisk: buildPayload() });
+      for (const entry of Object.values(gatedEntries)) {
+        if (offRendered.includes(entry.text)) {
+          throw new Error(
+            `"${entry.text}" (${entry.source}) rendered with its own toggle off — the frontend ` +
+            `gate is missing, so this instance is showing content its config disabled: ${offRendered}`
+          );
+        }
+      }
+      for (const entry of Object.values(alwaysOnEntries)) {
+        if (!offRendered.includes(entry.text)) {
+          throw new Error(
+            `vacuity guard failed: "${entry.text}" (${entry.source}) has no registry configFlag ` +
+            `and must render under an all-false config, got: ${offRendered}`
+          );
+        }
+      }
+
+      // (b) Every toggle on: all six render, proving (a) is the gate and not a broken fixture.
+      const onRendered = renderDom(frontend, { config: { ...baseConfig, ...allFlags }, spcrisk: buildPayload() });
+      for (const entry of Object.values({ ...alwaysOnEntries, ...gatedEntries })) {
+        if (!onRendered.includes(entry.text)) {
+          throw new Error(`"${entry.text}" (${entry.source}) did not render with every toggle on: ${onRendered}`);
+        }
+      }
+
+      // (c) One toggle at a time: each flag gates its own source and no other. This is what
+      // stops a future single shared `if (anyProductEnabled)` from passing (a) and (b).
+      const flagOf = {
+        "wpc-ero": "showExcessiveRain", "wpc-wssi": "showWinterImpact",
+        "wpc-hazards": "showHazardsOutlook", "heatrisk": "showHeatRisk"
+      };
+      for (const entry of Object.values(gatedEntries)) {
+        const soloRendered = renderDom(frontend, {
+          config: { ...baseConfig, [flagOf[entry.source]]: true },
+          spcrisk: buildPayload()
+        });
+        if (!soloRendered.includes(entry.text)) {
+          throw new Error(`${flagOf[entry.source]}:true did not enable ${entry.source}: ${soloRendered}`);
+        }
+        for (const other of Object.values(gatedEntries)) {
+          if (other.source === entry.source) continue;
+          if (soloRendered.includes(other.text)) {
+            throw new Error(
+              `${flagOf[entry.source]}:true also rendered ${other.source} — the flags are not ` +
+              `per-source: ${soloRendered}`
+            );
+          }
+        }
+      }
+
+      // (d) CFG-01 strictness: a non-boolean truthy flag behaves like false, matching the
+      // `!== true` convention showDrought and showMinorHeat already use.
+      const truthyRendered = renderDom(frontend, {
+        config: { ...baseConfig, showHeatRisk: "yes" },
+        spcrisk: buildPayload()
+      });
+      if (truthyRendered.includes(gatedEntries["7"].text)) {
+        throw new Error(`a non-boolean showHeatRisk should behave like false (CFG-01), got: ${truthyRendered}`);
+      }
+    }
+  },
+  {
+    // 19-REVIEW CR-02: the showMinorHeat display floor is a property of the SHARED display
+    // predicate, so an expanded day cannot contradict its own compact header. Before the fix,
+    // daySurvivors applied the floor and renderDaySubRows re-read `day.hazards` and applied
+    // only `suppressedBy === null`, so a day that rendered for some OTHER reason showed a
+    // below-floor HeatRisk sub-row the header one line above deliberately omitted.
+    // Mutation to prove RED: move the heatFloor term out of hazardEntryDisplayable and back
+    // into daySurvivors alone.
+    name: "cr02-detail-sub-rows-share-the-compact-header-display-floor",
+    run: async (_helper) => {
+      const frontend = loadFrontendModule();
+      const config = {
+        lat: PROBE_LAT, lon: PROBE_LON, extended: false, updateInterval: 60,
+        proximityWeighting: false, dayReportDetail: true, showHeatRisk: true
+      };
+      const minorHeat = {
+        dimension: "heat", source: "heatrisk", label: "1", text: "HeatRisk Minor Tier",
+        value: 1, color: "ffeda0", suppressedBy: null
+      };
+      const buildPayload = () => {
+        const p = unifiedPayload({});
+        // The day renders for an unrelated reason — a convective survivor — which is exactly
+        // the situation that exposed the bug: the floor never got a chance to skip the row.
+        p.days["1"].hazards = [convectiveEntryGridOneTwo({}), { ...minorHeat }];
+        p.summary.anyHazard = true;
+        return p;
+      };
+
+      // Default showMinorHeat (absent => false): the below-floor HeatRisk entry appears
+      // NEITHER on the compact header NOR as a detail sub-row.
+      const rendered = renderDom(frontend, { config, spcrisk: buildPayload() });
+      if (!rendered.includes("Enhanced")) {
+        throw new Error(`vacuity guard failed: the day did not render at all: ${rendered}`);
+      }
+      if (!rendered.includes("— SPC")) {
+        throw new Error(`vacuity guard failed: detail mode produced no sub-rows: ${rendered}`);
+      }
+      if (rendered.includes("HeatRisk Minor Tier") || rendered.includes("— HeatRisk")) {
+        throw new Error(
+          "a below-floor HeatRisk entry rendered as a detail sub-row on a day whose own compact " +
+          `header omitted it — the same render contradicts itself: ${rendered}`
+        );
+      }
+
+      // Control: showMinorHeat drops the floor to 1, so the SAME entry now renders in BOTH
+      // places. This proves the assertion above is the floor and not a missing fixture.
+      const onRendered = renderDom(frontend, {
+        config: { ...config, showMinorHeat: true }, spcrisk: buildPayload()
+      });
+      if (!onRendered.includes("— HeatRisk")) {
+        throw new Error(`control: showMinorHeat:true should render the HeatRisk sub-row, got: ${onRendered}`);
+      }
+      const headerLine = onRendered.split("<br/>")[0];
+      if (!headerLine.includes("HeatRisk Minor Tier")) {
+        throw new Error(
+          `control: showMinorHeat:true should also put the entry on the compact header, got: ${headerLine}`
+        );
+      }
+    }
+  },
+  {
+    // 19-REVIEW CR-04: hazardsLabelDisplayable — the 16-REVIEW WR-01 second-line-of-defense
+    // label filter — applies to day rows as well as the window band, so the two cannot
+    // disagree about what this config permits. Pre-19 `renderableDayHazards`
+    // (`9143705:MMM-SPCOutlook.js:343-348`) did exactly this; after the rewrite
+    // renderableWindowEntries was its only caller and day rows rendered drought and
+    // excluded-flooding labels unfiltered.
+    // Mutation to prove RED: delete the hazardsLabelDisplayable term from
+    // hazardEntryDisplayable.
+    name: "cr04-day-rows-apply-the-same-label-filter-as-the-window-band",
+    run: async (_helper) => {
+      const frontend = loadFrontendModule();
+      const config = {
+        lat: PROBE_LAT, lon: PROBE_LON, extended: false, updateInterval: 60,
+        proximityWeighting: false, showHazardsOutlook: true
+      };
+      const hazardsEntry = (label) => ({
+        dimension: "heavy-precip", source: "wpc-hazards", label, text: label,
+        value: null, color: "996633", suppressedBy: null
+      });
+      const buildPayload = (label) => {
+        const p = unifiedPayload({});
+        p.days["4"].hazards = [hazardsEntry(label)];
+        // A control entry on another day so an empty render can never satisfy the
+        // "label absent" assertions vacuously.
+        p.days["1"].hazards = [convectiveEntryGridOneTwo({})];
+        p.summary.anyHazard = true;
+        return p;
+      };
+
+      // (a) D-10 drought sub-toggle: off by default, so a drought label never reaches a day
+      // row — the transcript in the review showed exactly this label rendering on day 4.
+      const droughtOff = renderDom(frontend, { config, spcrisk: buildPayload("Severe Drought") });
+      if (!droughtOff.includes("Enhanced")) {
+        throw new Error(`vacuity guard failed: the control day did not render: ${droughtOff}`);
+      }
+      if (droughtOff.includes("Severe Drought")) {
+        throw new Error(`a drought label rendered on a day row with showDrought off: ${droughtOff}`);
+      }
+      // Control: showDrought:true admits it, proving (a) is the gate.
+      const droughtOn = renderDom(frontend, {
+        config: { ...config, showDrought: true }, spcrisk: buildPayload("Severe Drought")
+      });
+      if (!droughtOn.includes("Severe Drought")) {
+        throw new Error(`control: showDrought:true should admit the drought label, got: ${droughtOn}`);
+      }
+
+      // (b) The exclusion list is unconditional — no config admits it, including the one
+      // that admits drought labels.
+      for (const excluded of ["Flooding Likely", "Flooding Occurring or Imminent", "Flooding Possible"]) {
+        const rendered = renderDom(frontend, {
+          config: { ...config, showDrought: true }, spcrisk: buildPayload(excluded)
+        });
+        if (rendered.includes(excluded)) {
+          throw new Error(`the excluded hazards label "${excluded}" rendered on a day row: ${rendered}`);
+        }
+      }
+
+      // (c) The same case/whitespace folding the band applies (WR-02's hazardsLabelKey), so
+      // the day-side gate cannot be walked past by a re-cased or padded remote label either.
+      for (const variant of ["flooding likely", "  Flooding Likely  "]) {
+        const rendered = renderDom(frontend, { config, spcrisk: buildPayload(variant) });
+        if (rendered.includes("looding")) {
+          throw new Error(`a re-cased/padded excluded label walked past the day-side gate: ${rendered}`);
+        }
+      }
+
+      // (d) Scoped to wpc-hazards: the fail-safe direction at MMM-SPCOutlook.js:503-508 says
+      // a label listed here must never hide ANOTHER product's entry.
+      const otherSource = unifiedPayload({});
+      otherSource.days["4"].hazards = [{
+        dimension: "heavy-precip", source: "wpc-ero", label: "Flooding Likely",
+        text: "Flooding Likely", value: 3, color: "e06666", suppressedBy: null
+      }];
+      otherSource.summary.anyHazard = true;
+      const otherRendered = renderDom(frontend, {
+        config: { ...config, showExcessiveRain: true }, spcrisk: otherSource
+      });
+      if (!otherRendered.includes("Flooding Likely")) {
+        throw new Error(
+          "the wpc-hazards label list hid a wpc-ero entry — the filter must stay scoped to the " +
+          `product whose vocabulary it restates: ${otherRendered}`
+        );
       }
     }
   },
