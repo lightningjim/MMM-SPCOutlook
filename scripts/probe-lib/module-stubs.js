@@ -269,12 +269,17 @@ function loadFrontendModule() {
     // Deterministic: the badge's exact wording is MagicMirror's business, its presence
     // is the probe's.
     moment: (_ts) => ({ fromNow: () => "PROBE_AGE" }),
-    // A plain object, not a DOM node: nothing parses what is assigned to `innerHTML`, so a
-    // scenario can only assert on the concatenated markup string, never on a parsed tree.
-    // That is enough for frontend-escapes-remote-advisory-text (the escape either happened
-    // in the string or it did not) but it means this harness cannot prove that what does
-    // reach a real browser is inert. Replacing this with a real DOM would let a scenario
-    // assert that, and is the only way to close that gap.
+    // A plain object, not a DOM node: nothing here parses what is assigned to `innerHTML`.
+    // 19-REVIEW WR-07(a): that used to mean every "escapes hostile text" scenario was a bare
+    // `String.includes("<img")` assertion, and CR-01 is the concrete consequence — an
+    // unescaped remote-controlled tier token reached innerHTML at one of four call sites and
+    // survived 157 green scenarios, because inertness was only ever checked where a scenario
+    // happened to look. `renderDom` below now runs EVERY render through `assertInertMarkup`,
+    // a tag-level allowlist over the whole output, so a hostile fragment reaching innerHTML
+    // anywhere fails the scenario that produced it whether or not that scenario was looking
+    // for one. It is a lexical check rather than a parsed tree (no jsdom/linkedom dependency
+    // — this harness stays on core `vm`/`fs`), which is strictly weaker than parsing but
+    // strictly stronger than the per-scenario substring checks it backstops.
     // `style` is a bare property bag, present so assignments like `wrapper.style.textAlign`
     // do not throw. It is NOT evidence of anything visual: nothing here lays out, measures or
     // renders, so a scenario can assert only that a property was assigned, never that the
@@ -292,6 +297,36 @@ function loadFrontendModule() {
   return captured;
 }
 
+// 19-REVIEW WR-07(a): the complete set of tags MMM-SPCOutlook.js's getDom() is allowed to
+// emit into innerHTML, as literal shapes rather than a general HTML grammar. Every one is
+// module-authored; nothing payload-derived may ever become a tag, because every payload
+// string reaching innerHTML goes through the module's own escapeHtml first (its WR-12 rule).
+// So an allowlist violation IS an escaping defect, with no judgement call in between.
+//
+// Attribute values are bounded by `[^"<>]*` deliberately: an injected `"` (the attribute-
+// escape vector T-16-19's validHazardColor exists to stop) breaks the match rather than
+// sliding past it, and an injected `<`/`>` cannot hide inside a value either.
+const INERT_MARKUP_ALLOWLIST = [
+  /^<br\/>$/,
+  /^<\/(?:span|i)>$/,
+  /^<span style="[^"<>]*">$/,
+  /^<i class="[^"<>]*">$/
+];
+
+// Throws unless every `<...>` in `html` is one of the module's own tags. Called on every
+// render (see renderDom) so no scenario has to remember to ask.
+function assertInertMarkup(html, label) {
+  const tags = String(html).match(/<[^<>]*>?/g) || [];
+  for (const tag of tags) {
+    if (INERT_MARKUP_ALLOWLIST.some((allowed) => allowed.test(tag))) continue;
+    throw new Error(
+      `assertInertMarkup${label ? ` (${label})` : ""}: ${JSON.stringify(tag)} is not a tag ` +
+      "MMM-SPCOutlook.js emits. Every payload-derived string reaching innerHTML must pass " +
+      `through escapeHtml first, so this is an escaping defect. Full markup: ${html}`
+    );
+  }
+}
+
 // Render a payload through the real getDom and return the resulting markup/text.
 function renderDom(frontend, { config, spcrisk }) {
   const ctx = Object.create(frontend);
@@ -299,6 +334,10 @@ function renderDom(frontend, { config, spcrisk }) {
   ctx.spcrisk = spcrisk;
   ctx.updateDom = () => {};
   const wrapper = frontend.getDom.call(ctx);
+  // Only `innerHTML` is checked. The error branch writes `textContent`, which is inert by
+  // construction — asserting an allowlist against it would reject the very thing that makes
+  // it safe (a verbatim, unescaped remote error string that never becomes markup).
+  if (wrapper.innerHTML) assertInertMarkup(wrapper.innerHTML, "getDom innerHTML");
   return wrapper.innerHTML || wrapper.textContent || "";
 }
 
@@ -332,6 +371,7 @@ module.exports = {
   loadNodeHelper,
   loadFrontendModule,
   renderDom,
+  assertInertMarkup,
   resetHelper,
   resetLogs,
   turfStub,

@@ -21,7 +21,7 @@
 
 const { PRODUCT_REGISTRY, daySpanOf, assertNoSharedRegistryMaps } = require("../productRegistry.js");
 const {
-  loadNodeHelper, loadFrontendModule, renderDom, resetHelper, resetLogs, turfStub, logCalls,
+  loadNodeHelper, loadFrontendModule, renderDom, assertInertMarkup, resetHelper, resetLogs, turfStub, logCalls,
   hasRealKmlDeps, missingKmlDeps, makeKmzBuffer
 } = require("./probe-lib/module-stubs.js");
 // Plan 18-08: read DIMENSION_ORDER off the real taxonomy artifact so the ordering
@@ -12064,6 +12064,163 @@ const scenarios = [
     }
   },
   {
+    // 19-REVIEW WR-07(a): the harness-level answer to "escaping is only proven where a
+    // scenario happened to look". CR-01 was an unescaped call site that survived 157 green
+    // scenarios because the ONE scenario exercising it (rpt02-proximity-only-day-...) used a
+    // benign "MRGL" tier — the defect was never about a missing assertion, it was about a
+    // benign fixture. This scenario removes that failure mode by putting a hostile token in
+    // EVERY remote-derived display string of one payload at once, with every toggle on,
+    // detail mode on and proximity on, so every render branch runs against hostile input in
+    // a single pass. The assertion itself is `renderDom`'s own `assertInertMarkup`
+    // (scripts/probe-lib/module-stubs.js), which rejects any tag getDom() does not author —
+    // so a NEW unescaped call site fails here without anyone adding an assertion for it.
+    // Mutation to prove RED: drop escapeHtml from any one innerHTML call site in getDom().
+    name: "wr07-hostile-token-in-every-remote-string-still-renders-inert-markup",
+    run: async (_helper) => {
+      const frontend = loadFrontendModule();
+      const HOSTILE = `<img src=x onerror="alert(1)">`;
+      // A second shape aimed at the attribute-escape vector (T-16-19) rather than the tag
+      // vector: a color that tries to close its own style attribute and open an event handler.
+      const HOSTILE_COLOR = `red" onload="alert(1)`;
+      const config = {
+        lat: PROBE_LAT, lon: PROBE_LON, extended: true, updateInterval: 60,
+        proximityWeighting: true, dayReportDetail: true,
+        showExcessiveRain: true, showWinterImpact: true, showHazardsOutlook: true,
+        showHeatRisk: true, showDrought: true, showMinorHeat: true,
+        showSPCMD: true, showMPD: true
+      };
+      const payload = unifiedPayload({
+        windowBand: [{
+          label: HOSTILE, color: HOSTILE_COLOR, mapped: false,
+          startDate: "2026-09-09", endDate: "2026-09-13", offsetStart: 2, offsetEnd: 6
+        }, {
+          // Single-day form takes a different branch in the band renderer.
+          label: HOSTILE, color: HOSTILE_COLOR, mapped: false,
+          startDate: "2026-09-09", endDate: "2026-09-09", offsetStart: 2, offsetEnd: 2
+        }]
+      });
+      payload.advisories = {
+        spcMD: [{ label: HOSTILE }],
+        mpd: [{ label: HOSTILE, hazardType: HOSTILE }]
+      };
+      for (const id of Object.keys(payload.sources)) {
+        payload.sources[id].displayName = HOSTILE;
+      }
+      const hostileProximity = () => ({
+        categorical: { value: 2.4, nextTier: HOSTILE },
+        torCig: { value: 1.3, nextTier: HOSTILE },
+        hailCig: { value: 1.4, nextTier: HOSTILE },
+        windCig: { value: 1.5, nextTier: HOSTILE },
+        cig: { value: 1.6, nextTier: HOSTILE }
+      });
+      // Day 1: the days-1-2 detail shape (tor/hail/wind sub-line) with a hostile winner and
+      // a hostile suppressed competitor, so the also: row is hostile too.
+      payload.days["1"].hazards = [
+        convectiveEntryGridOneTwo({ text: HOSTILE, label: HOSTILE, color: HOSTILE_COLOR }),
+        { dimension: "convective", source: "wpc-hazards", label: HOSTILE, text: HOSTILE, value: null, color: HOSTILE_COLOR, suppressedBy: "spc-convective" }
+      ];
+      payload.days["1"].proximity = hostileProximity();
+      // Day 3: the day-3 detail shape (single combined cig badge, dual-badge join).
+      payload.days["3"].hazards = [convectiveEntryGridThree({ text: HOSTILE, label: HOSTILE, color: HOSTILE_COLOR })];
+      payload.days["3"].proximity = hostileProximity();
+      // Day 5: an unmapped pass-through entry (dimension null) — its own sub-row branch.
+      payload.days["5"].hazards = [{
+        dimension: null, source: HOSTILE, label: HOSTILE, text: HOSTILE,
+        value: null, color: null, suppressedBy: null
+      }];
+      // Day 6: the D-08 proximity-only branch — no survivor, renderable proximity. This is
+      // CR-01's own call site.
+      payload.days["6"].proximity = hostileProximity();
+      // Day 7: every non-convective dimension at once, each hostile.
+      payload.days["7"].hazards = [
+        { dimension: "heat", source: "heatrisk", label: HOSTILE, text: HOSTILE, value: 3, color: HOSTILE_COLOR, suppressedBy: null },
+        { dimension: "winter", source: "wpc-wssi", label: HOSTILE, text: HOSTILE, value: 4, color: HOSTILE_COLOR, suppressedBy: null },
+        { dimension: "heavy-precip", source: "wpc-ero", label: HOSTILE, text: HOSTILE, value: 3, color: HOSTILE_COLOR, suppressedBy: null },
+        { dimension: "cold", source: "wpc-hazards", label: HOSTILE, text: HOSTILE, value: null, color: HOSTILE_COLOR, suppressedBy: null }
+      ];
+      payload.summary.anyHazard = true;
+      payload._stale = true;
+      payload._staleAsOf = 1_700_000_000_000;
+
+      // renderDom asserts inertness over the whole markup; this call IS the assertion.
+      const rendered = renderDom(frontend, { config, spcrisk: payload });
+
+      // Vacuity guards: an empty or short-circuited render would satisfy an allowlist
+      // trivially, so pin that every hostile-carrying branch actually ran.
+      const landmarks = {
+        "stale badge": "⚠ Stale",
+        "compact day row": "Day 1 (",
+        "detail sub-row": "font-family:'DejaVu Sans Mono'",
+        "probabilistic sub-line": "wi-tornado",
+        "also: competitor row": "also: ",
+        "D-08 proximity-only row": "Day 6 (",
+        "advisory band": "in effect.",
+        "window band": "Extended Hazards:"
+      };
+      for (const [what, marker] of Object.entries(landmarks)) {
+        if (!rendered.includes(marker)) {
+          throw new Error(`vacuity guard failed: the ${what} never rendered, so it was never exercised with hostile input: ${rendered}`);
+        }
+      }
+      // The hostile token must appear ONLY in escaped form, and the hostile color must have
+      // been replaced by validHazardColor's fallback rather than reaching a style attribute.
+      if (!rendered.includes("&lt;img")) {
+        throw new Error(`expected the escaped form of the hostile token somewhere in the render: ${rendered}`);
+      }
+      if (rendered.includes("onerror") && !rendered.includes("onerror=&quot;")) {
+        throw new Error(`an unescaped event-handler attribute survived into the markup: ${rendered}`);
+      }
+      if (!rendered.includes("color:#aaaaaa")) {
+        throw new Error(`expected the hostile color to fall back to aaaaaa (T-16-19), got: ${rendered}`);
+      }
+    }
+  },
+  {
+    // 19-REVIEW WR-07(a): a self-test for the guard that now runs on every render. Without
+    // this, a future edit that loosened INERT_MARKUP_ALLOWLIST into a no-op would turn every
+    // escape scenario green again and nothing would notice — the exact failure mode the
+    // guard exists to prevent, one level up.
+    name: "wr07-assert-inert-markup-accepts-module-tags-and-rejects-everything-else",
+    run: async (_helper) => {
+      const legitimate = [
+        "<br/>",
+        "<span style=\"white-space:pre-wrap\">Day 1 (Mon)</span><br/>",
+        "<span style=\"color:#aaaaaa\">Slight</span>",
+        "<span style=\"color: #0059E0\">SPC MD 2108 in effect.</span><br/>",
+        "<span style=\"color:#e06666;white-space:pre-wrap;font-family:'DejaVu Sans Mono','Liberation Mono',monospace\">x</span>",
+        "<i class=\"wi wi-tornado\"></i>10% ",
+        "Extended Hazards:<br/>Wed (D3): <span style=\"color:#63be7b\">&lt;img&gt;</span><br/>"
+      ];
+      for (const markup of legitimate) {
+        assertInertMarkup(markup, "self-test");
+      }
+      const hostile = [
+        "<img src=x onerror=\"alert(1)\">",
+        "<span style=\"white-space:pre-wrap\"><script>alert(1)</script></span>",
+        "<span style=\"color:#aaa\" onload=\"alert(1)\">x</span>",
+        "<span style=\"color:red\" onmouseover=\"x\">y</span>",
+        "<iframe src=\"javascript:alert(1)\"></iframe>",
+        "<svg/onload=alert(1)>",
+        "<a href=\"javascript:alert(1)\">x</a>",
+        "<span style=\"color:#aaaaaa"
+      ];
+      for (const markup of hostile) {
+        let threw = false;
+        try {
+          assertInertMarkup(markup, "self-test");
+        } catch (err) {
+          threw = true;
+          if (!err.message.includes("escaping defect")) {
+            throw new Error(`assertInertMarkup threw the wrong error for ${JSON.stringify(markup)}: ${err.message}`);
+          }
+        }
+        if (!threw) {
+          throw new Error(`assertInertMarkup accepted hostile markup: ${JSON.stringify(markup)}`);
+        }
+      }
+    }
+  },
+  {
     // 19-REVIEW WR-04: the 60-character label bound counts SOURCE characters in detail mode
     // exactly as it does on the compact line (T-16-22, "truncated BEFORE escaping so the
     // bound counts source characters"). detailColoredSpan used to apply truncateHazardLabel
@@ -12972,6 +13129,17 @@ async function main() {
       continue;
     }
     try {
+      // 19-REVIEW WR-07(b): isolation is the RUNNER's job, not each scenario's. One `helper`
+      // is created above and shared by every scenario, and isolation used to depend on each
+      // one remembering to call `resetHelper` itself — 186 calls across 189 named entries, so
+      // some did not, and a scenario that forgets inherits caches, `_nowMs` pins and
+      // `_products` from whichever scenario happened to run before it. That makes a failure
+      // order-dependent: the hardest kind to read, and the easiest kind to "fix" by
+      // reordering. Resetting here makes forgetting impossible. The surviving per-scenario
+      // calls are now redundant at the top of a scenario but are deliberately left in place —
+      // several scenarios reset MID-run to set up a control, and those calls are still
+      // load-bearing.
+      resetHelper(helper);
       await scenario.run(helper);
       console.log(`PASS ${scenario.name}`);
       passed++;
