@@ -11970,6 +11970,79 @@ const scenarios = [
     }
   },
   {
+    // 19-REVIEW WR-04: the 60-character label bound counts SOURCE characters in detail mode
+    // exactly as it does on the compact line (T-16-22, "truncated BEFORE escaping so the
+    // bound counts source characters"). detailColoredSpan used to apply truncateHazardLabel
+    // to content that already carried the 13-char dimension field plus its padding, so a
+    // pass-through label was cut at ~47 source characters here versus 60 there, and the "…"
+    // landed mid-field, destroying the column grid the detail layout exists to maintain.
+    // Mutation to prove RED: move truncateHazardLabel back inside detailColoredSpan and drop
+    // it from the two call sites.
+    name: "wr04-detail-label-truncation-counts-source-characters-not-padding",
+    run: async (_helper) => {
+      const frontend = loadFrontendModule();
+      const config = {
+        lat: PROBE_LAT, lon: PROBE_LON, extended: false, updateInterval: 60,
+        proximityWeighting: false, dayReportDetail: true,
+        showHazardsOutlook: true, showWinterImpact: true
+      };
+      const longText = "A".repeat(200);
+      const payload = unifiedPayload({});
+      payload.days["2"].hazards = [
+        { dimension: "wind", source: "wpc-wssi", label: "Winner", text: longText, value: 3, color: "e69138", suppressedBy: null },
+        { dimension: "wind", source: "wpc-hazards", label: "Comp", text: longText, value: null, color: "63be7b", suppressedBy: "wpc-wssi" }
+      ];
+      payload.summary.anyHazard = true;
+      const rendered = renderDom(frontend, { config, spcrisk: payload });
+
+      // Vacuity guard: the winner sub-row AND the also: competitor row both rendered.
+      if (!rendered.includes("— WSSI") || !rendered.includes("also: ")) {
+        throw new Error(`vacuity guard failed: expected a winner sub-row and an also: row, got: ${rendered}`);
+      }
+      // Exactly 60 source characters survive on BOTH rows — the same bound the compact line
+      // applies (pinned at 55 + "Wind " there by wr02-unified-compact-segment-...).
+      const expected = "A".repeat(60) + "…";
+      if (!rendered.includes(expected)) {
+        throw new Error(
+          `expected 60 source characters + "…" in detail mode (padding must not consume the ` +
+          `60-char budget), got: ${rendered}`
+        );
+      }
+      if (rendered.includes("A".repeat(61))) {
+        throw new Error(`more than 60 source characters survived truncation: ${rendered}`);
+      }
+      const truncatedRows = (rendered.match(/A{60}…/g) || []).length;
+      if (truncatedRows !== 2) {
+        throw new Error(
+          `expected both the winner row and the also: competitor row to apply the same bound, ` +
+          `got ${truncatedRows}: ${rendered}`
+        );
+      }
+      // The ellipsis is the END of the label, never mid-column: the dimension field must
+      // survive intact ahead of it on the winner row.
+      if (!rendered.includes("Wind         " + "A".repeat(60) + "…")) {
+        throw new Error(
+          `expected the 13-char dimension field to survive ahead of the truncated label ` +
+          `(the "…" must not land mid-field), got: ${rendered}`
+        );
+      }
+      // Control: a label under the bound is untouched and still padded to the label field
+      // width, so truncation is not silently firing on ordinary content.
+      const shortPayload = unifiedPayload({});
+      shortPayload.days["2"].hazards = [
+        { dimension: "wind", source: "wpc-wssi", label: "Winner", text: "High Winds", value: 3, color: "e69138", suppressedBy: null }
+      ];
+      shortPayload.summary.anyHazard = true;
+      const shortRendered = renderDom(frontend, { config, spcrisk: shortPayload });
+      if (shortRendered.includes("…")) {
+        throw new Error(`control: a short label must not be truncated at all, got: ${shortRendered}`);
+      }
+      if (!shortRendered.includes("Wind         High Winds             ")) {
+        throw new Error(`control: a short label must still be padded to the label field width, got: ${shortRendered}`);
+      }
+    }
+  },
+  {
     // 19-REVIEW CR-02: the showMinorHeat display floor is a property of the SHARED display
     // predicate, so an expanded day cannot contradict its own compact header. Before the fix,
     // daySurvivors applied the floor and renderDaySubRows re-read `day.hazards` and applied

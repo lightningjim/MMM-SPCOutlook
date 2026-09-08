@@ -331,10 +331,19 @@
     // enclosing per-day element to hold it once). Carries white-space:pre-wrap alongside it
     // so the padded content above doesn't collapse to a single space (RPT-06 "Space padding
     // survives to the screen").
+    // 19-REVIEW WR-04: escapes only, never truncates. It used to apply
+    // truncateHazardLabel to content that ALREADY carried the 13-char dimension field plus
+    // its padding, which broke the bound two ways: a pass-through label was cut at ~47
+    // source characters in detail mode versus 60 on the compact line, and when the cut did
+    // fire the "…" landed mid-field and destroyed the column grid the whole detail layout
+    // exists to maintain. It also contradicted T-16-22's rationale (line 266: "truncated
+    // BEFORE escaping so the bound counts source characters") by letting padding consume the
+    // budget. Both call sites below now truncate their own label content BEFORE padding it,
+    // so the bound counts source characters in both modes and padding is never truncatable.
     const detailColoredSpan = (color, content) => (
       "<span style=\"color:#" + validHazardColor(color) +
       ";white-space:pre-wrap;font-family:'DejaVu Sans Mono','Liberation Mono',monospace\">" +
-      escapeHtml(truncateHazardLabel(content)) + "</span>"
+      escapeHtml(content) + "</span>"
     );
     // Phase 19 (RPT-03/D-07/PROXUI): the convective sub-row's own inside-mode proximity
     // badge, three-shape probabilistic sub-line, and day-3 dual badge — the one dimension
@@ -479,7 +488,12 @@
         const augment = group.dimension === "convective"
           ? convectiveDetailAugment(day, group.winner)
           : { labelSuffix: "", subLineHtml: "" };
-        const labelContent = String(group.winner.text || group.winner.label || "") + augment.labelSuffix;
+        // WR-04: truncate the label content itself, then pad — the 60-char bound counts
+        // source characters (T-16-22), never the dimension field or the padding, and the
+        // ellipsis can only ever land at the end of the label rather than mid-column.
+        const labelContent = truncateHazardLabel(
+          String(group.winner.text || group.winner.label || "") + augment.labelSuffix
+        );
         const paddedFieldContent = dimensionField + labelContent.padEnd(DETAIL_LABEL_FIELD_WIDTH);
         wrapper.innerHTML += "<span style=\"white-space:pre-wrap\">" + "  " +
           detailColoredSpan(group.winner.color, paddedFieldContent) +
@@ -493,8 +507,10 @@
           // consumed part of it — derived so the em dash still lands on the winner row's
           // own column regardless of DETAIL_LABEL_FIELD_WIDTH/DIMENSION_FIELD_WIDTH.
           const alsoLabelFieldWidth = DETAIL_LABEL_FIELD_WIDTH - 2 - "also: ".length;
-          const competitorLabel = String(competitor.text || competitor.label || "")
-            .padEnd(alsoLabelFieldWidth);
+          // WR-04: same truncate-then-pad order as the winner row above.
+          const competitorLabel = truncateHazardLabel(
+            String(competitor.text || competitor.label || "")
+          ).padEnd(alsoLabelFieldWidth);
           wrapper.innerHTML += "<span style=\"white-space:pre-wrap\">" + alsoIndent + "also: " +
             detailColoredSpan(competitor.color, competitorLabel) +
             detailSourceAttribution(competitor.source) + "</span><br/>";
