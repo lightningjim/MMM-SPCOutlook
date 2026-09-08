@@ -12717,6 +12717,45 @@ const scenarios = [
       if (truthyRendered.includes(gatedEntries["7"].text)) {
         throw new Error(`a non-boolean showHeatRisk should behave like false (CFG-01), got: ${truthyRendered}`);
       }
+
+      // 19-REVIEW WR-01: (d) extended to BOTH halves of one product. `showHazardsOutlook`
+      // gates a day row here and the "Extended Hazards:" window band 200 lines below, and the
+      // band's gate was a bare truthiness test while this one is `!== true` — so one
+      // non-boolean config hid the day row and showed the band, from the same flag. The
+      // advisory sub-section read its flags the same loose way; both now match this
+      // convention, so a config value can never mean two different things in one render.
+      const splitBrainPayload = buildPayload();
+      splitBrainPayload.windowBand = [{
+        label: "Heavy Snow", color: "0000ff", mapped: true,
+        startDate: "2026-09-11", endDate: "2026-09-11", offsetStart: 4, offsetEnd: 4
+      }];
+      splitBrainPayload.advisories = { spcMD: [{ label: "SPC MD 2108" }], mpd: [] };
+      const splitBrainRendered = renderDom(frontend, {
+        config: { ...baseConfig, showHazardsOutlook: "yes", showSPCMD: "yes" },
+        spcrisk: splitBrainPayload
+      });
+      if (splitBrainRendered.includes("Extended Hazards:") || splitBrainRendered.includes("Heavy Snow")) {
+        throw new Error(
+          `a non-boolean showHazardsOutlook hid the day row but rendered the window band — one ` +
+          `flag, two directions: ${splitBrainRendered}`
+        );
+      }
+      if (splitBrainRendered.includes(gatedEntries["6"].text)) {
+        throw new Error(`a non-boolean showHazardsOutlook should hide the day row too, got: ${splitBrainRendered}`);
+      }
+      if (splitBrainRendered.includes("SPC MD 2108")) {
+        throw new Error(`a non-boolean showSPCMD should behave like false (CFG-01), got: ${splitBrainRendered}`);
+      }
+      // Control: the same payload with real booleans renders both halves, so the assertions
+      // above are about the flag's TYPE and not about a broken fixture.
+      const bothRendered = renderDom(frontend, {
+        config: { ...baseConfig, showHazardsOutlook: true, showSPCMD: true },
+        spcrisk: splitBrainPayload
+      });
+      if (!bothRendered.includes("Extended Hazards:") || !bothRendered.includes("Heavy Snow") ||
+          !bothRendered.includes(gatedEntries["6"].text) || !bothRendered.includes("SPC MD 2108")) {
+        throw new Error(`control: showHazardsOutlook/showSPCMD:true must render every half, got: ${bothRendered}`);
+      }
     }
   },
   {

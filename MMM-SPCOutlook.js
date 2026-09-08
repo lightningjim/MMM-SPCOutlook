@@ -616,7 +616,12 @@
       const advisories = (this.spcrisk && this.spcrisk.advisories) || {};
       const lines = [];
       for (const key of Object.keys(ADVISORY_SOURCES)) {
-        if (applyDisplayGates !== false && !this.config[ADVISORY_SOURCES[key]]) continue;
+        // 19-REVIEW WR-01: strict `!== true`, not `!...`. This file states the convention at
+        // hazardEntryDisplayable ("an absent or non-boolean flag behaves like false, per
+        // CFG-01's default") and pins it with a probe, but this gate read the same class of
+        // flag by truthiness — so a `showSPCMD: "yes"` rendered the advisory while a day row
+        // under the same config was hidden. One flag, one direction, at every site.
+        if (applyDisplayGates !== false && this.config[ADVISORY_SOURCES[key]] !== true) continue;
         if (Array.isArray(advisories[key])) lines.push(...advisories[key]);
       }
       return lines;
@@ -1058,7 +1063,13 @@
       // badge (D-16, CR-01). Reads the top-level, always-present `windowBand` array
       // (RPT-04) rather than the legacy `hazardsOutlook.windowBand` — the day3-14 grid
       // this block used to also render is covered by the unified day loop above.
-      if (this.config.showHazardsOutlook) {
+      //
+      // 19-REVIEW WR-01: strict `=== true`, matching hazardEntryDisplayable's DAY_SOURCE_FLAGS
+      // gate on this same flag. A bare truthiness test here meant `showHazardsOutlook: "yes"`
+      // hid every wpc-hazards DAY ROW (the day gate is `!== true`) while still rendering the
+      // window band — the same flag gating two halves of one product in opposite directions,
+      // which is precisely the split-brain WR-09's doctrine above exists to prevent.
+      if (this.config.showHazardsOutlook === true) {
         wrapper.innerHTML += renderHazardsWindowBand(this.spcrisk.windowBand);
       }
       // CR-01: a stale payload with no renderable risk must not present as a bare ⚠ badge.
