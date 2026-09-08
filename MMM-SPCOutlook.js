@@ -536,7 +536,27 @@
         }
       }
       for (const group of groups) {
-        if (!group.winner) continue;
+        // 19-REVIEW WR-04: a group with no winner used to be DISCARDED, which made this the
+        // one place in the file where the fail-safe pointed at hiding rather than showing. A
+        // `dimension: null` entry always gets a fresh group with `winner: null` (it groups
+        // with nothing), so one carrying `suppressedBy !== null` landed in its own group's
+        // `competitors` and rendered in neither mode — while the DAY_SOURCE_FLAGS note two
+        // hundred lines below states the opposite posture outright ("an UNLISTED source is
+        // never hidden … degrades to today's (visible) behaviour rather than silently
+        // disappearing"). Unreachable today (`_resolveGridDayPrecedence` `continue`s on
+        // `dimension === null` — never suppresses, never suppressed), but a containment
+        // posture that is asserted rather than implemented is the same critique CR-03 made
+        // of the prototype-chain lookups.
+        //
+        // The first competitor is promoted rather than the group being dropped. Nothing is
+        // misrepresented by it: `suppressedBy` is not rendered anywhere (an `also:` row does
+        // not name its suppressor either), so promotion changes only whether the entry is
+        // SEEN, and D-05 already shows suppressed entries in detail mode. Any remaining
+        // competitors keep their `also:` rows under it.
+        if (!group.winner) {
+          if (group.competitors.length === 0) continue;
+          group.winner = group.competitors.shift();
+        }
         // 19-REVIEW CR-03: `lookup`, not `DIMENSION_LABELS[...]` — a payload dimension of
         // "toString" resolved Object.prototype.toString here, a truthy FUNCTION the `||`
         // could not fall back past, and `.padEnd` on it took the whole render down.

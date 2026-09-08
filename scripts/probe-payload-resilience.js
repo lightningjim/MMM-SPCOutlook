@@ -12627,6 +12627,47 @@ const scenarios = [
     }
   },
   {
+    // 19-REVIEW WR-04: the sub-row grouper discarded any group with no winner. A
+    // `dimension: null` entry (D-07's unmapped passthrough) always gets a fresh group with
+    // `winner: null`, so one carrying `suppressedBy !== null` landed in its own group's
+    // competitors and rendered in NEITHER mode — the hidden direction of the fail-safe, which
+    // the DAY_SOURCE_FLAGS note states must never happen ("an UNLISTED source is never hidden
+    // … degrades to today's (visible) behaviour rather than silently disappearing").
+    // Unreachable today (`_resolveGridDayPrecedence` never suppresses a `dimension: null`
+    // entry), so this pins the containment posture rather than a live defect — the same
+    // standard CR-03's prototype-chain scenarios set.
+    // Mutation to prove RED: restore `if (!group.winner) continue;`.
+    name: "wr04-a-suppressed-unmapped-entry-is-never-silently-hidden",
+    run: async (_helper) => {
+      const frontend = loadFrontendModule();
+      const config = {
+        lat: PROBE_LAT, lon: PROBE_LON, extended: false, updateInterval: 60,
+        proximityWeighting: false, dayReportDetail: true
+      };
+      // A survivor so the day row renders at all (D-03: no survivor, no row), plus the
+      // suppressed unmapped entry beside it.
+      const payload = unifiedPayload({});
+      payload.days["2"].hazards = [
+        { dimension: "convective", source: "spc-convective", label: "ENH", text: "Enhanced",
+          value: 4, color: "e06666", suppressedBy: null },
+        { dimension: null, source: "some-future-source", label: "Novel Hazard",
+          text: "Novel Hazard", value: null, color: "e69138", suppressedBy: "spc-convective" }
+      ];
+      payload.summary.anyHazard = true;
+      payload.summary.activeDays = [2];
+      const rendered = renderDom(frontend, { config, spcrisk: payload });
+      if (!rendered.includes("Enhanced")) {
+        throw new Error(`precondition: the surviving entry must render, got: ${rendered}`);
+      }
+      if (!rendered.includes("Novel Hazard")) {
+        throw new Error(
+          `a suppressed dimension:null entry was silently dropped from detail mode — the one ` +
+          `direction the fail-safe forbids: ${rendered}`
+        );
+      }
+    }
+  },
+  {
     // 19-REVIEW WR-03: `enabledAdvisories` spread the whole array without validating entries
     // while the render loop skipped the ones it could not render, so the two readings
     // disagreed: `advisories: { spcMD: [null] }` made `anyUngatedContent()` true, nothing
