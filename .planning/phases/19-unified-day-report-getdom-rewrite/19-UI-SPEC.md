@@ -227,6 +227,15 @@ Extended Hazards:
   invent a unifying heading for the combined band** — the advisories' existing blue identifies
   them, and the window band's existing heading identifies itself; adding a third label ("Below:"
   or similar) would be new copy nobody asked for.
+- **One offset form is new this phase (19-REVIEW BL-03):** a window that STARTED before today
+  and has not yet ended (`offsetStart < 0 <= offsetEnd`) renders as `through {Weekday} (→D{end})`
+  rather than `{Weekday}–{Weekday} (D{start}–{end})`. The `D<n>` segment is 1-based like every
+  `Day N` block above it, so a raw negative start rendered `(D0–4)` under a grid whose first row
+  is Day 1 — the band contradicting the grid directly above it. The elapsed portion is not
+  forecastable content and is therefore not advertised at all: the range is left open at the low
+  end rather than clamped to a start day the feature did not begin on (clamping would pair a past
+  start weekday with a present-day offset, the same disagreement one level down). Every
+  non-negative offset keeps the existing `(D3)` / `(D3–7)` formatting exactly.
 - **Record this relocation on the RPT-06 checklist as verified-intentional**, not investigated
   as a regression (RESEARCH.md Pitfall 3) — today's advisories render above the day rows; RPT-04
   requires below.

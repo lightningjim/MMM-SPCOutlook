@@ -12627,6 +12627,80 @@ const scenarios = [
     }
   },
   {
+    // 19-REVIEW BL-03: a PARTIALLY elapsed window — started in the past, not yet ended. The
+    // elapsed-window filter drops only `offsetEnd < 0`, so this shape reaches the renderer,
+    // and `Math.trunc(n) + 1` rendered its raw start verbatim as `D0` (or `D-1` for an
+    // older start) under a day grid whose first row is `Day 1`. `_bucketHazardMatch` routes
+    // every non-precipitation feature to the band with its own raw observed span and no
+    // lower clamp, so a multi-day WPC/CPC hazard that began yesterday is an everyday poll.
+    // Mutation to prove RED: restore `String(Math.trunc(n) + 1)` in `off` AND drop the
+    // `startedInPast` branch from `offsetSegment` — the band renders "(D0–4)" again.
+    name: "bl03-a-partially-elapsed-window-never-advertises-a-day-the-grid-lacks",
+    run: async (_helper) => {
+      const frontend = loadFrontendModule();
+      const config = {
+        lat: PROBE_LAT, lon: PROBE_LON, extended: false, updateInterval: 60,
+        proximityWeighting: false, showHazardsOutlook: true
+      };
+      const bandPayload = (entry) => {
+        const payload = unifiedPayload({ windowBand: [entry] });
+        payload.summary.anyHazard = true;
+        payload.summary.bandDiagnostics = { windowBandCount: 1, advisoryCount: 0 };
+        return payload;
+      };
+
+      // (a) The defect shape: started yesterday, runs three more days.
+      const partial = renderDom(frontend, {
+        config,
+        spcrisk: bandPayload({
+          label: "Heavy Snow", color: "6fa8dc", mapped: true,
+          startDate: "2026-09-07", endDate: "2026-09-11", offsetStart: -1, offsetEnd: 3
+        })
+      });
+      if (!partial.includes("Extended Hazards:") || !partial.includes("Heavy Snow")) {
+        throw new Error(`a live-through-today window must still render, got: ${partial}`);
+      }
+      if (/\(D0/.test(partial) || /D-\d/.test(partial)) {
+        throw new Error(
+          `the band must never name a day the grid above it has no row for, got: ${partial}`
+        );
+      }
+      // The elapsed portion is not advertised at all — the range is open at the low end
+      // rather than clamped to a start day the feature did not begin on.
+      if (!/through \w{3} \(→D4\): /.test(partial)) {
+        throw new Error(
+          `a partially elapsed window should read as an open-ended range through its own end ` +
+          `day, got: ${partial}`
+        );
+      }
+
+      // (b) Control: a window starting TODAY is unaffected — the 0-based→1-based conversion
+      // is untouched for every non-negative offset, so this still reads D1–4.
+      const today = renderDom(frontend, {
+        config,
+        spcrisk: bandPayload({
+          label: "Heavy Snow", color: "6fa8dc", mapped: true,
+          startDate: "2026-09-08", endDate: "2026-09-11", offsetStart: 0, offsetEnd: 3
+        })
+      });
+      if (!/\(D1–4\): /.test(today) || today.includes("through ")) {
+        throw new Error(`a window starting today must still render as D1–4, got: ${today}`);
+      }
+
+      // (c) Control: the single-day form is unaffected too.
+      const single = renderDom(frontend, {
+        config,
+        spcrisk: bandPayload({
+          label: "Heavy Snow", color: "6fa8dc", mapped: true,
+          startDate: "2026-09-10", endDate: "2026-09-10", offsetStart: 2, offsetEnd: 2
+        })
+      });
+      if (!/\(D3\): /.test(single)) {
+        throw new Error(`a single-day window must still render as D3, got: ${single}`);
+      }
+    }
+  },
+  {
     // 19-REVIEW BL-02: two co-equal survivors on ONE dimension. `_addHazardsOutlookGridEntries`
     // dedupes a wpc-hazards day by LABEL, not by dimension, and hazardTaxonomy.js maps
     // `Heavy Snow` and `Freezing Rain` both onto `winter`; `_resolveGridDayPrecedence` leaves

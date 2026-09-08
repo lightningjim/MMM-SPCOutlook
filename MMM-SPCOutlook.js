@@ -718,8 +718,25 @@
         const startWeekday = hazardsWeekdayFromDate(entry.startDate);
         const endWeekday = hazardsWeekdayFromDate(entry.endDate);
         const singleDay = entry.offsetStart === entry.offsetEnd;
+        // 19-REVIEW BL-03: an entry whose window STARTED in the past but has not ended
+        // (`offsetStart < 0 <= offsetEnd`) passes the elapsed-window filter, which only drops
+        // `offsetEnd < 0`. That is not a synthetic shape: `_bucketHazardMatch` routes every
+        // non-precipitation group to the band with its own raw observed span and no lower
+        // clamp, so a multi-day WPC/CPC feature that began yesterday is an everyday payload.
+        // Rendering its raw start produced `Mon–Fri (D0–4)` under a grid whose first row is
+        // Day 1 — the band disagreeing with the grid directly above it about what day it
+        // means, the very defect the `+ 1` conversion below was introduced to fix.
+        //
+        // The elapsed portion is not forecastable content, so it is not advertised at all:
+        // the range is rendered open at the low end ("through Fri (→D4)") rather than
+        // clamped to a start day the feature did not actually begin on. Clamping would have
+        // put a start weekday in the past beside a present-day offset, which is the same
+        // two-halves-disagreeing shape one level down.
+        const startedInPast = typeof entry.offsetStart === "number" && entry.offsetStart < 0;
         let weekdaySegment = "";
-        if (startWeekday && endWeekday) {
+        if (startedInPast) {
+          if (endWeekday) weekdaySegment = "through " + endWeekday + " ";
+        } else if (startWeekday && endWeekday) {
           weekdaySegment = (singleDay ? startWeekday : startWeekday + "–" + endWeekday) + " ";
         }
         // WR-06: coerce rather than trust the payload's types. These were the only
@@ -737,10 +754,18 @@
         // with the grid directly above it about what day it meant. The backend's grid path
         // already applied this same `+ 1` inline; both now go through the one named
         // conversion so they cannot drift apart again.
-        const off = (n) => (typeof n === "number" && isFinite(n) ? String(Math.trunc(n) + 1) : "?");
-        const offsetSegment = singleDay
-          ? "(D" + off(entry.offsetStart) + ")"
-          : "(D" + off(entry.offsetStart) + "–" + off(entry.offsetEnd) + ")";
+        // 19-REVIEW BL-03: the `Math.max(1, ...)` floor is a second line of defence, not the
+        // fix — the `startedInPast` branch below never asks this helper for an elapsed start.
+        // It is here so that no future call site can reintroduce a `D0`/`D-1` the grid above
+        // has no row for, which is the one thing this segment must never say.
+        const off = (n) => (typeof n === "number" && isFinite(n)
+          ? String(Math.max(1, Math.trunc(n) + 1))
+          : "?");
+        const offsetSegment = startedInPast
+          ? "(→D" + off(entry.offsetEnd) + ")"
+          : (singleDay
+            ? "(D" + off(entry.offsetStart) + ")"
+            : "(D" + off(entry.offsetStart) + "–" + off(entry.offsetEnd) + ")");
         const label = "<span style=\"color:#" + validHazardColor(entry.color) + "\">" +
           escapeHtml(truncateHazardLabel(entry.label)) + "</span>";
         html += weekdaySegment + offsetSegment + ": " + label + "<br/>";
