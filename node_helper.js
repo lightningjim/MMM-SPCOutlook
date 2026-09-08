@@ -3273,6 +3273,27 @@ module.exports = NodeHelper.create({
       // probabilistic area / predictability too low" floor for this day range.
       if (!floor.probabilistic(day.risk)) continue;
 
+      // 19-REVIEW WR-05 / D-07: mirror the days 1-3 loop's containment above. These lookups
+      // were unguarded, so an unexpected percToRisk token emitted `value: undefined`,
+      // `text: undefined` and `color: undefined` into the payload instead of a pass-through
+      // entry — and `noteUnmapped` never fired, so the diagnostic ledger stayed silent about
+      // the one thing it exists to record. The frontend absorbs the malformed entry
+      // (`h.text || h.label`, `validHazardColor`), which is exactly why this was invisible.
+      // Ordered after the floor test, unlike the days 1-3 twin, because "NONE" is not a
+      // riskToValue key there either and must stay a floor skip rather than an unmapped
+      // token; `noteActive` still fires only for a mapped, above-floor reading.
+      if (!Object.prototype.hasOwnProperty.call(riskToValue, day.risk)) {
+        notes.noteUnmapped("spc-convective", day.risk);
+        const unmappedEntry = gridDays[String(d)];
+        if (unmappedEntry) {
+          unmappedEntry.hazards.push({
+            dimension: null, source: "spc-convective", label: day.risk, text: day.risk,
+            value: null, color: null, suppressedBy: null
+          });
+        }
+        continue;
+      }
+
       notes.noteActive("spc-convective", d);
 
       const dayEntry = gridDays[String(d)];

@@ -2293,6 +2293,100 @@ const scenarios = [
     }
   },
   {
+    // 19-REVIEW WR-05 / D-07: _addSpcGridEntries' days 4-8 loop had none of the containment
+    // its days 1-3 twin has. `value: riskToValue[day.risk]`, `text: valueToFullRisk[day.risk]`
+    // and `color: riskToColor[day.risk]` were unguarded lookups, so an unexpected percToRisk
+    // token emitted a triple-`undefined` entry into the payload instead of a D-07 pass-through
+    // entry, and `noteUnmapped` never fired — the diagnostic ledger stayed silent about the
+    // one thing it exists to record. The frontend absorbs the malformed entry
+    // (`h.text || h.label`, `validHazardColor`), which is exactly why it was invisible.
+    // The seam is `percToRisk` itself, the sole producer of these tokens.
+    // Mutation to prove RED: delete the hasOwnProperty guard from the days 4-8 loop.
+    name: "spc-days-4-8-unmapped-risk-token-passes-through-like-days-1-3",
+    run: async (helper) => {
+      const UNKNOWN_TOKEN = "EXTREME";
+      const originalPointInPolygon = turfStub.pointInPolygon;
+      const originalPercToRisk = helper.percToRisk;
+      const runDay4 = async ({ stubPercToRisk }) => {
+        resetHelper(helper);
+        resetLogs();
+        helper._products = { showExcessiveRain: false };
+        installFetch(helper, [
+          ["day4prob.lyr.geojson", freshFetch(DAY4_45PCT_SIGN_BODY)],
+          [".lyr.geojson", freshFetch(EMPTY_FEATURE_COLLECTION)]
+        ]);
+        turfStub.pointInPolygon = () => true;
+        if (stubPercToRisk) {
+          // A token no risk map knows. Zero percent still returns "NONE" so days 5-8 stay on
+          // their ordinary floor-skip path and this scenario isolates day 4.
+          helper.percToRisk = (pct) => (pct > 0 ? UNKNOWN_TOKEN : "NONE");
+        }
+        return await helper.getSpcOutlook(PROBE_LAT, PROBE_LON, true, { showExcessiveRain: false });
+      };
+
+      try {
+        const out = await runDay4({ stubPercToRisk: true });
+        assertPayloadIntact(out);
+
+        // Precondition guard: the unknown token actually reached the day-4 local, so the
+        // assertions below are about the grid-entry builder and not a stub that never fired.
+        if (out.day4.risk !== UNKNOWN_TOKEN) {
+          throw new Error(`precondition failed: day4.risk is ${JSON.stringify(out.day4.risk)}, not the unmapped token`);
+        }
+
+        const entry = out.days["4"].hazards.find((h) => h.source === "spc-convective");
+        if (!entry) {
+          throw new Error(`expected an spc-convective entry on grid day 4, got ${JSON.stringify(out.days["4"].hazards)}`);
+        }
+        // The three fields that used to be `undefined`. Checked with `!== null` rather than
+        // falsiness so a regression back to `undefined` cannot pass.
+        for (const field of ["dimension", "value", "color"]) {
+          if (entry[field] !== null) {
+            throw new Error(
+              `D-07: expected the pass-through entry's ${field} to be null, got ` +
+              `${JSON.stringify(entry[field])} — an unguarded lookup emitting undefined into the payload`
+            );
+          }
+        }
+        if (entry.label !== UNKNOWN_TOKEN || entry.text !== UNKNOWN_TOKEN) {
+          throw new Error(`D-07: expected label and text to carry the verbatim token, got ${JSON.stringify(entry)}`);
+        }
+        if (entry.suppressedBy !== null) {
+          throw new Error(`D-07: a pass-through entry is never suppressed, got ${JSON.stringify(entry.suppressedBy)}`);
+        }
+        if (!out.sources["spc-convective"].unmappedLabels.includes(UNKNOWN_TOKEN)) {
+          throw new Error(
+            `WR-05: expected noteUnmapped to record ${UNKNOWN_TOKEN} in ` +
+            `sources['spc-convective'].unmappedLabels, got ${JSON.stringify(out.sources["spc-convective"].unmappedLabels)}`
+          );
+        }
+        // Reported but NOT active — the same reported-vs-active split the days 1-3 loop
+        // applies to its own unmapped branch (D-14).
+        if (!out.sources["spc-convective"].reportedDays.includes(4)) {
+          throw new Error(`expected day 4 in reportedDays, got ${JSON.stringify(out.sources["spc-convective"].reportedDays)}`);
+        }
+        if (out.sources["spc-convective"].activeDays.includes(4)) {
+          throw new Error(`an unmapped token must not count as active, got ${JSON.stringify(out.sources["spc-convective"].activeDays)}`);
+        }
+
+        // Control: the same fixture with percToRisk untouched maps normally, so the
+        // assertions above are the guard and not a broken day-4 pipeline.
+        helper.percToRisk = originalPercToRisk;
+        const control = await runDay4({ stubPercToRisk: false });
+        const mapped = control.days["4"].hazards.find((h) => h.source === "spc-convective");
+        if (!mapped || mapped.dimension !== "convective" || typeof mapped.value !== "number") {
+          throw new Error(`control: a known token must still map normally, got ${JSON.stringify(mapped)}`);
+        }
+        if (control.sources["spc-convective"].unmappedLabels.includes(UNKNOWN_TOKEN)) {
+          throw new Error(`control: the ledger must stay clean for a mapped token, got ${JSON.stringify(control.sources["spc-convective"].unmappedLabels)}`);
+        }
+      } finally {
+        turfStub.pointInPolygon = originalPointInPolygon;
+        helper.percToRisk = originalPercToRisk;
+      }
+    }
+  },
+  {
     // CR-01: the regression that survived two review rounds because the suite asserted on
     // the payload and stopped before the render. Every layer fails, so every value is
     // "NONE" — the same value a genuine all-clear produces — and getDom's no-risk
