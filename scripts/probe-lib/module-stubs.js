@@ -244,8 +244,13 @@ const TURF_DEFAULTS = { pointInPolygon: () => false };
 // per-product cache, a rate-limit token): the new field is never reset, scenario N's
 // state bleeds into scenario N+1, and the failure surfaces as an unrelated flaky
 // assertion. start() is the single source of truth for helper-global initialisation.
-// Note this emits start()'s own log line — every scenario calls resetLogs() after
-// resetHelper(), so log assertions still see only their own scenario's output.
+// Note this emits start()'s own log line. 19-REVIEW WR-06(a): the RUNNER clears it, calling
+// resetLogs() immediately after resetHelper() in probe-payload-resilience.js's scenario loop.
+// This comment used to say "every scenario calls resetLogs() after resetHelper()" — a contract
+// the WR-07(b) runner change had already made false, and one that left log isolation depending
+// on each scenario remembering (173 calls across 189 entries). The surviving per-scenario calls
+// are redundant at the top of a scenario but stay load-bearing MID-scenario, where a control
+// needs a clean log slate.
 function resetHelper(helper) {
   const originals = ORIGINAL_SEAMS.get(helper);
   if (originals) Object.assign(helper, originals);

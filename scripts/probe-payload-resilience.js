@@ -14076,12 +14076,27 @@ async function main() {
       // calls are now redundant at the top of a scenario but are deliberately left in place —
       // several scenarios reset MID-run to set up a control, and those calls are still
       // load-bearing.
+      //
+      // 19-REVIEW WR-06(a): ...and LOG isolation is the runner's job for exactly the same
+      // reason. WR-07(b) moved `resetHelper` here and left `resetLogs` behind as each
+      // scenario's responsibility (173 calls across 189 entries), so a scenario that forgets
+      // inherits the previous scenario's `logCalls` PLUS the `start()` line `resetHelper`
+      // itself just emitted — an order-dependent failure in the one mechanism whose whole
+      // purpose is proving what the module logged. Ordered after `resetHelper` because that
+      // is the order the per-scenario pairs used and the order that clears `start()`'s line.
       resetHelper(helper);
+      resetLogs();
       await scenario.run(helper);
       console.log(`PASS ${scenario.name}`);
       passed++;
     } catch (err) {
-      console.log(`FAIL ${scenario.name}: ${err.message}`);
+      // 19-REVIEW WR-06(b): the stack, not just the message. A TypeError out of getDom()
+      // reported as a bare "x.padEnd is not a function" with no frame — discarding the one
+      // line that names the function to fix (CR-03 was diagnosed this way, from outside the
+      // runner). `main().catch` below already prints `err.stack`, so this was inconsistent
+      // with the file's own answer to the same question (its WR-05 note: "report what
+      // actually went wrong").
+      console.log(`FAIL ${scenario.name}: ${err && err.stack ? err.stack : err}`);
       failed++;
     }
   }
