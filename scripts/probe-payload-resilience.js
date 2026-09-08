@@ -12627,6 +12627,71 @@ const scenarios = [
     }
   },
   {
+    // 19-REVIEW WR-01: `truncateHazardLabel(entry.label)` does `String(label)`, and
+    // `renderableWindowEntries` type-checked `offsetEnd` but never `label` — so a band entry
+    // with no label rendered the literal word "undefined" in hazard red. This is the exact
+    // failure class the day path made structural this iteration (`entryText(h) === ""`) and
+    // the one `cigLabel` names as "no segment rather than a bad one". Backend-unreachable
+    // today, so the scenario is defense in depth — and it is asserted through the SHARED
+    // predicate, so the empty-render discriminator and the renderer keep agreeing.
+    // Mutation to prove RED: drop the `typeof entry.label === "string"` term from
+    // renderableWindowEntries.
+    name: "wr01-a-label-less-band-entry-renders-nothing-rather-than-the-word-undefined",
+    run: async (_helper) => {
+      const frontend = loadFrontendModule();
+      const config = {
+        lat: PROBE_LAT, lon: PROBE_LON, extended: false, updateInterval: 60,
+        proximityWeighting: false, showHazardsOutlook: true
+      };
+      const labelless = {
+        color: "a80000", mapped: true,
+        startDate: "2026-09-10", endDate: "2026-09-11", offsetStart: 2, offsetEnd: 3
+      };
+      const good = {
+        label: "Hazardous Heat", color: "a80000", mapped: true,
+        startDate: "2026-09-10", endDate: "2026-09-11", offsetStart: 2, offsetEnd: 3
+      };
+
+      // (a) Mixed band: the label-less entry vanishes, the entry beside it survives.
+      const mixed = unifiedPayload({ windowBand: [labelless, good] });
+      mixed.summary.anyHazard = true;
+      mixed.summary.bandDiagnostics = { windowBandCount: 2, advisoryCount: 0 };
+      const mixedRendered = renderDom(frontend, { config, spcrisk: mixed });
+      if (mixedRendered.includes("undefined")) {
+        throw new Error(`the window band rendered the literal word "undefined": ${mixedRendered}`);
+      }
+      if (!mixedRendered.includes("Hazardous Heat")) {
+        throw new Error(`the entry beside it must still render, got: ${mixedRendered}`);
+      }
+
+      // (b) A band whose ONLY entry is label-less has nothing to say: no orphaned
+      // "Extended Hazards:" heading, and — because the discriminator reads the same
+      // predicate — no "(filtered by settings)" blaming a config that filtered nothing.
+      const only = unifiedPayload({ windowBand: [labelless] });
+      only.summary.anyHazard = true;
+      only.summary.bandDiagnostics = { windowBandCount: 1, advisoryCount: 0 };
+      const onlyRendered = renderDom(frontend, { config, spcrisk: only });
+      if (onlyRendered.includes("Extended Hazards")) {
+        throw new Error(`an orphaned band heading was written: ${onlyRendered}`);
+      }
+      if (onlyRendered !== "No Hazards Forecast") {
+        throw new Error(
+          `an unrenderable band entry is the summary's own raw count, not a settings filter, ` +
+          `got: ${JSON.stringify(onlyRendered)}`
+        );
+      }
+
+      // (c) An empty-string label is the same case — "" is as unrenderable as absent.
+      const empty = unifiedPayload({ windowBand: [{ ...good, label: "" }] });
+      empty.summary.anyHazard = true;
+      empty.summary.bandDiagnostics = { windowBandCount: 1, advisoryCount: 0 };
+      const emptyRendered = renderDom(frontend, { config, spcrisk: empty });
+      if (emptyRendered.includes("Extended Hazards")) {
+        throw new Error(`an empty-string label produced a band line: ${emptyRendered}`);
+      }
+    }
+  },
+  {
     // 19-REVIEW BL-03: a PARTIALLY elapsed window — started in the past, not yet ended. The
     // elapsed-window filter drops only `offsetEnd < 0`, so this shape reaches the renderer,
     // and `Math.trunc(n) + 1` rendered its raw start verbatim as `D0` (or `D-1` for an

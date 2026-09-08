@@ -648,8 +648,18 @@
     // excluded-label filter is a display gate.
     const renderableWindowEntries = (windowBand, applyDisplayGates) => {
       if (!Array.isArray(windowBand)) return [];
+      // 19-REVIEW WR-01: the label is type-checked STRUCTURALLY, alongside the elapsed-window
+      // term and for the same reason — a band entry with no usable label has nothing to say,
+      // and `truncateHazardLabel`'s `String(label)` turned that into the literal word
+      // "undefined" in the rendered band. This is the rule the day path made structural this
+      // iteration (`entryText(h) === ""` in `hazardEntryDisplayable`) and the one `cigLabel`
+      // states as "no segment rather than a bad one"; the band was the last site not carrying
+      // it. Backend-unreachable today (`_hazardMatchesFromHits` rejects a non-string or empty
+      // label), so this is defense in depth — but it belongs in the SHARED predicate, so the
+      // empty-render discriminator and the renderer keep agreeing about what the band holds.
       return windowBand.filter((entry) => (
         entry && typeof entry === "object" &&
+        typeof entry.label === "string" && entry.label.length > 0 &&
         !(typeof entry.offsetEnd === "number" && entry.offsetEnd < 0) &&
         (applyDisplayGates === false || hazardsLabelDisplayable(entry.label))
       ));
