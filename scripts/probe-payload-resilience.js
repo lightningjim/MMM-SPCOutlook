@@ -12627,6 +12627,61 @@ const scenarios = [
     }
   },
   {
+    // 19-REVIEW WR-02: the advisory render loop's guard existed, by its own comment, to stop
+    // "undefined in effect." reaching the screen — but tested only `!entry || typeof entry
+    // !== "object"`, so `{}` walked straight past it and `escapeHtml(entry.label)` produced
+    // the literal string the guard names. The label is the entry's whole content (the hazard
+    // type is an optional D-06 suffix), so "has a usable label" is the same structural rule
+    // the day and band paths already carry.
+    // Mutation to prove RED: restore `if (!entry || typeof entry !== "object") continue;`.
+    name: "wr02-a-labelless-advisory-entry-never-renders-undefined-in-effect",
+    run: async (_helper) => {
+      const frontend = loadFrontendModule();
+      const config = {
+        lat: PROBE_LAT, lon: PROBE_LON, extended: false, updateInterval: 60,
+        proximityWeighting: false, showSPCMD: true, showMPD: true
+      };
+
+      // (a) `{}` — an object that passes a typeof check and carries nothing.
+      const shapeless = unifiedPayload({ advisories: { spcMD: [{}], mpd: [] } });
+      shapeless.summary.anyHazard = true;
+      shapeless.summary.bandDiagnostics = { windowBandCount: 0, advisoryCount: 1 };
+      const shapelessRendered = renderDom(frontend, { config, spcrisk: shapeless });
+      if (shapelessRendered.includes("undefined")) {
+        throw new Error(
+          `the advisory band rendered "undefined in effect." — the exact string its own guard ` +
+          `names: ${shapelessRendered}`
+        );
+      }
+
+      // (b) An empty-string label is the same case, and a non-string one too.
+      const emptyish = unifiedPayload({
+        advisories: { spcMD: [{ label: "" }, { label: 42 }], mpd: [] }
+      });
+      emptyish.summary.anyHazard = true;
+      emptyish.summary.bandDiagnostics = { windowBandCount: 0, advisoryCount: 2 };
+      const emptyishRendered = renderDom(frontend, { config, spcrisk: emptyish });
+      if (emptyishRendered.includes("in effect.")) {
+        throw new Error(
+          `an advisory with no usable label must produce no line at all, got: ${emptyishRendered}`
+        );
+      }
+
+      // (c) Control: a well-formed advisory still renders, hazard-type suffix and all — so
+      // (a)/(b) are assertions about the guard, not about the band having stopped working.
+      const good = unifiedPayload({
+        advisories: { spcMD: [{ label: "SPC MD 1234" }], mpd: [{ label: "MPD 0042", hazardType: "Heavy Rain" }] }
+      });
+      good.summary.anyHazard = true;
+      good.summary.bandDiagnostics = { windowBandCount: 0, advisoryCount: 2 };
+      const goodRendered = renderDom(frontend, { config, spcrisk: good });
+      if (!goodRendered.includes("SPC MD 1234 in effect.") ||
+          !goodRendered.includes("MPD 0042 — Heavy Rain in effect.")) {
+        throw new Error(`control: a well-formed advisory must still render, got: ${goodRendered}`);
+      }
+    }
+  },
+  {
     // 19-REVIEW WR-01: `truncateHazardLabel(entry.label)` does `String(label)`, and
     // `renderableWindowEntries` type-checked `offsetEnd` but never `label` — so a band entry
     // with no label rendered the literal word "undefined" in hazard red. This is the exact

@@ -677,6 +677,17 @@
     // WR-01: `applyDisplayGates` again, same meaning and default — false collects every
     // advisory the payload carries regardless of this instance's per-source toggles, which is
     // what the empty-render discriminator needs and what nothing else may use.
+    // 19-REVIEW WR-02: what makes an advisory entry renderable, as one predicate. The render
+    // loop's own guard said it was there to prevent "undefined in effect." but only tested
+    // `!entry || typeof entry !== "object"`, so `{}` produced exactly the string the guard
+    // names — `escapeHtml(undefined)` is `"undefined"`. The label is the entry's whole
+    // content (the hazard type is an optional suffix, D-06), so an entry without one has
+    // nothing to say, the same structural rule `hazardEntryDisplayable` applies to a day
+    // entry and `renderableWindowEntries` to a band entry.
+    const advisoryEntryDisplayable = (entry) => (
+      !!entry && typeof entry === "object" &&
+      typeof entry.label === "string" && entry.label.length > 0
+    );
     const enabledAdvisories = (applyDisplayGates) => {
       const advisories = (this.spcrisk && this.spcrisk.advisories) || {};
       const lines = [];
@@ -1163,9 +1174,14 @@
       // render can no longer disagree about either question.
       const allAdvisories = enabledAdvisories();
       for (const entry of allAdvisories) {
-        // Guard the entry itself: skip a null/non-object entry rather than rendering
-        // "undefined in effect." — the failure class CR-02 already fixed once on the backend.
-        if (!entry || typeof entry !== "object") continue;
+        // Guard the entry itself: skip an entry with no renderable label rather than
+        // rendering "undefined in effect." — the failure class CR-02 already fixed once on
+        // the backend.
+        // 19-REVIEW WR-02: this guard used to stop at `!entry || typeof entry !== "object"`,
+        // which let `{}` through and produced verbatim the string it names. It now reads the
+        // shared `advisoryEntryDisplayable`, so the field the guard is actually about is the
+        // field it tests — and the ungated reading uses the same predicate (WR-03).
+        if (!advisoryEntryDisplayable(entry)) continue;
         let line = escapeHtml(entry.label);
         // D-06: a hazard type is only ever a non-empty string when present — an MPD whose
         // hazard type could not be parsed renders without the suffix rather than being
