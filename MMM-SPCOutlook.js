@@ -526,10 +526,14 @@
         // 19-REVIEW CR-03: `lookup`, not `DIMENSION_LABELS[...]` — a payload dimension of
         // "toString" resolved Object.prototype.toString here, a truthy FUNCTION the `||`
         // could not fall back past, and `.padEnd` on it took the whole render down.
-        const dimensionField = String(group.dimension === null
+        // 19-REVIEW WR-04: the unmapped-dimension fallback is the payload's own string and is
+        // therefore unbounded, so it is truncated on its OWN account (T-16-20's 1 MB DOM node
+        // rule) rather than by spending the label's 60-character budget — a mapped dimension
+        // is at most 12 characters and this is a no-op for it.
+        const dimensionField = truncateHazardLabel(String(group.dimension === null
           ? ""
           : lookup(DIMENSION_LABELS, group.dimension, group.dimension)
-        ).padEnd(DIMENSION_FIELD_WIDTH);
+        )).padEnd(DIMENSION_FIELD_WIDTH);
         // D-07: the convective sub-row's inside-mode proximity badge and three-shape
         // probabilistic sub-line are relocated here, detail-only — every other dimension
         // has no `detail` sub-object at all, so this is a no-op for them.
@@ -539,9 +543,16 @@
         // WR-04: truncate the label content itself, then pad — the 60-char bound counts
         // source characters (T-16-22), never the dimension field or the padding, and the
         // ellipsis can only ever land at the end of the label rather than mid-column.
-        const labelContent = truncateHazardLabel(
-          entryText(group.winner) + augment.labelSuffix
-        );
+        //
+        // 19-REVIEW WR-04 (iteration 2): the bound is applied to the ENTRY'S OWN TEXT, and
+        // the module-authored proximity badge is composed around the truncated result rather
+        // than inside it. Truncating `label + labelSuffix` meant a long label ate the badge
+        // and the "…" landed on the badge instead of the label — while the compact line
+        // counted its DIMENSION PREFIX against the same budget, so the two modes measured two
+        // different strings and could cut the same label at two different points. T-16-22's
+        // stated intent is that the bound counts SOURCE characters; the badge and the prefix
+        // are neither source-controlled nor unbounded.
+        const labelContent = truncateHazardLabel(entryText(group.winner)) + augment.labelSuffix;
         const paddedFieldContent = dimensionField + labelContent.padEnd(DETAIL_LABEL_FIELD_WIDTH);
         html += "<span style=\"white-space:pre-wrap\">" + "  " +
           detailColoredSpan(group.winner.color, paddedFieldContent) +
@@ -1022,11 +1033,21 @@
           const segments = survivors.map((h) => {
             // 19-REVIEW CR-03: `lookup`, not `DIMENSION_LABELS[...]` — same prototype-chain
             // reason as the detail sub-row's dimension field.
+            // 19-REVIEW WR-04: the 60-char bound is applied to the ENTRY'S OWN TEXT, the same
+            // string the detail sub-row applies it to, so the two modes can no longer cut the
+            // same label at two different points. It used to be applied to
+            // `dimensionLabel + " " + label`, which let up to 13 characters of
+            // MODULE-AUTHORED prefix consume a budget T-16-22 says counts source characters.
+            // The prefix is truncated on its own account instead — a no-op for a mapped
+            // dimension (12 chars at most), and T-16-20's unbounded-payload-string protection
+            // for the unmapped passthrough.
+            const labelText = truncateHazardLabel(entryText(h));
             const segmentText = (h.dimension !== null && h.dimension !== undefined)
-              ? String(lookup(DIMENSION_LABELS, h.dimension, h.dimension)) + " " + entryText(h)
-              : entryText(h);
+              ? truncateHazardLabel(String(lookup(DIMENSION_LABELS, h.dimension, h.dimension))) +
+                " " + labelText
+              : labelText;
             return "<span style=\"color:#" + validHazardColor(h.color) + "\">" +
-              escapeHtml(truncateHazardLabel(segmentText)) + "</span>";
+              escapeHtml(segmentText) + "</span>";
           });
           // Wrapped in a white-space:pre-wrap span so the two literal spaces before the
           // first segment survive to the screen instead of collapsing (same reasoning as

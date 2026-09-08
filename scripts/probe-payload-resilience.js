@@ -11937,8 +11937,13 @@ const scenarios = [
         throw new Error(`vacuity guard failed: day 4 did not render at all: ${rendered}`);
       }
 
-      // Second assertion: a 200-character label truncates to 60 SOURCE characters (the
-      // composed "Wind " + label segment, before escaping) plus "…".
+      // Second assertion: a 200-character label truncates to 60 SOURCE characters plus "…".
+      // 19-REVIEW WR-04: the bound is measured against the ENTRY'S OWN TEXT, not against the
+      // composed `"Wind " + label` segment. Measuring the composed string let 13 characters
+      // of MODULE-AUTHORED dimension prefix consume a budget T-16-22 says counts source
+      // characters, and made this line cut a label 5 characters earlier than the detail
+      // sub-row cut the same one — the two modes disagreeing about the same entry, which is
+      // the drift the unified renderer exists to close.
       const longText = "A".repeat(200);
       const longPayload = unifiedPayload({});
       longPayload.days["5"].hazards = [{
@@ -11950,12 +11955,45 @@ const scenarios = [
       if (!longRendered.includes("…")) {
         throw new Error(`expected a 200-character label to be truncated with an ellipsis, got: ${longRendered}`);
       }
-      const expectedTruncated = "Wind " + "A".repeat(55) + "…";
+      const expectedTruncated = "Wind " + "A".repeat(60) + "…";
       if (!longRendered.includes(expectedTruncated)) {
         throw new Error(`expected the 60-source-character truncated segment "${expectedTruncated}", got: ${longRendered}`);
       }
-      if (longRendered.includes("A".repeat(56))) {
-        throw new Error(`too many source characters survived truncation (expected exactly 55 A's before the ellipsis): ${longRendered}`);
+      if (longRendered.includes("A".repeat(61))) {
+        throw new Error(`too many source characters survived truncation (expected exactly 60 A's before the ellipsis): ${longRendered}`);
+      }
+      // ...and the detail sub-row cuts the SAME label at the SAME point. This is the
+      // cross-mode assertion the bound existed without: both call sites now measure the
+      // entry's own text, so a label can never be cut at two different places on one screen.
+      const longDetailRendered = renderDom(frontend, {
+        config: { ...config, dayReportDetail: true }, spcrisk: longPayload
+      });
+      const cutOf = (html) => {
+        const m = html.match(/(A+)…/);
+        return m ? m[1].length : -1;
+      };
+      const compactCut = cutOf(longRendered);
+      const detailCut = cutOf(longDetailRendered);
+      if (compactCut !== 60 || detailCut !== 60) {
+        throw new Error(
+          `both modes must cut the entry's own text at 60 source characters, got compact ` +
+          `${compactCut} / detail ${detailCut}: ${longDetailRendered}`
+        );
+      }
+      // An unmapped dimension is payload-controlled and unbounded, so it is truncated on its
+      // OWN account (T-16-20) rather than by spending the label's budget.
+      const longDimPayload = unifiedPayload({});
+      longDimPayload.days["5"].hazards = [{
+        dimension: "B".repeat(200), source: "wpc-hazards", label: "Gale", text: "Gale",
+        value: null, color: "e69138", suppressedBy: null
+      }];
+      longDimPayload.summary.anyHazard = true;
+      const longDimRendered = renderDom(frontend, { config, spcrisk: longDimPayload });
+      if (longDimRendered.includes("B".repeat(61))) {
+        throw new Error(`an unmapped dimension must be bounded too, got: ${longDimRendered}`);
+      }
+      if (!longDimRendered.includes("Gale")) {
+        throw new Error(`the label must survive a long dimension prefix intact, got: ${longDimRendered}`);
       }
     }
   },
@@ -13121,8 +13159,8 @@ const scenarios = [
       if (!rendered.includes("— WSSI") || !rendered.includes("also: ")) {
         throw new Error(`vacuity guard failed: expected a winner sub-row and an also: row, got: ${rendered}`);
       }
-      // Exactly 60 source characters survive on BOTH rows — the same bound the compact line
-      // applies (pinned at 55 + "Wind " there by wr02-unified-compact-segment-...).
+      // Exactly 60 source characters survive on every row — the same bound the compact line
+      // applies to the same string (wr02-unified-compact-segment-... pins it there).
       const expected = "A".repeat(60) + "…";
       if (!rendered.includes(expected)) {
         throw new Error(
@@ -13133,11 +13171,16 @@ const scenarios = [
       if (rendered.includes("A".repeat(61))) {
         throw new Error(`more than 60 source characters survived truncation: ${rendered}`);
       }
+      // 19-REVIEW WR-04 (iteration 2): THREE rows, not two. The compact header above the
+      // expanded day carries the same label, and it used to cut at 55 because it counted its
+      // own "Wind " dimension prefix against the budget — so the same label was cut at two
+      // different points on one screen. Both call sites now measure the entry's own text, and
+      // this count is what pins that agreement: a regression at either site drops it to 2.
       const truncatedRows = (rendered.match(/A{60}…/g) || []).length;
-      if (truncatedRows !== 2) {
+      if (truncatedRows !== 3) {
         throw new Error(
-          `expected both the winner row and the also: competitor row to apply the same bound, ` +
-          `got ${truncatedRows}: ${rendered}`
+          `expected the compact header, the winner sub-row and the also: competitor row to ` +
+          `apply the same bound to the same string, got ${truncatedRows}: ${rendered}`
         );
       }
       // The ellipsis is the END of the label, never mid-column: the dimension field must
@@ -13161,6 +13204,25 @@ const scenarios = [
       }
       if (!shortRendered.includes("Wind         High Winds             ")) {
         throw new Error(`control: a short label must still be padded to the label field width, got: ${shortRendered}`);
+      }
+
+      // 19-REVIEW WR-04 (iteration 2): the other half of "the bound counts source
+      // characters" — the module-authored inside-mode proximity badge is composed AROUND the
+      // truncated label, not truncated with it. Truncating `label + labelSuffix` meant a long
+      // label ate the badge and the "…" landed on the badge instead of the label, i.e. the
+      // bound silently deleted content the payload's own proximity subtree had earned.
+      const badgePayload = unifiedPayload({});
+      badgePayload.days["1"].proximity = { categorical: { value: 3.3, nextTier: "ENH" } };
+      badgePayload.days["1"].hazards = [convectiveEntryGridOneTwo({ text: longText })];
+      badgePayload.summary.anyHazard = true;
+      const badgeRendered = renderDom(frontend, {
+        config: { ...config, proximityWeighting: true }, spcrisk: badgePayload
+      });
+      if (!badgeRendered.includes("A".repeat(60) + "… → ENH 0.3")) {
+        throw new Error(
+          `the proximity badge must survive intact after a truncated label (it is ` +
+          `module-authored and must not consume the source-character budget), got: ${badgeRendered}`
+        );
       }
     }
   },
