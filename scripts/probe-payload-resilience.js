@@ -12061,6 +12061,86 @@ const scenarios = [
     }
   },
   {
+    // 19-REVIEW WR-03: `detailModeActive` scanned all fourteen `autoExpand` flags BEFORE any
+    // display gate. `_resolveGridDayAutoExpand` computes that flag on the ungated payload, so
+    // a day whose only significant entry belongs to a product this instance has DISABLED
+    // still flipped the whole render into detail rhythm — every rendered day acquiring a
+    // trailing blank line while nothing anywhere expanded. UI-SPEC's rule is "once ANY day IN
+    // THIS RENDER is in detail mode", and a gated-away day is not in this render.
+    // Mutation to prove RED: drop the `daySurvivors(d).length > 0` term from the scan.
+    name: "wr03-vertical-rhythm-follows-the-days-that-actually-render",
+    run: async (_helper) => {
+      const frontend = loadFrontendModule();
+      const baseConfig = {
+        lat: PROBE_LAT, lon: PROBE_LON, extended: false, updateInterval: 60,
+        proximityWeighting: false, dayReportDetail: false
+      };
+      // Day 2's auto-expanding entry belongs to a toggle-gated product; day 1's does not.
+      const buildPayload = () => {
+        const p = unifiedPayload({});
+        p.days["1"].hazards = [{
+          dimension: "convective", source: "spc-convective", label: "SLGT", text: "Slight",
+          value: 3, color: "f6f67d", suppressedBy: null
+        }];
+        p.days["2"].hazards = [{
+          dimension: "heat", source: "heatrisk", label: "4", text: "HeatRisk Extreme",
+          value: 4, color: "a80000", suppressedBy: null
+        }];
+        p.days["2"].autoExpand = true;
+        p.summary.anyHazard = true;
+        return p;
+      };
+
+      // showHeatRisk off: day 2 does not render at all, so nothing in this render expands and
+      // the dense one-<br/>-per-day rhythm must be kept.
+      const gated = renderDom(frontend, { config: baseConfig, spcrisk: buildPayload() });
+      if (gated.includes("HeatRisk Extreme")) {
+        throw new Error(`fixture: day 2 must be gated away for this scenario to mean anything: ${gated}`);
+      }
+      if (gated.includes("<br/><br/>")) {
+        throw new Error(
+          `a day that never renders must not drive the detail-mode rhythm — nothing in this ` +
+          `render expands, so there is no trailing blank line to justify: ${gated}`
+        );
+      }
+      if (!gated.includes("Slight")) {
+        throw new Error(`vacuity guard failed: day 1 must still render, got: ${gated}`);
+      }
+
+      // Control: with showHeatRisk on, day 2 renders AND expands, so the rhythm is justified
+      // and every rendered day gets its trailing blank line.
+      const visible = renderDom(frontend, {
+        config: { ...baseConfig, showHeatRisk: true }, spcrisk: buildPayload()
+      });
+      if (!visible.includes("HeatRisk Extreme") || !visible.includes("— HeatRisk")) {
+        throw new Error(`control: day 2 must render and expand with showHeatRisk on, got: ${visible}`);
+      }
+      if (!visible.includes("<br/><br/>")) {
+        throw new Error(`control: a render that DOES expand must carry the detail rhythm, got: ${visible}`);
+      }
+
+      // The other half of the same rule: a day whose entries are all suppressed (structurally
+      // unrenderable under any config) must not drive the rhythm either.
+      const suppressed = unifiedPayload({});
+      suppressed.days["1"].hazards = [{
+        dimension: "convective", source: "spc-convective", label: "SLGT", text: "Slight",
+        value: 3, color: "f6f67d", suppressedBy: null
+      }];
+      suppressed.days["2"].hazards = [{
+        dimension: "wind", source: "spc-convective", label: "ENH", text: "Enhanced",
+        value: 4, color: "e06666", suppressedBy: "wpc-hazards"
+      }];
+      suppressed.days["2"].autoExpand = true;
+      suppressed.summary.anyHazard = true;
+      const suppressedRendered = renderDom(frontend, { config: baseConfig, spcrisk: suppressed });
+      if (suppressedRendered.includes("<br/><br/>")) {
+        throw new Error(
+          `a suppressed-only day has no winner to expand and must not drive the rhythm: ${suppressedRendered}`
+        );
+      }
+    }
+  },
+  {
     // D-05: every suppressed competitor on a dimension renders as an also: line beneath the
     // winner, in its own payload color, with the literal "also:" text uncolored, in payload
     // order.

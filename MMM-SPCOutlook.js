@@ -974,7 +974,16 @@
         if (!detailModeActive) {
           for (let n = 1; n <= 14 && !detailModeActive; n++) {
             const d = this.spcrisk.days[String(n)];
-            if (d && d.autoExpand === true) detailModeActive = true;
+            // 19-REVIEW WR-03: `autoExpand` is computed by `_resolveGridDayAutoExpand` on the
+            // UNGATED payload, so scanning the flag alone let a day whose only significant
+            // entry belongs to a product this instance has disabled flip the entire render
+            // into detail rhythm — every rendered day acquiring a trailing blank line while
+            // NOTHING anywhere expands. The rule one comment above is "once ANY day IN THIS
+            // RENDER is in detail mode", and a gated-away day is not in this render; the
+            // `daySurvivors` term is what makes the scan read the same set the day loop below
+            // actually renders and expands. A proximity-only day is excluded for the same
+            // reason: it renders, but its `continue` below means it never expands.
+            if (d && d.autoExpand === true && daySurvivors(d).length > 0) detailModeActive = true;
           }
         }
         for (let n = 1; n <= 14; n++) {
