@@ -1050,7 +1050,34 @@
         // 3. The payload is fresh and confirmed and there was genuinely nothing to show. The
         //    confident string, same as the summary.anyHazard short-circuit above would have
         //    produced — this is the case where the two paths must agree.
-        const unconfirmed = !summaryOk || !!this.spcrisk._stale;
+        // 4. 19-REVIEW CR-02: the FOURTH state, which the three-way ladder put in case 3's
+        //    confident branch — the summary is well-formed, fresh, and asserts
+        //    `anyHazard: true`, nothing rendered, and NO display gate explains it (a
+        //    truncated or corrupt `days` object, a shape change between helper and
+        //    frontend). That is a summary-vs-render disagreement, exactly what
+        //    `contentMarker` exists to catch (Pitfall 9, see its note above), and asserting
+        //    a confident all-clear over a payload that says a hazard exists is the same
+        //    dishonesty CR-01's doctrine forbids at the staleness end. `anyUngatedContent()`
+        //    cannot rescue it: it re-reads the same unreadable `days` and therefore also
+        //    reports "nothing", so the code would conclude "genuinely nothing to show" from
+        //    the very evidence that says the opposite. `!summaryOk` already covered
+        //    malformation OF the summary; malformation BELOW it was not covered at all.
+        //
+        // The window-band term below is the one documented, legitimate way the summary can
+        // assert content this render deliberately drops: `_buildGridSummary`'s
+        // `windowBandCount` is a raw `windowBand.length`, while `renderableWindowEntries`
+        // drops wholly-elapsed windows ("not a forecast under any config") with the display
+        // gates OFF too. That is a structural rule rather than a disagreement, so a non-empty
+        // raw band explains `anyHazard` by itself and must not be reported as unconfirmed —
+        // any RENDERABLE entry in it would have made `anyUngatedContent()` true and never
+        // reached this line.
+        const rawWindowBandCount = Array.isArray(this.spcrisk.windowBand)
+          ? this.spcrisk.windowBand.length
+          : 0;
+        const summaryContradictsRender = summaryOk && summary.anyHazard === true &&
+          rawWindowBandCount === 0 && !anyUngatedContent();
+        // Case 1 keeps its documented precedence: an unconfirmed read is said first.
+        const unconfirmed = !summaryOk || !!this.spcrisk._stale || summaryContradictsRender;
         if (unconfirmed) {
           wrapper.innerHTML += NO_HAZARD_TEXT_UNCONFIRMED;
         } else if (anyUngatedContent()) {

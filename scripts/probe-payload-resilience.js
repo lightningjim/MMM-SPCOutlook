@@ -12263,7 +12263,13 @@ const scenarios = [
         dimension: "wind", source: "spc-convective", label: "ENH", text: "Enhanced",
         value: 4, color: "e06666", suppressedBy: "wpc-hazards"
       }];
-      suppressedPayload.summary.anyHazard = true;
+      // 19-REVIEW CR-02: `anyHazard` is left at the fixture's `false` here, which is what
+      // `_buildGridSummary` really derives for this payload — its day scan skips every
+      // `suppressedBy !== null` entry, so a suppressed-only grid contributes nothing to the
+      // flag. The hand-set `true` this line used to carry described no payload the backend
+      // can emit, and under CR-02's disagreement term it would now (correctly) read as a
+      // summary/render contradiction rather than as the settings-blame this case is about.
+      // The `true` variant is proved directly in cr02-... below.
       const suppressedRendered = renderDom(frontend, { config: baseConfig, spcrisk: suppressedPayload });
       if (suppressedRendered !== "No Hazards Forecast") {
         throw new Error(
@@ -12282,6 +12288,127 @@ const scenarios = [
       const alwaysOnRendered = renderDom(frontend, { config: baseConfig, spcrisk: alwaysOnPayload });
       if (!alwaysOnRendered.includes("Enhanced")) {
         throw new Error(`control: an always-on source must render with no toggles set, got: ${alwaysOnRendered}`);
+      }
+    }
+  },
+  {
+    // 19-REVIEW CR-02: the FOURTH empty-render state, which the WR-01 three-way split put in
+    // the confident branch — a fresh, well-formed summary asserting `anyHazard: true` over a
+    // render that produced nothing and no display gate that explains it. The confident string
+    // there is a regression from the pre-fix behaviour and the exact dishonesty CR-01's
+    // doctrine forbids: an all-clear asserted over a payload that says a hazard exists.
+    // `anyUngatedContent()` cannot catch it — it re-reads the same unreadable `days` and
+    // reports "nothing" too — which is why 168 green scenarios missed it. None of the four
+    // mutations the WR-01 fix was verified against was a summary/render disagreement.
+    // Mutation to prove RED: drop `summaryContradictsRender` from the `unconfirmed` term.
+    name: "cr02-a-summary-that-contradicts-the-render-is-never-a-confident-all-clear",
+    run: async (_helper) => {
+      const frontend = loadFrontendModule();
+      // Every toggle ON, so nothing here can be explained away as a display gate.
+      const config = {
+        lat: PROBE_LAT, lon: PROBE_LON, extended: false, updateInterval: 60,
+        proximityWeighting: false, showExcessiveRain: true, showWinterImpact: true,
+        showMPD: true, showSPCMD: true, showHazardsOutlook: true, showDrought: true,
+        showHeatRisk: true, showMinorHeat: true
+      };
+
+      // (a) The days object is gone entirely; the summary still asserts a hazard.
+      const nullDays = unifiedPayload({ days: null });
+      nullDays.summary.anyHazard = true;
+      const nullDaysRendered = renderDom(frontend, { config, spcrisk: nullDays });
+      if (nullDaysRendered !== "No Hazards Forecast (unconfirmed)") {
+        throw new Error(
+          `an unreadable day grid under summary.anyHazard:true must not render a confident ` +
+          `all-clear, got: ${JSON.stringify(nullDaysRendered)}`
+        );
+      }
+
+      // (b) The days object is present but every day is corrupt — the shape-drift case, which
+      // (a) alone would not distinguish from "the whole payload is junk".
+      const corruptDays = unifiedPayload({});
+      for (let n = 1; n <= 14; n++) corruptDays.days[String(n)] = "not a day";
+      corruptDays.summary.anyHazard = true;
+      const corruptRendered = renderDom(frontend, { config, spcrisk: corruptDays });
+      if (corruptRendered !== "No Hazards Forecast (unconfirmed)") {
+        throw new Error(
+          `a corrupt day grid under summary.anyHazard:true must not render a confident ` +
+          `all-clear, got: ${JSON.stringify(corruptRendered)}`
+        );
+      }
+
+      // (c) The new term must not swallow WR-01's case 2. A well-formed payload whose only
+      // content this instance's settings hid still says "(filtered by settings)" — there the
+      // summary and the render do NOT disagree, the gates fully explain the emptiness.
+      const gated = unifiedPayload({});
+      gated.days["4"].hazards = [{
+        dimension: "heavy-precip", source: "wpc-ero", label: "MDT", text: "ERO Moderate",
+        value: 3, color: "e06666", suppressedBy: null
+      }];
+      gated.summary.anyHazard = true;
+      const gatedRendered = renderDom(frontend, {
+        config: { ...config, showExcessiveRain: false }, spcrisk: gated
+      });
+      if (gatedRendered !== "No Hazards Forecast (filtered by settings)") {
+        throw new Error(
+          `the disagreement term must not swallow WR-01 case 2, got: ${JSON.stringify(gatedRendered)}`
+        );
+      }
+
+      // (d) ...and it must not swallow case 3 either: a quiet payload whose summary honestly
+      // says `anyHazard: false` is still the confident string.
+      const quiet = renderDom(frontend, { config, spcrisk: unifiedPayload({}) });
+      if (quiet !== "No Hazards Forecast") {
+        throw new Error(`a genuine all-clear must stay confident, got: ${JSON.stringify(quiet)}`);
+      }
+
+      // (e) The one legitimate way `anyHazard` can be true over an empty render: a
+      // wholly-elapsed window entry. `_buildGridSummary`'s `windowBandCount` is a raw
+      // `windowBand.length`, while `renderableWindowEntries` drops elapsed windows with the
+      // display gates OFF — a structural rule, not a disagreement — so this must stay
+      // confident rather than slandering a clean poll.
+      const elapsed = unifiedPayload({
+        windowBand: [{
+          label: "Hazardous Heat", color: "a80000", mapped: true,
+          startDate: "2026-08-01", endDate: "2026-08-02", offsetStart: -3, offsetEnd: -1
+        }]
+      });
+      elapsed.summary.anyHazard = true;
+      const elapsedRendered = renderDom(frontend, { config, spcrisk: elapsed });
+      if (elapsedRendered !== "No Hazards Forecast") {
+        throw new Error(
+          `an elapsed window band is the summary's own documented raw count and must stay ` +
+          `confident, got: ${JSON.stringify(elapsedRendered)}`
+        );
+      }
+
+      // (f) A readable grid whose only entry is suppressed, with a summary claiming a hazard,
+      // IS a disagreement: `_buildGridSummary` skips suppressed entries, so no backend can
+      // emit this pairing and the display must not assert an all-clear over it. This is the
+      // `true` half of the fixture correction in wr01-... above.
+      const suppressedContradiction = unifiedPayload({});
+      suppressedContradiction.days["3"].hazards = [{
+        dimension: "wind", source: "spc-convective", label: "ENH", text: "Enhanced",
+        value: 4, color: "e06666", suppressedBy: "wpc-hazards"
+      }];
+      suppressedContradiction.summary.anyHazard = true;
+      const suppressedRendered = renderDom(frontend, { config, spcrisk: suppressedContradiction });
+      if (suppressedRendered !== "No Hazards Forecast (unconfirmed)") {
+        throw new Error(
+          `a summary asserting a hazard over a readable grid with no survivor is a ` +
+          `disagreement, got: ${JSON.stringify(suppressedRendered)}`
+        );
+      }
+
+      // (g) Precedence is unchanged: staleness still says "(unconfirmed)" once, not twice,
+      // and the badge still renders above it.
+      const staleContradiction = unifiedPayload({ days: null });
+      staleContradiction.summary.anyHazard = true;
+      staleContradiction._stale = true;
+      staleContradiction._staleAsOf = null;
+      const staleRendered = renderDom(frontend, { config, spcrisk: staleContradiction });
+      if (!staleRendered.includes("⚠ Stale") ||
+          !staleRendered.endsWith("No Hazards Forecast (unconfirmed)")) {
+        throw new Error(`case 1 precedence must be unchanged, got: ${JSON.stringify(staleRendered)}`);
       }
     }
   },
