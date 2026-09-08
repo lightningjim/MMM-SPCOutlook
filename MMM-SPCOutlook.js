@@ -273,6 +273,17 @@
         ? text.slice(0, HAZARDS_LABEL_MAX_CHARS) + "…"
         : text;
     };
+    // 19-REVIEW WR-02: the ONE coercion of "what text does this hazard entry render as".
+    // The whole point of the CR-02/03/04 fix was that a compact header and its own detail
+    // sub-rows must not contradict each other; they came to share the FILTER but still
+    // coerced the text two different ways — the compact line did `h.text || h.label`, which
+    // renders the literal word "undefined" for an entry carrying neither (the exact failure
+    // class this file names at the advisory loop's own guard and at cigLabel's "no segment
+    // rather than a bad one" note), while the detail sub-row did
+    // `String(... || ... || "")` and rendered a blank field. One helper, both renderers, and
+    // the empty result is handled once — structurally, in hazardEntryDisplayable — rather
+    // than at each render site.
+    const entryText = (h) => String((h && (h.text || h.label)) || "");
     // D-01: the weekday comes from the payload's resolved UTC date, never from
     // dowToText(dow + N) — WPC's "Day N" boundary differs from SPC's (Pitfall 9), so
     // offset arithmetic drifts by one; the backend already resolved the real date.
@@ -529,7 +540,7 @@
         // source characters (T-16-22), never the dimension field or the padding, and the
         // ellipsis can only ever land at the end of the label rather than mid-column.
         const labelContent = truncateHazardLabel(
-          String(group.winner.text || group.winner.label || "") + augment.labelSuffix
+          entryText(group.winner) + augment.labelSuffix
         );
         const paddedFieldContent = dimensionField + labelContent.padEnd(DETAIL_LABEL_FIELD_WIDTH);
         html += "<span style=\"white-space:pre-wrap\">" + "  " +
@@ -546,7 +557,7 @@
           const alsoLabelFieldWidth = DETAIL_LABEL_FIELD_WIDTH - 2 - "also: ".length;
           // WR-04: same truncate-then-pad order as the winner row above.
           const competitorLabel = truncateHazardLabel(
-            String(competitor.text || competitor.label || "")
+            entryText(competitor)
           ).padEnd(alsoLabelFieldWidth);
           html += "<span style=\"white-space:pre-wrap\">" + alsoIndent + "also: " +
             detailColoredSpan(competitor.color, competitorLabel) +
@@ -732,6 +743,15 @@
     // discriminator has to opt out.
     const hazardEntryDisplayable = (h, applyDisplayGates) => {
       if (!h || typeof h !== "object") return false;
+      // 19-REVIEW WR-02: an entry with no text to render is STRUCTURALLY undisplayable, so
+      // this term sits above the applyDisplayGates escape hatch alongside the shape check —
+      // no config makes an entry with neither `text` nor `label` renderable, and the
+      // discriminator must not count it as content the user's settings hid. Placing it here
+      // rather than at each render site is what keeps the compact header, the detail
+      // sub-rows and the ungated reading from disagreeing about it: previously the compact
+      // line rendered the literal "undefined" for such an entry while its own sub-row
+      // rendered a blank field on the same screen.
+      if (entryText(h) === "") return false;
       if (applyDisplayGates === false) return true;
       // 17 D-01/D-02, RPT-06 checklist row 30: showMinorHeat is a frontend-only DISPLAY
       // FLOOR applied to heatrisk-sourced entries specifically — 1 (minor+) when true, 2
@@ -994,8 +1014,8 @@
             // 19-REVIEW CR-03: `lookup`, not `DIMENSION_LABELS[...]` — same prototype-chain
             // reason as the detail sub-row's dimension field.
             const segmentText = (h.dimension !== null && h.dimension !== undefined)
-              ? String(lookup(DIMENSION_LABELS, h.dimension, h.dimension)) + " " + (h.text || h.label)
-              : (h.text || h.label);
+              ? String(lookup(DIMENSION_LABELS, h.dimension, h.dimension)) + " " + entryText(h)
+              : entryText(h);
             return "<span style=\"color:#" + validHazardColor(h.color) + "\">" +
               escapeHtml(truncateHazardLabel(segmentText)) + "</span>";
           });

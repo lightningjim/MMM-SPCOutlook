@@ -12413,6 +12413,102 @@ const scenarios = [
     }
   },
   {
+    // 19-REVIEW WR-02: the compact header and its own detail sub-row shared the CR-02/03/04
+    // FILTER but still coerced an entry's text two different ways — `h.text || h.label` on
+    // the compact line (which renders the literal word "undefined" for an entry carrying
+    // neither) versus `String(... || ... || "")` in the sub-row (a blank field). The two
+    // lines therefore disagreed about the same entry on the same screen, which is the exact
+    // class the CR-02/03/04 collapse was supposed to make unrepresentable. Both now read one
+    // `entryText` helper, and an entry it empties is structurally undisplayable — matching
+    // the "no segment rather than a bad one" rule this file states for probabilities and for
+    // the advisory band's "undefined in effect." guard.
+    // Mutation to prove RED: drop the `entryText(h) === ""` term from hazardEntryDisplayable
+    // (verified: the compact line renders a bare "Convective " day row again). Restoring
+    // `h.text || h.label` at the compact line alone is deliberately NOT observable any more —
+    // with the structural term in place no entry that would coerce differently can reach
+    // either renderer, which is the "unrepresentable rather than merely fixed" standard the
+    // CR-02/03/04 collapse set. The shared helper is defense in depth behind it.
+    name: "wr02-an-entry-with-no-text-renders-nothing-rather-than-the-word-undefined",
+    run: async (_helper) => {
+      const frontend = loadFrontendModule();
+      const config = {
+        lat: PROBE_LAT, lon: PROBE_LON, extended: false, updateInterval: 60,
+        proximityWeighting: false, showHazardsOutlook: true
+      };
+      const textless = {
+        dimension: "convective", source: "spc-convective", value: 4,
+        color: "e06666", suppressedBy: null
+      };
+
+      // (a) Compact mode: no "undefined", and no half-rendered day row either.
+      const payload = unifiedPayload({});
+      payload.days["1"].hazards = [{ ...textless }];
+      payload.summary.anyHazard = true;
+      const compact = renderDom(frontend, { config, spcrisk: payload });
+      if (compact.includes("undefined")) {
+        throw new Error(`the compact line rendered the literal word "undefined": ${compact}`);
+      }
+      if (compact.includes("Day 1 (")) {
+        throw new Error(`an entry with no renderable text must not produce a day row: ${compact}`);
+      }
+
+      // (b) Detail mode: the same entry, the same verdict — this is the half that used to
+      // render a blank padded field while (a) rendered "Convective undefined".
+      const detail = renderDom(frontend, {
+        config: { ...config, dayReportDetail: true }, spcrisk: payload
+      });
+      if (detail.includes("undefined")) {
+        throw new Error(`the detail sub-row rendered the literal word "undefined": ${detail}`);
+      }
+      if (detail.includes("Day 1 (")) {
+        throw new Error(`an entry with no renderable text must not produce a day row in detail mode: ${detail}`);
+      }
+
+      // (c) The two modes agree entry-by-entry on a MIXED day: the textless entry vanishes
+      // from both, the entry beside it renders in both. This is the disagreement itself, not
+      // just its symptom.
+      const mixed = unifiedPayload({});
+      mixed.days["1"].hazards = [
+        { ...textless },
+        { dimension: "wind", source: "wpc-hazards", label: "High Winds", text: "High Winds",
+          value: null, color: "e69138", suppressedBy: null }
+      ];
+      mixed.summary.anyHazard = true;
+      const mixedCompact = renderDom(frontend, { config, spcrisk: mixed });
+      const mixedDetail = renderDom(frontend, {
+        config: { ...config, dayReportDetail: true }, spcrisk: mixed
+      });
+      for (const [label, rendered] of [["compact", mixedCompact], ["detail", mixedDetail]]) {
+        if (!rendered.includes("High Winds")) {
+          throw new Error(`${label}: the entry WITH text must still render, got: ${rendered}`);
+        }
+        if (rendered.includes("undefined") || rendered.includes("Convective")) {
+          throw new Error(`${label}: the textless entry leaked into the render, got: ${rendered}`);
+        }
+      }
+
+      // (d) `label` alone is enough — the helper is `text || label`, so this must not be
+      // swept up as textless. The vacuity guard for every assertion above.
+      const labelOnly = unifiedPayload({});
+      labelOnly.days["1"].hazards = [{ ...textless, label: "ENH" }];
+      labelOnly.summary.anyHazard = true;
+      const labelRendered = renderDom(frontend, { config, spcrisk: labelOnly });
+      if (!labelRendered.includes("Convective ENH")) {
+        throw new Error(`an entry with only a label must render it, got: ${labelRendered}`);
+      }
+
+      // (e) An empty-string text falls back to `label` and an empty BOTH is undisplayable —
+      // the coercion is `||`, not a `!== undefined` check.
+      const emptyBoth = unifiedPayload({});
+      emptyBoth.days["1"].hazards = [{ ...textless, text: "", label: "" }];
+      emptyBoth.summary.anyHazard = true;
+      const emptyRendered = renderDom(frontend, { config, spcrisk: emptyBoth });
+      if (emptyRendered.includes("Day 1 (")) {
+        throw new Error(`empty-string text and label must be undisplayable, got: ${emptyRendered}`);
+      }
+    }
+  },
+  {
     // 19-REVIEW CR-03: `Object.prototype`'s own keys resolve through a bare `map[key]` read,
     // and three of the four maps getDom() owns are read with keys taken from the PAYLOAD.
     // "toString" as a dimension made DIMENSION_LABELS return a truthy function that `||`
