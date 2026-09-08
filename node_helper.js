@@ -2912,7 +2912,7 @@ module.exports = NodeHelper.create({
         // the source responded, just not in day-grid form — so record it as such before
         // leaving this iteration. Never call `noteReported`/`noteActive` here and never
         // fabricate a day number: `reportedDays`/`activeDays` are day-grid-keyed
-        // `Set<number>` structures `_resolveGridDayPrecedence` consumes for D-14's
+        // `Set<number>` structures `_buildSourceHealth` publishes for D-14's
         // absent-vs-below-floor distinction, and a window-band entry has no day-grid
         // association by design (RPT-04 requires exactly that).
         notes.noteWindowBandReported("wpc-hazards");
@@ -3462,17 +3462,28 @@ module.exports = NodeHelper.create({
    * `dimension: null` entries (D-07 unmapped) never participate: they are excluded from
    * resolution entirely and always keep the `suppressedBy: null` they were created with.
    *
+   * D-14's "absent vs reported-below-floor" distinction (19-REVIEW WR-03): a rank position
+   * that made no claim on a dimension for this day is one of two facts —
+   *
+   *   Path A, "reported below floor": the source produced a reading for this grid day but it
+   *     did not clear its own no-risk floor at entry-creation time (18-03/18-04), so no entry
+   *     exists here to have won with. The floor was already consulted upstream; this method
+   *     never re-consults `NO_RISK_FLOOR`.
+   *   Path B, "absent": the source never produced a reading for this grid day at all. The
+   *     no-risk floor is never consulted for an absent source — there is nothing to test.
+   *
+   * Both produce the identical outcome here (the rank walk simply continues), so this method
+   * does not and must not distinguish them: doing so would change nothing and cost a `Set`
+   * lookup per rank position per dimension per day. This paragraph replaces a `reportedDays`
+   * read whose value was computed and discarded into two empty `if`/`else` branches —
+   * documentation wearing code's clothing, and the reason `reportedDays`/`dayNumber` used to
+   * be parameters here at all. The distinction stays diagnosable from a captured payload via
+   * `sources[].reportedDays` vs `.activeDays`, which `_buildSourceHealth` populates.
+   *
    * @param day - one entry of `gridDays`, `{ date, windowStart, windowEnd, hazards }`,
    *   mutated in place
-   * @param dayNumber - this day's 1-based grid day number
-   * @param reportedDays - `{ [sourceId]: Set<number> }`, lazily keyed; used ONLY to keep
-   *   "rank source absent for this grid day" and "rank source reported but fell below its
-   *   own floor" as two distinct, individually commented code paths below (D-14's
-   *   RESEARCH.md requirement) — it never changes which source wins, since a source with
-   *   no entry cannot win either way. The distinction itself is not written to the
-   *   payload; it stays inspectable via `sources[].reportedDays` vs `.activeDays` (Task 3).
    */
-  _resolveGridDayPrecedence(day, dayNumber, reportedDays) {
+  _resolveGridDayPrecedence(day) {
     const byDimension = {};
     for (const entry of day.hazards) {
       if (entry.dimension === null) continue; // D-07: never suppresses, never suppressed
@@ -3501,21 +3512,9 @@ module.exports = NodeHelper.create({
           winnerSourceId = sourceId;
           break;
         }
-        // This rank position made no claim on this dimension for this day. Two distinct
-        // facts produce the identical visible outcome here (the walk simply continues to
-        // the next rank) but must never be conflated by a future reader:
-        const reportedForDay = !!(reportedDays[sourceId] && reportedDays[sourceId].has(dayNumber));
-        if (reportedForDay) {
-          // Path A — "reported below floor": this source produced a reading for this
-          // grid day (present in `reportedDays`) but it did not clear its own no-risk
-          // floor at entry-creation time, so no entry exists here to have won with. The
-          // floor was already consulted upstream (18-03/18-04); this method does not
-          // re-consult it.
-        } else {
-          // Path B — "absent": this source never produced a reading for this grid day at
-          // all (no `reportedDays` key, or no entry for this day number). The no-risk
-          // floor is never consulted for an absent source — there is nothing to test.
-        }
+        // This rank position made no claim on this dimension for this day — whether by
+        // Path A (reported below floor) or Path B (absent) is D-14's distinction, and the
+        // JSDoc above states why this walk deliberately does not compute it (19-REVIEW WR-03).
       }
       // Every entry in `entriesBySource` names a source that HAZARD_TAXONOMY maps to this
       // dimension, and `assertTaxonomyIntegrity` guarantees every such source appears in
@@ -3730,13 +3729,14 @@ module.exports = NodeHelper.create({
    * off (node_helper.js:1475-1478), so gating on `enabled` here mirrors that same rule
    * rather than inventing a second one.
    *
-   * `reportedDays`/`activeDays` is the SAME absent-vs-below-floor distinction
-   * `_resolveGridDayPrecedence` reads (D-14): a grid day absent from `reportedDays` means
-   * the source never covered that day at all; a day present in `reportedDays` but absent
-   * from `activeDays` means the source reported and its own reading fell below its floor.
-   * This is what makes that distinction diagnosable from a captured payload without a
-   * dedicated payload field for it. `windowBandReported` is orthogonal to this pair — it
-   * never gates `_resolveGridDayPrecedence` and is consulted only here.
+   * `reportedDays`/`activeDays` carries D-14's absent-vs-below-floor distinction: a grid day
+   * absent from `reportedDays` means the source never covered that day at all; a day present
+   * in `reportedDays` but absent from `activeDays` means the source reported and its own
+   * reading fell below its floor. This method is the ONLY consumer of that pair (19-REVIEW
+   * WR-03 removed `_resolveGridDayPrecedence`'s decorative read of it — see that method's
+   * JSDoc for why the distinction changes nothing at the precedence walk), which is what
+   * makes it diagnosable from a captured payload without a dedicated payload field for it.
+   * `windowBandReported` is orthogonal to the pair and is likewise consulted only here.
    *
    * The outer `!enabled ? false` gate (18-05) stays exactly as it is regardless of this
    * OR: a reader must be able to trust `enabled: false` to mean `reporting` is also
@@ -5254,7 +5254,7 @@ module.exports = NodeHelper.create({
       // exist before any dimension is resolved, and BEFORE the return statement, so
       // nothing downstream (including `_buildGridSummary`) ever needs a second pass.
       for (let d = 1; d <= GRID_DAY_COUNT; d++) {
-        this._resolveGridDayPrecedence(gridDays[String(d)], d, reportedDays);
+        this._resolveGridDayPrecedence(gridDays[String(d)]);
         this._resolveGridDayAutoExpand(gridDays[String(d)]);
       }
 
