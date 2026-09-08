@@ -12881,6 +12881,71 @@ const scenarios = [
         throw new Error("expected getDom to read the promoted top-level spcrisk.windowBand");
       }
     }
+  },
+  {
+    // 19-REVIEW WR-06: the static sole-writer gate, same technique and same comment-stripping
+    // rationale as rpt01 above. `renderDaySubRows` and `renderHazardsWindowBand` were the only
+    // two helpers in getDom() that appended to the enclosing `wrapper` by closure instead of
+    // returning markup, and both are DEFINED roughly 200 lines above the `const wrapper` they
+    // mutated — safe only because they happen to be called after that initializer runs, i.e.
+    // one reorder away from a TDZ ReferenceError. The side effect is also why renderDaySubRows
+    // could re-derive its own hazard list rather than receive one, which is the proximate cause
+    // of CR-02/CR-03/CR-04. This asserts the property structurally, since output-level probes
+    // cannot tell "returned a string the caller appended" from "appended it itself".
+    // Mutation to prove RED: change one `html +=` in either renderer back to
+    // `wrapper.innerHTML +=`.
+    name: "wr06-day-and-band-renderers-are-pure-string-producers",
+    run: async (_helper) => {
+      const fs = require("fs");
+      const path = require("path");
+      const source = fs.readFileSync(path.join(__dirname, "..", "MMM-SPCOutlook.js"), "utf-8");
+      const lines = source.split("\n");
+      const bodyOf = (declaration) => {
+        const start = lines.findIndex((l) => l.includes(declaration));
+        if (start === -1) throw new Error(`could not find "${declaration}" in MMM-SPCOutlook.js`);
+        // Both renderers are arrow-function consts terminated by a `};` at their own
+        // four-space indent — the same shape every other helper in getDom() uses.
+        const end = lines.findIndex((l, i) => i > start && l === "    };");
+        if (end === -1) throw new Error(`could not find the end of "${declaration}"`);
+        return lines.slice(start, end + 1)
+          .filter((line) => {
+            const trimmed = line.trim();
+            return !trimmed.startsWith("//") && !trimmed.startsWith("*");
+          })
+          .join("\n");
+      };
+      for (const declaration of ["const renderDaySubRows =", "const renderHazardsWindowBand ="]) {
+        const body = bodyOf(declaration);
+        if (body.includes("wrapper")) {
+          throw new Error(
+            `${declaration} still touches the enclosing "wrapper" outside comments — it must ` +
+            `return its markup and let the caller own every write to the DOM node`
+          );
+        }
+        if (!/\breturn\b/.test(body)) {
+          throw new Error(`${declaration} has no return statement — it cannot be a string producer`);
+        }
+      }
+      // Vacuity guard: the extraction actually captured real bodies, not two empty slices,
+      // and it can still SEE a `wrapper` reference when one is present (the day loop's own).
+      const daySubRows = bodyOf("const renderDaySubRows =");
+      if (!daySubRows.includes("also: ") || !daySubRows.includes("detailSourceAttribution")) {
+        throw new Error(`vacuity guard failed: renderDaySubRows body was not captured: ${daySubRows}`);
+      }
+      const stripped = lines
+        .filter((line) => {
+          const trimmed = line.trim();
+          return !trimmed.startsWith("//") && !trimmed.startsWith("*");
+        })
+        .join("\n");
+      if (!stripped.includes("wrapper.innerHTML += renderDaySubRows(") ||
+        !stripped.includes("wrapper.innerHTML += renderHazardsWindowBand(")) {
+        throw new Error(
+          "expected the day loop and the band call site to append each renderer's RETURN value, " +
+          "which is what makes the two assertions above non-vacuous"
+        );
+      }
+    }
   }
 ];
 

@@ -442,18 +442,25 @@
     // `also:` lines (D-05). A `dimension === null` entry (18 D-07 unmapped passthrough) never
     // groups with anything and never carries a competitor — node_helper.js's own resolution
     // never marks one suppressed.
-    const renderDaySubRows = (day) => {
+    //
+    // 19-REVIEW WR-06: returns its markup rather than appending to the enclosing `wrapper`
+    // by closure. Every other helper in getDom() is a pure string producer; this one and
+    // renderHazardsWindowBand were the two exceptions, and both were defined ~200 lines
+    // ABOVE the `const wrapper` they mutated — safe only because they happen to be called
+    // after that initializer runs, i.e. one reorder away from a TDZ ReferenceError.
+    //
+    // 19-REVIEW CR-02/CR-03/CR-04: `displayable` is passed IN — the caller's own
+    // dayDisplayableHazards(day) — never re-derived from `day.hazards` here. Re-deriving it
+    // was the structural cause of all three findings: the compact header one line above
+    // renders daySurvivors(day), and a sub-row list built from a different filter
+    // contradicted it (a below-floor HeatRisk row, a disabled product's row, an excluded
+    // hazards label). Receiving the list makes that disagreement unrepresentable rather than
+    // merely fixed. `day` is still needed for convectiveDetailAugment's proximity subtree.
+    const renderDaySubRows = (day, displayable) => {
+      let html = "";
       const groups = [];
       const groupByDimension = new Map();
-      // 19-REVIEW CR-02/CR-03/CR-04: iterate the SHARED display predicate, never
-      // `day.hazards` directly. Re-reading the raw list here was the structural cause of all
-      // three findings — the compact header one line above renders daySurvivors(day), and a
-      // sub-row list derived from a different filter contradicted it (a below-floor HeatRisk
-      // row, a disabled product's row, an excluded hazards label). dayDisplayableHazards is
-      // daySurvivors' own source list minus only the winner/competitor split, so the two can
-      // no longer separate. Declared below this function but always in scope by the time the
-      // day loop calls it (see WR-06 on this file's forward-reference pattern).
-      for (const h of dayDisplayableHazards(day)) {
+      for (const h of displayable) {
         let group;
         if (h.dimension === null || h.dimension === undefined) {
           group = { dimension: null, winner: null, competitors: [] };
@@ -495,10 +502,10 @@
           String(group.winner.text || group.winner.label || "") + augment.labelSuffix
         );
         const paddedFieldContent = dimensionField + labelContent.padEnd(DETAIL_LABEL_FIELD_WIDTH);
-        wrapper.innerHTML += "<span style=\"white-space:pre-wrap\">" + "  " +
+        html += "<span style=\"white-space:pre-wrap\">" + "  " +
           detailColoredSpan(group.winner.color, paddedFieldContent) +
           detailSourceAttribution(group.winner.source) + "</span><br/>";
-        if (augment.subLineHtml) wrapper.innerHTML += augment.subLineHtml;
+        if (augment.subLineHtml) html += augment.subLineHtml;
         for (const competitor of group.competitors) {
           // 17 literal spaces (2 + the dimension field width + 2 more), derived rather than
           // hardcoded so it stays in step with DIMENSION_FIELD_WIDTH above.
@@ -511,11 +518,12 @@
           const competitorLabel = truncateHazardLabel(
             String(competitor.text || competitor.label || "")
           ).padEnd(alsoLabelFieldWidth);
-          wrapper.innerHTML += "<span style=\"white-space:pre-wrap\">" + alsoIndent + "also: " +
+          html += "<span style=\"white-space:pre-wrap\">" + alsoIndent + "also: " +
             detailColoredSpan(competitor.color, competitorLabel) +
             detailSourceAttribution(competitor.source) + "</span><br/>";
         }
       }
+      return html;
     };
     // 16-REVIEW WR-01: `hazardsLabelDisplayable` is this end's half of D-09/D-10. Every
     // other product row is gated on its own config at BOTH ends; the hazards renderers
@@ -581,12 +589,16 @@
     // sub-section holds things in effect NOW (MDs/MPDs are 1-6h nowcasts); "in effect"
     // wording does not apply to a 5-to-7-day forecast window, so the window band keeps
     // its own "Extended Hazards:" heading as its self-identification instead.
+    //
+    // 19-REVIEW WR-06: returns its markup rather than appending to the enclosing `wrapper`
+    // by closure, for the same reason renderDaySubRows does — see that function's note.
     const renderHazardsWindowBand = (windowBand) => {
       // ERO-03 / 15 D-09: absence is silence applies to the band as a whole — a
       // missing/non-array windowBand renders nothing, not even the heading.
       if (renderableWindowEntries(windowBand).length === 0) {
-        return;
+        return "";
       }
+      let html = "";
       let headingWritten = false;
       // D-07: ordering is the payload array's order, untouched — the backend already
       // applied the registry order (span start, ties broken by registry order);
@@ -599,7 +611,7 @@
       // two cannot disagree about whether this band has anything to say.
       for (const entry of renderableWindowEntries(windowBand)) {
         if (!headingWritten) {
-          wrapper.innerHTML += "Extended Hazards:<br/>";
+          html += "Extended Hazards:<br/>";
           headingWritten = true;
         }
         // D-08/D-06: both weekday and offset carry the feature's own observed span,
@@ -634,8 +646,9 @@
           : "(D" + off(entry.offsetStart) + "–" + off(entry.offsetEnd) + ")";
         const label = "<span style=\"color:#" + validHazardColor(entry.color) + "\">" +
           escapeHtml(truncateHazardLabel(entry.label)) + "</span>";
-        wrapper.innerHTML += weekdaySegment + offsetSegment + ": " + label + "<br/>";
+        html += weekdaySegment + offsetSegment + ": " + label + "<br/>";
       }
+      return html;
     };
     // 19-REVIEW CR-03: the day path's half of WR-09, restored. Pre-19 every per-product day
     // section carried its own `this.config.showX &&` term (`9143705:MMM-SPCOutlook.js:731`,
@@ -870,7 +883,10 @@
           // paths call the exact same rendering, so an auto-expanded day is byte-identical
           // to a globally-expanded one (D-04's "No Chrome for Auto-Expand").
           if (this.config.dayReportDetail === true || day.autoExpand === true) {
-            renderDaySubRows(day);
+            // WR-06: the renderer returns its markup; the day loop owns every write to
+            // `wrapper`. dayDisplayableHazards(day) is `survivors` plus the suppressed
+            // competitors D-05 renders as `also:` rows — the same list, same predicate.
+            wrapper.innerHTML += renderDaySubRows(day, dayDisplayableHazards(day));
           }
           if (detailModeActive) wrapper.innerHTML += "<br/>";
         }
@@ -922,7 +938,7 @@
       // (RPT-04) rather than the legacy `hazardsOutlook.windowBand` — the day3-14 grid
       // this block used to also render is covered by the unified day loop above.
       if (this.config.showHazardsOutlook) {
-        renderHazardsWindowBand(this.spcrisk.windowBand);
+        wrapper.innerHTML += renderHazardsWindowBand(this.spcrisk.windowBand);
       }
       // CR-01: a stale payload with no renderable risk must not present as a bare ⚠ badge.
       // "unconfirmed" rather than "last known good" because the two cases are not
