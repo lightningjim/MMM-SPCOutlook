@@ -11614,6 +11614,41 @@ const scenarios = [
     }
   },
   {
+    // 19-REVIEW CR-01: the sibling of wr02-detail-sub-line-... for the OTHER
+    // proximityBadge() call site that reaches innerHTML without passing through
+    // detailColoredSpan's own escapeHtml — the D-08 proximity-only day line. `nextTier` is
+    // `best.label` from computeProximity, i.e. a polygon LABEL property harvested from
+    // remote SPC GeoJSON, so it is remote-controlled at every one of the four call sites.
+    // The pre-existing D-08 scenario above uses a benign "MRGL" tier, which is precisely
+    // why this gap survived 157 green scenarios.
+    // Mutation to prove RED: drop the escapeHtml() wrapper from the proximity-only branch
+    // in MMM-SPCOutlook.js's day loop.
+    name: "cr01-proximity-only-day-badge-escapes-a-hostile-tier-token",
+    run: async (_helper) => {
+      const frontend = loadFrontendModule();
+      const config = {
+        lat: PROBE_LAT, lon: PROBE_LON, extended: false, updateInterval: 60,
+        proximityWeighting: true
+      };
+      const hostileTier = `<img src=x onerror="alert(1)">`;
+      const payload = unifiedPayload({});
+      payload.days["2"].proximity = { categorical: { value: 2.3, nextTier: hostileTier } };
+      payload.summary.anyHazard = true;
+      const rendered = renderDom(frontend, { config, spcrisk: payload });
+      if (rendered.includes("<img")) {
+        throw new Error(`a hostile proximity tier token reached the D-08 line unescaped: ${rendered}`);
+      }
+      if (!rendered.includes("&lt;img")) {
+        throw new Error(`expected the escaped form of the hostile tier token, got: ${rendered}`);
+      }
+      // Vacuity guard: the D-08 line actually rendered. The badge IS the whole line here,
+      // so a suppressed row would satisfy both assertions above trivially.
+      if (!/Day 2 \([A-Za-z]+\)  0\.3 \(near /.test(rendered)) {
+        throw new Error(`vacuity guard failed: the D-08 proximity-only line did not render: ${rendered}`);
+      }
+    }
+  },
+  {
     // WR-02 closure: every compact segment applies both guards — validHazardColor against
     // a hostile color, escapeHtml(truncateHazardLabel(...)) against a hostile/oversized
     // label — at the one shared call site the unified renderer collapsed two call sites

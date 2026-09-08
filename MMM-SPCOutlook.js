@@ -761,8 +761,14 @@
             // Wrapped in a white-space:pre-wrap span so that two-space gap (one literal
             // space plus the badge's own embedded leading space) survives to the screen
             // instead of collapsing to one (RPT-06 "Space padding survives to the screen").
+            // 19-REVIEW CR-01: `nextTier` inside the badge is `best.label` from
+            // computeProximity — a LABEL property harvested from remote SPC GeoJSON — and
+            // proximityBadge()'s plain-tier branch passes it through verbatim. Escaped here
+            // for the same reason the three probabilistic sub-line call sites are (T-19-18):
+            // this branch reaches innerHTML without passing through detailColoredSpan's own
+            // escapeHtml, so it is the one badge call site that had no escape at all.
             wrapper.innerHTML += "<span style=\"white-space:pre-wrap\">" + prefix + " " +
-              proximityBadge(day.proximity && day.proximity.categorical, "outside") +
+              escapeHtml(proximityBadge(day.proximity && day.proximity.categorical, "outside")) +
               "</span><br/>";
             if (detailModeActive) wrapper.innerHTML += "<br/>";
             continue;
