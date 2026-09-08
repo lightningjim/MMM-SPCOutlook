@@ -12413,6 +12413,119 @@ const scenarios = [
     }
   },
   {
+    // 19-REVIEW CR-03: `Object.prototype`'s own keys resolve through a bare `map[key]` read,
+    // and three of the four maps getDom() owns are read with keys taken from the PAYLOAD.
+    // "toString" as a dimension made DIMENSION_LABELS return a truthy function that `||`
+    // could not fall back past and `.padEnd` threw on, out of getDom(), destroying the whole
+    // render; "constructor" as a source made DAY_SOURCE_FLAGS return a function, so
+    // `this.config[flag]` was undefined and the entry was silently HIDDEN — the exact
+    // inversion of the "an UNLISTED source is never hidden" fail-safe DAY_SOURCE_FLAGS
+    // documents. Both are invisible to a suite that only ever feeds real taxonomy values.
+    // Mutation to prove RED: restore any of the four bare `MAP[key]` reads.
+    name: "cr03-prototype-chain-keys-in-a-payload-neither-throw-nor-hide-an-entry",
+    run: async (_helper) => {
+      const frontend = loadFrontendModule();
+      const config = {
+        lat: PROBE_LAT, lon: PROBE_LON, extended: false, updateInterval: 60,
+        proximityWeighting: false, showExcessiveRain: true, showWinterImpact: true,
+        showMPD: true, showSPCMD: true, showHazardsOutlook: true, showDrought: true,
+        showHeatRisk: true, showMinorHeat: true
+      };
+      const POISON_KEYS = ["__proto__", "constructor", "toString", "hasOwnProperty", "valueOf"];
+
+      for (const key of POISON_KEYS) {
+        // (a) as `dimension`, in detail mode — the crashing read (DIMENSION_LABELS at the
+        // sub-row's dimension field) and the compact line's own copy of it.
+        const dimPayload = unifiedPayload({});
+        dimPayload.days["1"].hazards = [{
+          dimension: key, source: "spc-convective", label: "ENH", text: "Enhanced",
+          value: 4, color: "e06666", suppressedBy: null
+        }];
+        dimPayload.summary.anyHazard = true;
+        const dimRendered = renderDom(frontend, {
+          config: { ...config, dayReportDetail: true }, spcrisk: dimPayload
+        });
+        // (i) no throw — reaching this line at all proves it, since renderDom does not catch.
+        // (ii) the entry still renders: the fail-safe direction is "degrade, never disappear".
+        if (!dimRendered.includes("Enhanced")) {
+          throw new Error(`dimension ${JSON.stringify(key)}: the entry must still render, got: ${dimRendered}`);
+        }
+        // (iii) the unmapped dimension degrades to its own key, never to a function body.
+        if (dimRendered.includes("native code") || dimRendered.includes("function ")) {
+          throw new Error(`dimension ${JSON.stringify(key)}: a prototype function reached the render: ${dimRendered}`);
+        }
+        // The band and the advisory section below the day loop must survive too — the
+        // TypeError this fixes threw PAST both of them.
+        if (!dimRendered.includes("Day 1 (")) {
+          throw new Error(`dimension ${JSON.stringify(key)}: the day row itself vanished: ${dimRendered}`);
+        }
+
+        // (b) as `source` — the silently-hiding read (DAY_SOURCE_FLAGS) plus the detail-mode
+        // source attribution's own SOURCE_SHORT_NAMES read.
+        const srcPayload = unifiedPayload({});
+        srcPayload.days["1"].hazards = [{
+          dimension: "convective", source: key, label: "ENH", text: "Enhanced",
+          value: 4, color: "e06666", suppressedBy: null
+        }];
+        srcPayload.summary.anyHazard = true;
+        const srcRendered = renderDom(frontend, {
+          config: { ...config, dayReportDetail: true }, spcrisk: srcPayload
+        });
+        if (!srcRendered.includes("Enhanced")) {
+          throw new Error(
+            `source ${JSON.stringify(key)}: an unlisted source must never be hidden ` +
+            `(DAY_SOURCE_FLAGS' documented fail-safe), got: ${srcRendered}`
+          );
+        }
+        if (srcRendered.includes("filtered by settings")) {
+          throw new Error(
+            `source ${JSON.stringify(key)}: the entry vanished AND the display blamed the ` +
+            `user's settings for it, got: ${srcRendered}`
+          );
+        }
+        if (srcRendered.includes("native code") || srcRendered.includes("function ")) {
+          throw new Error(`source ${JSON.stringify(key)}: a prototype function reached the render: ${srcRendered}`);
+        }
+      }
+
+      // (iii) inertness: assertInertMarkup already runs on every renderDom above. This adds
+      // the hostile-content half — a prototype key is not the only way into these reads.
+      const hostilePayload = unifiedPayload({});
+      hostilePayload.days["1"].hazards = [{
+        dimension: `<img src=x onerror="alert(1)">`, source: `<script>alert(1)</script>`,
+        label: "ENH", text: "Enhanced", value: 4, color: "e06666", suppressedBy: null
+      }];
+      hostilePayload.summary.anyHazard = true;
+      const hostileRendered = renderDom(frontend, {
+        config: { ...config, dayReportDetail: true }, spcrisk: hostilePayload
+      });
+      if (hostileRendered.includes("<img") || hostileRendered.includes("<script")) {
+        throw new Error(`an unmapped hostile dimension/source reached innerHTML unescaped: ${hostileRendered}`);
+      }
+      if (!hostileRendered.includes("&lt;script")) {
+        throw new Error(
+          `expected the escaped source attribution — detailSourceAttribution must escape its ` +
+          `mapped branch too, got: ${hostileRendered}`
+        );
+      }
+
+      // Control: a REAL dimension and source still map to their short forms, so none of the
+      // above is passing merely because the maps stopped working.
+      const goodPayload = unifiedPayload({});
+      goodPayload.days["1"].hazards = [{
+        dimension: "convective", source: "spc-convective", label: "ENH", text: "Enhanced",
+        value: 4, color: "e06666", suppressedBy: null
+      }];
+      goodPayload.summary.anyHazard = true;
+      const goodRendered = renderDom(frontend, {
+        config: { ...config, dayReportDetail: true }, spcrisk: goodPayload
+      });
+      if (!goodRendered.includes("Convective") || !goodRendered.includes("— SPC")) {
+        throw new Error(`control: real keys must still resolve through the maps, got: ${goodRendered}`);
+      }
+    }
+  },
+  {
     // 19-REVIEW WR-01: the structural half. The discriminator needs an UNGATED reading of
     // "what would have rendered", and the obvious way to get one — writing a second,
     // ungated copy of the survivor logic — would reintroduce exactly the CR-02/CR-03/CR-04

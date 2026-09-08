@@ -290,6 +290,28 @@
     // it is stated once here rather than spelled out at the gate and again at the render.
     // A Phase 16/17 kml-advisory row adds one line here and nothing else.
     const ADVISORY_SOURCES = { spcMD: "showSPCMD", mpd: "showMPD" };
+    // 19-REVIEW CR-03: every map in this file is a plain object literal read with a key taken
+    // from the PAYLOAD, and bare `map[key]` resolves `Object.prototype`'s own keys as hits.
+    // That was not theoretical: `DIMENSION_LABELS["toString"]` returns a FUNCTION, which is
+    // truthy, so the `||` fallback never fired and the `.padEnd` on it threw a TypeError
+    // straight out of getDom() — past every day, the advisory band and the window band,
+    // taking the module's ENTIRE render with it. That is the same failure class this file
+    // already fixed once (see the `advisories.mpd is not iterable` note at the advisory loop)
+    // and the direct opposite of the T-19-16 containment promised at the day loop.
+    // `DAY_SOURCE_FLAGS["constructor"]` inverted the fail-safe the other way: `flag` became a
+    // function, `this.config[flag]` was undefined, `undefined !== true`, and the entry was
+    // HIDDEN — while the display blamed the user's settings for its absence — contradicting
+    // the "an UNLISTED source is never hidden" guarantee stated at DAY_SOURCE_FLAGS below.
+    // The codebase already committed to the guarded idiom on the backend for exactly this
+    // class (hazardTaxonomy.js's T-18-01 note; node_helper.js's own hasOwnProperty guard), so
+    // this applies that decision to the frontend's four payload-keyed lookups rather than
+    // making a new one. Reachability, stated honestly: `dimensionOf()` is itself guarded and
+    // `source` is a string literal at every emission site, so no remote input reaches these
+    // keys through today's backend — the defect was that the containment posture was asserted
+    // rather than implemented.
+    const lookup = (map, key, fallback) => (
+      Object.prototype.hasOwnProperty.call(map, key) ? map[key] : fallback
+    );
     // Phase 19 (RPT-02): hazardTaxonomy.js's eight dimensions, stated rather than derived —
     // the frontend runs in a browser context and cannot require the backend's taxonomy
     // module. Widest value is 12 characters ("Flash Flood"/"Heavy Precip"), which is what
@@ -323,8 +345,13 @@
     // spaces then an em dash then one space then the source's short name. A source id with
     // no SOURCE_SHORT_NAMES entry falls back to its own (escaped) id rather than rendering
     // "undefined".
+    // 19-REVIEW CR-03: escapes UNCONDITIONALLY. The split form escaped only the fallback
+    // branch, so on a prototype-chain hit the unescaped branch was taken — i.e. the escape
+    // decision was being made by whether a prototype lookup happened to hit, which is not a
+    // property anything should rely on. Every mapped value is plain ASCII, so escaping the
+    // hit branch too is a no-op for real data.
     const detailSourceAttribution = (source) => (
-      "   — " + (SOURCE_SHORT_NAMES[source] || escapeHtml(String(source)))
+      "   — " + escapeHtml(String(lookup(SOURCE_SHORT_NAMES, source, source)))
     );
     // UI-SPEC "Detail-Mode Column Alignment": the one font-family override this phase
     // introduces, applied per sub-row's own inline style (this render mechanism has no
@@ -485,9 +512,12 @@
       }
       for (const group of groups) {
         if (!group.winner) continue;
-        const dimensionField = (group.dimension === null
+        // 19-REVIEW CR-03: `lookup`, not `DIMENSION_LABELS[...]` — a payload dimension of
+        // "toString" resolved Object.prototype.toString here, a truthy FUNCTION the `||`
+        // could not fall back past, and `.padEnd` on it took the whole render down.
+        const dimensionField = String(group.dimension === null
           ? ""
-          : (DIMENSION_LABELS[group.dimension] || group.dimension)
+          : lookup(DIMENSION_LABELS, group.dimension, group.dimension)
         ).padEnd(DIMENSION_FIELD_WIDTH);
         // D-07: the convective sub-row's inside-mode proximity badge and three-shape
         // probabilistic sub-line are relocated here, detail-only — every other dimension
@@ -708,7 +738,11 @@
       if (h.source === "heatrisk" && typeof h.value === "number" && h.value < heatFloor) return false;
       // CR-03: strict `!== true`, matching the showDrought/showMinorHeat convention exactly —
       // an absent or non-boolean flag behaves like false, per CFG-01's default.
-      const flag = DAY_SOURCE_FLAGS[h.source];
+      // 19-REVIEW CR-03: `lookup`, not `DAY_SOURCE_FLAGS[...]` — a payload source of
+      // "constructor" resolved Object.prototype.constructor here, making `flag` a function
+      // whose `this.config[flag]` is undefined, which hid the entry. That inverts the
+      // fail-safe direction the note above promises (an unlisted source is never hidden).
+      const flag = lookup(DAY_SOURCE_FLAGS, h.source, null);
       if (flag && this.config[flag] !== true) return false;
       // CR-04: the 16-REVIEW WR-01 second-line-of-defense label filter, restored to the day
       // path. Pre-19 `renderableDayHazards` (`9143705:MMM-SPCOutlook.js:343-348`) ran every
@@ -952,8 +986,10 @@
           // This is the exact same header restated verbatim when the day expands below
           // (D-06) — never rebuilt as a second, different header string.
           const segments = survivors.map((h) => {
+            // 19-REVIEW CR-03: `lookup`, not `DIMENSION_LABELS[...]` — same prototype-chain
+            // reason as the detail sub-row's dimension field.
             const segmentText = (h.dimension !== null && h.dimension !== undefined)
-              ? (DIMENSION_LABELS[h.dimension] || h.dimension) + " " + (h.text || h.label)
+              ? String(lookup(DIMENSION_LABELS, h.dimension, h.dimension)) + " " + (h.text || h.label)
               : (h.text || h.label);
             return "<span style=\"color:#" + validHazardColor(h.color) + "\">" +
               escapeHtml(truncateHazardLabel(segmentText)) + "</span>";
