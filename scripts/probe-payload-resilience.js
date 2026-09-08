@@ -12528,6 +12528,102 @@ const scenarios = [
           !staleRendered.endsWith("No Hazards Forecast (unconfirmed)")) {
         throw new Error(`case 1 precedence must be unchanged, got: ${JSON.stringify(staleRendered)}`);
       }
+
+      // 19-REVIEW BL-01: the COMPOSITION of (e) with (a)/(b)/(f) — an elapsed band entry
+      // beside each contradicting shape. The iteration-2 carve-out (`rawWindowBandCount === 0`)
+      // disabled the whole disagreement check whenever the raw band was non-empty, so every
+      // one of these flipped back to a confident all-clear; 173 green scenarios missed it
+      // purely because (e) and (a)/(b)/(f) were never composed. The band entry is identical
+      // to (e)'s and is wholly elapsed, so it contributes nothing renderable in any of them.
+      //
+      // Mutation to prove RED (over-broad direction): restore `rawWindowBandCount === 0` in
+      // place of `!bandIsTheOnlySummaryTerm` — (h)/(i)/(j)/(k) all go confident.
+      // Mutation to prove RED (the other direction): drop the carve-out entirely
+      // (`summaryOk && summary.anyHazard === true && !anyUngatedContent()`) — (e) and (l) go
+      // "(unconfirmed)" and slander a healthy elapsed-band poll. Both directions are pinned
+      // so neither over-correction can land silently.
+      const elapsedBandEntry = () => ({
+        label: "Hazardous Heat", color: "a80000", mapped: true,
+        startDate: "2026-08-01", endDate: "2026-08-02", offsetStart: -3, offsetEnd: -1
+      });
+
+      // (h) days gone entirely + an elapsed band. The summary's own day term is empty here,
+      // so the band DOES explain `anyHazard` — but the render's emptiness does not explain
+      // itself: the day loop reported "nothing" from a grid it could not read. `gridReadable`
+      // is the term that keeps this honest.
+      const nullDaysBanded = unifiedPayload({ days: null, windowBand: [elapsedBandEntry()] });
+      nullDaysBanded.summary.anyHazard = true;
+      nullDaysBanded.summary.bandDiagnostics = { windowBandCount: 1, advisoryCount: 0 };
+      const nullDaysBandedRendered = renderDom(frontend, { config, spcrisk: nullDaysBanded });
+      if (nullDaysBandedRendered !== "No Hazards Forecast (unconfirmed)") {
+        throw new Error(
+          `an elapsed band must not license a confident all-clear over an unreadable grid, ` +
+          `got: ${JSON.stringify(nullDaysBandedRendered)}`
+        );
+      }
+
+      // (i) Same, with the grid present but every day shape-drifted.
+      const corruptBanded = unifiedPayload({ windowBand: [elapsedBandEntry()] });
+      for (let n = 1; n <= 14; n++) corruptBanded.days[String(n)] = "not a day";
+      corruptBanded.summary.anyHazard = true;
+      corruptBanded.summary.bandDiagnostics = { windowBandCount: 1, advisoryCount: 0 };
+      const corruptBandedRendered = renderDom(frontend, { config, spcrisk: corruptBanded });
+      if (corruptBandedRendered !== "No Hazards Forecast (unconfirmed)") {
+        throw new Error(
+          `an elapsed band must not license a confident all-clear over a corrupt grid, ` +
+          `got: ${JSON.stringify(corruptBandedRendered)}`
+        );
+      }
+
+      // (j) The readable-grid contradiction from (f) beside the band. Here the grid IS
+      // readable, so `gridReadable` cannot carry the case — what makes it a disagreement is
+      // that the summary asserts a DAY hazard (`activeDays: [3]`, which is what
+      // `_buildGridSummary` publishes alongside a day-derived `anyHazard`) while the day it
+      // names holds nothing but a suppressed entry. The band explains only the band term.
+      const suppressedBanded = unifiedPayload({ windowBand: [elapsedBandEntry()] });
+      suppressedBanded.days["3"].hazards = [{
+        dimension: "wind", source: "spc-convective", label: "ENH", text: "Enhanced",
+        value: 4, color: "e06666", suppressedBy: "wpc-hazards"
+      }];
+      suppressedBanded.summary.anyHazard = true;
+      suppressedBanded.summary.activeDays = [3];
+      suppressedBanded.summary.bandDiagnostics = { windowBandCount: 1, advisoryCount: 0 };
+      const suppressedBandedRendered = renderDom(frontend, { config, spcrisk: suppressedBanded });
+      if (suppressedBandedRendered !== "No Hazards Forecast (unconfirmed)") {
+        throw new Error(
+          `a summary naming an active day over a grid with no survivor is a disagreement the ` +
+          `band cannot excuse, got: ${JSON.stringify(suppressedBandedRendered)}`
+        );
+      }
+
+      // (k) The advisory term, the third way `anyHazard` can be set: the summary counts an
+      // advisory the payload's own advisory arrays do not carry. The band must not excuse
+      // that either.
+      const advisoryBanded = unifiedPayload({ windowBand: [elapsedBandEntry()] });
+      advisoryBanded.summary.anyHazard = true;
+      advisoryBanded.summary.bandDiagnostics = { windowBandCount: 1, advisoryCount: 2 };
+      const advisoryBandedRendered = renderDom(frontend, { config, spcrisk: advisoryBanded });
+      if (advisoryBandedRendered !== "No Hazards Forecast (unconfirmed)") {
+        throw new Error(
+          `a summary counting advisories the payload does not carry is a disagreement the ` +
+          `band cannot excuse, got: ${JSON.stringify(advisoryBandedRendered)}`
+        );
+      }
+
+      // (l) ...and the healthy direction stays green: fourteen well-formed quiet days, one
+      // elapsed band entry, `activeDays: []`, no advisories. This is the shape a large
+      // fraction of real polls take (a WPC/CPC temperature feature whose span ended
+      // yesterday) and it must stay confident — the reason the carve-out exists at all.
+      const healthyBanded = unifiedPayload({ windowBand: [elapsedBandEntry()] });
+      healthyBanded.summary.anyHazard = true;
+      healthyBanded.summary.bandDiagnostics = { windowBandCount: 1, advisoryCount: 0 };
+      const healthyBandedRendered = renderDom(frontend, { config, spcrisk: healthyBanded });
+      if (healthyBandedRendered !== "No Hazards Forecast") {
+        throw new Error(
+          `a healthy poll carrying one elapsed band entry must stay confident, ` +
+          `got: ${JSON.stringify(healthyBandedRendered)}`
+        );
+      }
     }
   },
   {

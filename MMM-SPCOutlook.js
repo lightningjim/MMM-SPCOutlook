@@ -1168,11 +1168,42 @@
         // raw band explains `anyHazard` by itself and must not be reported as unconfirmed —
         // any RENDERABLE entry in it would have made `anyUngatedContent()` true and never
         // reached this line.
+        //
+        // 19-REVIEW BL-01: that carve-out has to excuse the BAND TERM, not the whole flag.
+        // `anyHazard` is `anyDayHazard || windowBandCount > 0 || advisoryCount > 0`
+        // (node_helper.js `_buildGridSummary`), so a bare `rawWindowBandCount === 0` term
+        // disabled the disagreement check for every reason the flag could be true — one
+        // wholly-elapsed band entry (an everyday payload: `_bucketHazardMatch` routes every
+        // non-precipitation feature to the band with its own raw observed span, which
+        // routinely started yesterday) beside a truncated `days` object silenced it and
+        // reopened CR-02's hole. The narrowing reads the summary's OWN other two terms,
+        // both of which D-16 already publishes, so the excuse holds only when the band is
+        // the only term that could have set the flag.
+        //
+        // `gridReadable` is the third condition and is about the RENDER side rather than the
+        // summary: the excuse says "the render is empty for a structural reason", which is
+        // only assertable when the grid this render walked was actually readable. With
+        // `days` null or shape-drifted, `anyUngatedContent()`'s day loop reports "nothing"
+        // from evidence it could not read — the exact circularity CR-02's note above names —
+        // so a band entry must not license a confident all-clear over it.
         const rawWindowBandCount = Array.isArray(this.spcrisk.windowBand)
           ? this.spcrisk.windowBand.length
           : 0;
+        const gridReadable = (() => {
+          const days = this.spcrisk.days;
+          if (!days || typeof days !== "object") return false;
+          for (let n = 1; n <= 14; n++) {
+            const day = days[String(n)];
+            if (!day || typeof day !== "object" || !Array.isArray(day.hazards)) return false;
+          }
+          return true;
+        })();
+        const bandIsTheOnlySummaryTerm =
+          rawWindowBandCount > 0 && gridReadable &&
+          Array.isArray(summary.activeDays) && summary.activeDays.length === 0 &&
+          !!summary.bandDiagnostics && summary.bandDiagnostics.advisoryCount === 0;
         const summaryContradictsRender = summaryOk && summary.anyHazard === true &&
-          rawWindowBandCount === 0 && !anyUngatedContent();
+          !bandIsTheOnlySummaryTerm && !anyUngatedContent();
         // Case 1 keeps its documented precedence: an unconfirmed read is said first.
         const unconfirmed = !summaryOk || !!this.spcrisk._stale || summaryContradictsRender;
         if (unconfirmed) {
