@@ -12627,6 +12627,72 @@ const scenarios = [
     }
   },
   {
+    // 19-REVIEW WR-03: `enabledAdvisories` spread the whole array without validating entries
+    // while the render loop skipped the ones it could not render, so the two readings
+    // disagreed: `advisories: { spcMD: [null] }` made `anyUngatedContent()` true, nothing
+    // rendered, and the empty-state ladder reported "(filtered by settings)" — sending the
+    // operator to check a config that filtered nothing, over a malformed payload. The
+    // three-way split (WR-01, iteration 2) is worth having only if each string describes the
+    // state it names.
+    // Mutation to prove RED: drop the `.filter(advisoryEntryDisplayable)` from
+    // enabledAdvisories.
+    name: "wr03-a-malformed-advisory-array-is-never-blamed-on-settings",
+    run: async (_helper) => {
+      const frontend = loadFrontendModule();
+      const config = {
+        lat: PROBE_LAT, lon: PROBE_LON, extended: false, updateInterval: 60,
+        proximityWeighting: false, showSPCMD: true, showMPD: true
+      };
+
+      // (a) The reported shape: a null entry under a summary that counts it. Nothing renders,
+      // and no setting explains it — so this is a payload/summary disagreement, which is
+      // "(unconfirmed)", never "(filtered by settings)".
+      const malformed = unifiedPayload({ advisories: { spcMD: [null], mpd: [] } });
+      malformed.summary.anyHazard = true;
+      malformed.summary.bandDiagnostics = { windowBandCount: 0, advisoryCount: 1 };
+      const malformedRendered = renderDom(frontend, { config, spcrisk: malformed });
+      if (malformedRendered === "No Hazards Forecast (filtered by settings)") {
+        throw new Error(
+          `no setting filtered anything here — a malformed advisory array must not be ` +
+          `reported as a config problem: ${JSON.stringify(malformedRendered)}`
+        );
+      }
+      if (malformedRendered !== "No Hazards Forecast (unconfirmed)") {
+        throw new Error(
+          `a summary counting an advisory the payload cannot render is a disagreement, ` +
+          `got: ${JSON.stringify(malformedRendered)}`
+        );
+      }
+
+      // (b) The same malformed array under an HONEST summary is simply a quiet poll: the
+      // entry was never renderable content, so there is nothing for either qualifier to
+      // describe.
+      const honest = unifiedPayload({ advisories: { spcMD: [null, {}], mpd: [] } });
+      const honestRendered = renderDom(frontend, { config, spcrisk: honest });
+      if (honestRendered !== "No Hazards Forecast") {
+        throw new Error(
+          `an unrenderable advisory under an honest summary is a quiet poll, ` +
+          `got: ${JSON.stringify(honestRendered)}`
+        );
+      }
+
+      // (c) Control: a WELL-FORMED advisory this instance's own settings hid is still
+      // "(filtered by settings)" — the string keeps the meaning WR-01 gave it.
+      const gated = unifiedPayload({ advisories: { spcMD: [{ label: "SPC MD 1234" }], mpd: [] } });
+      gated.summary.anyHazard = true;
+      gated.summary.bandDiagnostics = { windowBandCount: 0, advisoryCount: 1 };
+      const gatedRendered = renderDom(frontend, {
+        config: { ...config, showSPCMD: false }, spcrisk: gated
+      });
+      if (gatedRendered !== "No Hazards Forecast (filtered by settings)") {
+        throw new Error(
+          `control: a real advisory hidden by this instance's own setting must still say so, ` +
+          `got: ${JSON.stringify(gatedRendered)}`
+        );
+      }
+    }
+  },
+  {
     // 19-REVIEW WR-02: the advisory render loop's guard existed, by its own comment, to stop
     // "undefined in effect." reaching the screen — but tested only `!entry || typeof entry
     // !== "object"`, so `{}` walked straight past it and `escapeHtml(entry.label)` produced

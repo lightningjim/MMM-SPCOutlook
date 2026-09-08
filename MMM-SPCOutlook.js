@@ -698,7 +698,18 @@
         // flag by truthiness — so a `showSPCMD: "yes"` rendered the advisory while a day row
         // under the same config was hidden. One flag, one direction, at every site.
         if (applyDisplayGates !== false && this.config[ADVISORY_SOURCES[key]] !== true) continue;
-        if (Array.isArray(advisories[key])) lines.push(...advisories[key]);
+        // 19-REVIEW WR-03: filtered through the SAME predicate the render loop applies, so
+        // the ungated reading and the render agree about what counts as an advisory — the
+        // "one predicate, both readings" rule `hazardEntryDisplayable` and
+        // `renderableWindowEntries` already establish for the day and band paths. Spreading
+        // the raw array made `advisories: { spcMD: [null] }` ungated content, so the render
+        // loop skipped the entry, nothing appeared, and the empty-state ladder concluded
+        // "(filtered by settings)" — sending the operator to check a config that filtered
+        // nothing, over what is actually a malformed payload. WR-01's three-way split is
+        // worth having only if each string describes the state it names.
+        if (Array.isArray(advisories[key])) {
+          lines.push(...advisories[key].filter(advisoryEntryDisplayable));
+        }
       }
       return lines;
     };
