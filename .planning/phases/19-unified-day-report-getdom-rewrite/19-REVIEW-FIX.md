@@ -2,217 +2,68 @@
 phase: 19-unified-day-report-getdom-rewrite
 fixed_at: 2026-09-08T00:00:00Z
 review_path: .planning/phases/19-unified-day-report-getdom-rewrite/19-REVIEW.md
-iteration: 3
-findings_in_scope: 10
-fixed: 10
+iteration: 4
+findings_in_scope: 3
+fixed: 3
 skipped: 0
 status: all_fixed
 ---
 
-# Phase 19: Code Review Fix Report (iteration 3)
+# Phase 19: Code Review Fix Report (iteration 4)
 
 **Fixed at:** 2026-09-08
 **Source review:** `.planning/phases/19-unified-day-report-getdom-rewrite/19-REVIEW.md`
-**Iteration:** 3
+**Iteration:** 4
+**Harness:** `node scripts/probe-payload-resilience.js` → `182 passed, 0 failed, 0 skipped` (was 181/0/0 at baseline; +1 scenario, and two existing scenarios gained new parts).
 
 **Summary:**
-- Findings in scope: 10 (3 BLOCKER + 7 WARNING; the 4 Info findings are out of `critical_warning` scope)
-- Fixed: 10
+- Findings in scope: 3 (CR-01, WR-01, WR-02 — Info IN-01..IN-06 out of scope, untouched)
+- Fixed: 3
 - Skipped: 0
 
-**Harness:** `node scripts/probe-payload-resilience.js` → `181 passed, 0 failed, 0 skipped`
-(was `173 passed` at review time; 8 new scenarios, 5 existing scenarios extended in place).
-Every fix was mutation-verified RED by reverting it in place and re-running, and the mutation
-is named in the source comment or the scenario comment so the next reader can repeat it.
-
----
+Every fix was mutation-verified RED by reverting it in place and re-running the harness. No assertion was weakened; the two probe changes strengthened existing scenarios rather than relaxing them.
 
 ## Fixed Issues
 
-### BL-01: the CR-02 carve-out reopens the confident-all-clear-over-a-contradicting-summary hole
+### CR-01: `bandIsTheOnlySummaryTerm` dereferences an unguarded `summary`
 
 **Files modified:** `MMM-SPCOutlook.js`, `scripts/probe-payload-resilience.js`
-**Commit:** `5efe2ce`
+**Commit:** `1dfd541`
 
-The iteration-2 `rawWindowBandCount === 0` term disabled the disagreement check for every
-reason `anyHazard` can be true, not just the wholly-elapsed-band reason it documents. It is
-replaced by `bandIsTheOnlySummaryTerm`, which excuses `anyHazard` only when the band is the
-only term that could have set it — reading the summary's own published `activeDays` and
-`bandDiagnostics.advisoryCount` (D-16 fields, no new payload contract).
+**Applied fix:** `summaryOk &&` now leads the conjunction at `MMM-SPCOutlook.js:1361-1364`, exactly as the review specified. The three `summary.*` reads the BL-01 carve-out added are the only unguarded reads on that branch, and reaching them with `summary` absent threw a `TypeError` out of `getDom()`, losing the whole render — contradicting the invariant asserted at `:1049-1054`. Output is unchanged for every reachable payload: with `summaryOk` false, `unconfirmed` is already true via its own `!summaryOk` term, so the only behaviour removed is the throw. A comment records why `summaryOk` is the semantically right leading term (the carve-out's claim about "the summary's own other two terms" is unassertable without a summary) rather than merely defensive.
 
-**One term added beyond the review's suggestion:** `gridReadable`. The carve-out asserts "the
-render is empty for a structural reason", which is only assertable when the grid this render
-walked was readable at all. With the review's term alone, the review's own row 1 and row 2
-(`days: null` / all-14-corrupt, each beside an elapsed band) would have stayed CONFIDENT,
-because a fixture whose summary reports `activeDays: []` does not claim a day hazard — the
-band really would be the only summary term. `gridReadable` is what makes those two rows red:
-`anyUngatedContent()`'s day loop reports "nothing" from evidence it could not read, the exact
-circularity CR-02's own note names, so a band entry must not license a confident all-clear
-over it.
+**Probe added:** parts (m) and (n) of `cr02-a-summary-that-contradicts-the-render-is-never-a-confident-all-clear`. (m) deletes `payload.summary` and (n) replaces it with a non-object, each beside the scenario's own elapsed band entry over a readable empty grid; both must render `"No Hazards Forecast (unconfirmed)"`. (n) exists so the guard rather than the `delete` is what is pinned — `summaryOk` is the only term that distinguishes a scalar summary. The comment records why 181 green scenarios missed this: no summary-less fixture was ever composed with a non-empty `windowBand`.
 
-The review's row 3 (suppressed-only day + band) is red for a different and more precise
-reason: its composed fixture carries `activeDays: [3]`, which is what `_buildGridSummary`
-publishes alongside a day-derived `anyHazard`. A summary naming an active day over a grid with
-no survivor is a genuine disagreement; the same grid under `activeDays: []` is not one, and is
-deliberately left confident.
+**Mutation verified RED:** dropping the leading `summaryOk &&` fails the scenario with `TypeError: Cannot read properties of undefined (reading 'activeDays')` (180 passed / 1 failed).
 
-Probe `cr02-...` gains cases (h)-(l): the elapsed band composed with `days: null`, corrupt
-days, the summary-names-an-active-day contradiction, and the advisory term — plus (l), a
-healthy fourteen-quiet-day poll carrying one elapsed band entry, which must stay confident.
+### WR-01: `wr03-…` part (b) passed for the wrong reason
 
-Mutation-verified RED **three** ways, both directions pinned as required:
-- restore `rawWindowBandCount === 0` (over-broad) → (h) goes confident
-- drop the carve-out entirely (the pre-iteration-2 form) → (e) and (l) slander a healthy poll
-- neutralize `gridReadable` → (h) goes confident
+**Files modified:** `scripts/probe-payload-resilience.js`
+**Commit:** `e031460`
 
-### BL-02: two co-equal survivors on one dimension render as winner + `also:` competitor
+**Applied fix:** probe-only, as the review classified it. Part (b) left `summary.anyHazard` at `unifiedPayload`'s false default, so the payload was answered by the confident short-circuit at `MMM-SPCOutlook.js:1090` and never reached the ladder — `enabledAdvisories` and `advisoryEntryDisplayable` were never consulted, despite the comment claiming an assertion about the advisory predicate. The fixture now carries a wholly elapsed band entry plus `bandDiagnostics: { windowBandCount: 1, advisoryCount: 0 }` and `anyHazard: true`, which sets the flag honestly without adding renderable content, so the BL-01 carve-out routes it to the ladder. The assertion itself (`!== "No Hazards Forecast"`) is unchanged.
+
+**Mutation verified RED, and verified on part (b) specifically:** with part (a)'s two assertions temporarily neutralized, the scenario's own stated mutation (drop `.filter(advisoryEntryDisplayable)` from `enabledAdvisories`) now fails on (b) with `got: "No Hazards Forecast (filtered by settings)"` — precisely the claim (b)'s comment makes. Before this change (b) stayed green under that mutation; only (a) carried it.
+
+### WR-02: `also:` rows indented to the nominal dimension width
 
 **Files modified:** `MMM-SPCOutlook.js`, `scripts/probe-payload-resilience.js`
-**Commit:** `ae26a99`
+**Commit:** `84895f6`
 
-Winners are now distinguished by what the payload says (`suppressedBy === null`) rather than
-by arrival order; a second survivor on the same dimension becomes a co-winner and renders as a
-full winner-shaped row with the dimension field blank (padded to the first row's own rendered
-width, so an over-long unmapped dimension string still columns). `also:` is reserved for
-`suppressedBy !== null`. `convectiveDetailAugment` moved inside the row loop so it is read
-per entry rather than once per group — its whole input is `entry.detail`.
+**Applied fix:** `alsoIndent` is now `" ".repeat(2 + dimensionField.length + 2)`, deriving from the group's own rendered width exactly as `blankDimensionField` does at `:618`. `alsoLabelFieldWidth` is unchanged — it is measured against the label field, which is the same width on both row kinds, so the em dash column reduces to `2 + dimensionField.length + DETAIL_LABEL_FIELD_WIDTH` on both. A comment records the shipped path that made it wrong (an unmapped `dimension` whose payload string overruns the field, 18 D-07) and why both row kinds must derive from one quantity.
 
-Probe `bl02-...`: two `wpc-hazards` winter labels on one day, asserting both render, no
-`also:` is claimed, the dimension label is written once, the co-winner's field is blank and
-column-aligned, and the compact header agrees — plus a control that a genuinely suppressed
-competitor still renders `also:`. Mutation-verified RED.
+**Probe added:** `wr02-also-rows-column-with-the-winner-row-under-an-unmapped-dimension` renders a 29-character unmapped dimension with one winner and one suppressed competitor, strips the colour spans (the column contract is a property of the character stream), and asserts both em dashes land on column 57. A mapped-dimension control asserts the ordinary case still columns at 41, so the fix cannot have shifted it. Both halves carry vacuity guards that fail if either row kind or either em dash is missing.
 
-### BL-03: the window band renders `D0` / negative day numbers for a partially-elapsed window
+**Mutation verified RED:** restoring `" ".repeat(2 + DIMENSION_FIELD_WIDTH + 2)` fails with `winner=57, also=41`.
 
-**Files modified:** `MMM-SPCOutlook.js`, `scripts/probe-payload-resilience.js`,
-`.planning/phases/19-unified-day-report-getdom-rewrite/19-UI-SPEC.md`
-**Commit:** `11d8e4e`
+## Notes
 
-A window that started in the past and has not ended now renders open at the low end
-(`through Fri (→D4)`) rather than clamped. Clamping alone — the review's literal suggestion —
-would have paired a PAST start weekday with a present-day offset, reproducing the same
-two-halves-disagreeing shape one level down; the elapsed portion is not forecastable content,
-so it is not advertised at all. `off()` also gains the `Math.max(1, ...)` floor, documented as
-second-line defence rather than as the fix, so no future call site can reintroduce a `D0`.
-
-UI-SPEC's band section records the new offset form (its previous text said the formatting was
-"unchanged from today", which the fix would otherwise have silently falsified).
-
-Probe `bl03-...`: `offsetStart: -1, offsetEnd: 3` plus start-today and single-day controls
-proving the non-negative formatting is untouched. Mutation-verified RED.
-
-### WR-01: the window band renders the literal word `undefined` for a label-less entry
-
-**Files modified:** `MMM-SPCOutlook.js`, `scripts/probe-payload-resilience.js`
-**Commit:** `d77f680`
-
-`typeof entry.label === "string" && entry.label.length > 0` added to the shared
-`renderableWindowEntries` predicate, so the empty-render discriminator and the renderer keep
-agreeing about what the band holds. Probe `wr01-a-label-less-band-entry-...` covers a mixed
-band, a band whose only entry is label-less (no orphan heading, no false settings blame), and
-an empty-string label. Mutation-verified RED.
-
-### WR-02: an advisory entry with no `label` renders `undefined in effect.`
-
-**Files modified:** `MMM-SPCOutlook.js`, `scripts/probe-payload-resilience.js`
-**Commit:** `7e2a931`
-
-"Has a usable label" extracted into a shared `advisoryEntryDisplayable` predicate and read by
-the render loop, so the guard tests the field it is about. Probe `wr02-a-labelless-advisory-...`
-covers `{}`, empty-string and non-string labels, with a well-formed control (label plus hazard
-type suffix). Mutation-verified RED.
-
-### WR-03: a malformed advisory array is reported to the user as `(filtered by settings)`
-
-**Files modified:** `MMM-SPCOutlook.js`, `scripts/probe-payload-resilience.js`
-**Commit:** `7e8e62f`
-
-`enabledAdvisories` now filters through the same `advisoryEntryDisplayable` the render loop
-applies — one predicate, both readings. `advisories: { spcMD: [null] }` under a summary that
-counts it is now `(unconfirmed)` (a payload/summary disagreement) rather than blaming the
-user's config; under an honest summary it is simply a quiet poll. Probe `wr03-...` pins all
-three states including the control that a real advisory hidden by this instance's own setting
-still says `(filtered by settings)`. Mutation-verified RED.
-
-### WR-04: a suppressed `dimension: null` entry is silently dropped in detail mode
-
-**Files modified:** `MMM-SPCOutlook.js`, `scripts/probe-payload-resilience.js`
-**Commit:** `ec52f0b`
-
-`if (!group.winner) continue;` replaced with promotion of the first competitor. Nothing is
-misrepresented by promotion: `suppressedBy` is rendered nowhere (an `also:` row does not name
-its suppressor either), so it changes only whether the entry is SEEN — and D-05 already shows
-suppressed entries in detail mode. Probe `wr04-...` pins the containment posture with a
-`some-future-source` unmapped entry beside a survivor. Mutation-verified RED.
-
-### WR-05: a non-string upstream `LABEL` takes the whole poll to `{ error }`
-
-**Files modified:** `node_helper.js`, `scripts/probe-payload-resilience.js`
-**Commit:** `aa036ee`
-
-Both halves the review offered, deliberately: coerced at the boundary
-(`f.properties.LABEL == null ? "" : String(f.properties.LABEL)`) as the fix, and
-`String(a.label).localeCompare(String(b.label))` as second-line defence for the several other
-entry paths into `day.hazards` that never pass through `extractPolygons`.
-
-Probe `wr05-...` calls the two production methods directly (the precedent
-`rpt02-autoexpand-...` set): `extractPolygons` with a numeric `LABEL`, which the probability
-layers' own `parseFloat(label)` toValue admits without complaint, and
-`_resolveGridDayPrecedence` on a day carrying **two** numeric labels — one is not enough,
-because the engine may call the comparator as `(b, a)` and a lone numeric label that lands in
-`b` never touches `.localeCompare`. Each half mutation-verified RED independently.
-
-### WR-06: the frontend probe's DOM stub cannot observe `innerHTML` re-serialization
-
-**Files modified:** `scripts/probe-lib/module-stubs.js`,
-`.planning/phases/19-unified-day-report-getdom-rewrite/19-PARITY-CHECKLIST.md`
-**Commit:** `ea8bf90`
-
-Documentation-only, as the review scoped it. `assertInertMarkup`'s comment now names BOTH
-limitations (lexical rather than parsed, and scanning a concatenated string a real node would
-have re-parsed and re-serialized on every `+=`), and Probe Coverage gains row 41 as
-`MANUAL ONLY`. The "three rows marked MANUAL ONLY" cross-reference further down the checklist
-was updated in the same commit so the document does not contradict itself.
-
-### WR-07: the poll interval timer is never retained or cleared
-
-**Files modified:** `MMM-SPCOutlook.js`, `scripts/probe-lib/module-stubs.js`,
-`scripts/probe-payload-resilience.js`
-**Commit:** `bd28b32`
-
-`_armPollTimer` / `_clearPollTimer` are the single sites that create and destroy the handle,
-with `suspend`/`resume` on top; arming is idempotent, so a double `resume` (which MagicMirror
-is free to deliver) cannot leave two timers polling the same endpoints.
-
-The probe's DOM stub had `setInterval: () => 0` and no `clearInterval` at all — it could not
-express the state this fix is about, so it gained an observable pair backed by a
-per-loaded-module `Map` exposed as a non-enumerable `frontend._probeLiveTimers`. Probe
-`wr07-...` covers start / suspend / resume / double-resume plus the re-armed timer's interval
-and callback. Mutation-verified RED for a discarded handle and for non-idempotent arming.
-
----
-
-## Skipped Issues
-
-None — all ten in-scope findings were fixed.
-
-For the record, matching the previous report's disclosure: the iteration-2 `WR-05`
-(`enabledSourceCount`) was skipped pending a D-16 contract decision and the reviewer confirmed
-that skip was correct and did not re-report it. The `WR-05` fixed above is a **different**
-finding that reuses the identifier (`extractPolygons` LABEL coercion). The `enabledSourceCount`
-question remains where the operator left it.
-
-## Not in scope
-
-IN-01 (`DIMENSION_ORDER`'s vacuous permutation assertion), IN-02 (`hasConvectiveDetail`'s
-name), IN-03 (`buildWpcHazardsMap`'s one-directional validation) and IN-04
-(`anyUngatedContent()` evaluated twice) are Info-severity and outside this pass's
-`critical_warning` scope. None were touched. IN-04 in particular is now adjacent to changed
-code (the BL-01 rewrite sits between its two call sites), so a future pass should re-read it
-rather than assuming the review text still describes the lines verbatim.
+- **Info findings IN-01..IN-06 were left untouched**, per scope. They remain valid as re-reported.
+- **Logic-change surface:** CR-01 and WR-02 are both source changes whose reachable-output claims were checked rather than assumed. CR-01 changes output only on the previously-throwing path (verified by direct execution through `renderDom`); WR-02 changes output only when `dimensionField.length !== DIMENSION_FIELD_WIDTH`, which the mapped-dimension control pins as unreachable for every mapped group.
+- **No duplicate scenario names** introduced (`wr02-also-rows-…` is distinct from the existing `wr02-a-labelless-advisory-entry-…`; the only duplicate `name:` strings in the file are pre-existing fixture layer names, not scenarios).
 
 ---
 
 _Fixed: 2026-09-08_
 _Fixer: Claude (gsd-code-fixer)_
-_Iteration: 3_
+_Iteration: 4_
