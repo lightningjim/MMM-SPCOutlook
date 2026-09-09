@@ -2,7 +2,7 @@
 phase: 19-unified-day-report-getdom-rewrite
 reviewed: 2026-09-08T00:00:00Z
 depth: standard
-iteration: 3
+iteration: 4
 files_reviewed: 5
 files_reviewed_list:
   - hazardTaxonomy.js
@@ -11,32 +11,34 @@ files_reviewed_list:
   - scripts/probe-lib/module-stubs.js
   - scripts/probe-payload-resilience.js
 findings:
-  critical: 3
-  warning: 7
-  info: 4
-  total: 14
+  critical: 1
+  warning: 2
+  info: 6
+  total: 9
 status: issues_found
 ---
 
-# Phase 19: Code Review Report (iteration 3)
+# Phase 19: Code Review Report (iteration 4)
 
 **Reviewed:** 2026-09-08
 **Depth:** standard
 **Files Reviewed:** 5
 **Status:** issues_found
-**Harness:** `node scripts/probe-payload-resilience.js` → `173 passed, 0 failed, 0 skipped` (re-run and confirmed). 174 `name:` declarations exist; the extra one is a `name: "Pixel"` string inside a fixture, not an orphaned scenario. No duplicate scenario names.
+**Harness:** `node scripts/probe-payload-resilience.js` → `181 passed, 0 failed, 0 skipped` (re-run and confirmed). No duplicate scenario names.
 
 ## Summary
 
-The iteration-2 fix pass (`806e7bb..b047ac9`) landed and the eight fixes are visible in the source. Two of them are **verified sound**, one is **verified unsound**, and the review found three previously-unreported defects that are reachable on ordinary production payloads.
+The ten iteration-3 fixes (`5efe2ce..bd28b32`) all landed and **nine of the ten verify sound under direct execution**. Specifically, on the three items flagged for scrutiny:
 
-Verification of the two items specifically flagged for scrutiny:
+- **BL-01 (`gridReadable` carve-out) — logic verified correct in BOTH directions.** I traced every way `summary.anyHazard` can be `true` against `_buildGridSummary` (node_helper.js:3698-3767) and confirmed the narrowing reads the summary's own other two terms exactly: `activeDays.length === 0` is definitionally `!anyDayHazard` (the same day scan populates both, :3715-3718), and `bandDiagnostics.advisoryCount` is the same counter that feeds the flag (:3722-3726). The `gridReadable` term is not RED on a healthy poll — `_buildGridDays` (:2614-2627) unconditionally emits all fourteen keys with `hazards: []`, so an empty-but-well-formed grid passes. I also checked the case the carve-out most plausibly over-serves — a *renderable* band entry hidden by `showHazardsOutlook: false` — and confirmed it correctly falls to `"(filtered by settings)"` via the second ladder branch rather than to the confident string. The probe composition (h)/(i)/(j)/(k)/(l) genuinely pins both directions.
+- **BL-03 (open-at-the-low-end window) — verified; band and grid cannot disagree at any offset.** `off()` is only ever asked for `offsetEnd` on the `startedInPast` branch, and `renderableWindowEntries` has already dropped `offsetEnd < 0`, so the `Math.max(1, …)` floor is genuinely inert second-line defence rather than a load-bearing clamp; on the non-elapsed branch `offsetStart >= 0` makes the floor inert too. No offset value produces a `D<n>` the grid lacks.
+- **WR-07 (observable timer stub) — verified non-vacuous.** `liveTimers` is a real `Map` mutated by both `setInterval` and `clearInterval` in the sandbox, scoped per loaded module; parts (a)–(e) each read a value only the fix can produce, and (e) additionally invokes the retained callback.
 
-- **CR-02 carve-out — FAILS.** The `rawWindowBandCount === 0` term is over-broad and reopens the exact hole CR-02 closed. Proven by direct execution (BL-01 below). All three payload shapes that probe `cr02-...` pins as `"(unconfirmed)"` flip back to a confident `"No Hazards Forecast"` once a single wholly-elapsed window-band entry is present alongside them. The probe suite never composes the two conditions, so it stays green.
-- **WR-05 (`enabledSourceCount`) — correctly skipped.** No runtime defect found. The field is emitted, documented diagnostic-only, and read by nobody. Not re-reported.
-- **The two corrected probe assertions are correct, not weakened.** The `wr01-...` suppressed-only fixture now leaves `anyHazard` at `false`, which is genuinely what `_buildGridSummary` derives (its day scan `continue`s on every `suppressedBy !== null` entry, node_helper.js:3693), and the `true` variant it removed is now asserted *harder* in `cr02-... (f)`. The `wr02-unified-compact-segment-*` scenario gained a real cross-mode assertion (`compactCut !== 60 || detailCut !== 60`) that did not exist before; the added `showHazardsOutlook: true` in its config is required for the new `wpc-hazards` fixture to reach the render at all, not a gate being loosened.
+**However, the BL-01 fix introduced one new BLOCKER.** `bandIsTheOnlySummaryTerm` dereferences `summary` without the `summaryOk` guard that every other read on this branch carries. When `summary` is absent/null and the raw `windowBand` is non-empty over a readable, empty grid, `getDom()` throws a `TypeError` and the module's entire render is lost — reproduced by direct execution. This is the exact failure class this phase's own CR-03 was raised for, and it directly contradicts the invariant asserted 300 lines above it at `MMM-SPCOutlook.js:1049-1054` ("an absent or malformed summary **can never throw out of getDom()**").
 
-The new defects cluster in one place: **the unified renderer's model of the payload does not match what the backend actually emits.** `renderDaySubRows` assumes at most one `suppressedBy === null` entry per dimension — false for `wpc-hazards`, which dedupes by *label*, not dimension. The window band assumes every offset is a future day — false, because non-precipitation features route to the band with their raw observed span, which routinely starts in the past. Both produce wrong output on data the backend emits today.
+One probe sub-assertion passes for the wrong reason (WR-01 below); its parent scenario still goes RED under the stated mutation, so it is a WARNING rather than a BLOCKER.
+
+The four iteration-3 Info items are all still present and still valid; they are re-reported unchanged at CONVENTION tier, with `IN-04`'s line references refreshed against the rewritten BL-01 block as requested.
 
 ---
 
@@ -50,193 +52,103 @@ No `<structural_findings>` block was supplied for this iteration.
 
 ## Critical Issues
 
-### BL-01: the CR-02 carve-out reopens the confident-all-clear-over-a-contradicting-summary hole
+### CR-01: `bandIsTheOnlySummaryTerm` dereferences an unguarded `summary` and takes the whole render down
 
 **Classification:** BLOCKER
-**File:** `MMM-SPCOutlook.js:1171-1177`
+**File:** `MMM-SPCOutlook.js:1353-1356`
 
-**Issue:** The fix reads:
-
-```js
-const rawWindowBandCount = Array.isArray(this.spcrisk.windowBand)
-  ? this.spcrisk.windowBand.length : 0;
-const summaryContradictsRender = summaryOk && summary.anyHazard === true &&
-  rawWindowBandCount === 0 && !anyUngatedContent();
-```
-
-`rawWindowBandCount > 0` disables the contradiction check **entirely**, for every reason `anyHazard` might be true — not just for the elapsed-band reason the comment justifies. `anyHazard` is `anyDayHazard || windowBandCount > 0 || advisoryCount > 0` (node_helper.js:3711). A payload where the summary asserts day hazards **and** carries one wholly-elapsed band entry silences the check, so a corrupt/truncated `days` object renders a confident all-clear over a summary that says hazards exist.
-
-Proven by execution against the real `getDom` through the probe's own stubs. Each of the three shapes that `cr02-a-summary-that-contradicts-the-render-is-never-a-confident-all-clear` pins as `"(unconfirmed)"`, re-run with one added elapsed band entry (`offsetStart:-3, offsetEnd:-1`) and every toggle on:
-
-| scenario | expected | actual |
-|---|---|---|
-| `days: null` + elapsed band, `anyHazard: true` | `No Hazards Forecast (unconfirmed)` | `No Hazards Forecast` |
-| all 14 days corrupt + elapsed band, `anyHazard: true` | `No Hazards Forecast (unconfirmed)` | `No Hazards Forecast` |
-| suppressed-only day + elapsed band, `anyHazard: true` | `No Hazards Forecast (unconfirmed)` | `No Hazards Forecast` |
-
-The elapsed band is not exotic — a `wpc-hazards` Temperature/Wildfire feature routes to the band unconditionally with its own observed span (node_helper.js `_bucketHazardMatch`, the `layer.group !== "precipitation"` branch), and one that ended yesterday sits in the band until it drops out upstream. So the carve-out is live for a large fraction of real polls.
-
-**Fix:** narrow the carve-out so it excuses `anyHazard` only when the raw band is the *only* term that could have set it. `summary` already publishes both other terms:
+**Issue:** The BL-01 fix added three new `summary.*` reads inside the `wrapper.innerHTML === contentMarker` ladder:
 
 ```js
 const bandIsTheOnlySummaryTerm =
-  rawWindowBandCount > 0 &&
+  rawWindowBandCount > 0 && gridReadable &&
   Array.isArray(summary.activeDays) && summary.activeDays.length === 0 &&
   !!summary.bandDiagnostics && summary.bandDiagnostics.advisoryCount === 0;
-const summaryContradictsRender = summaryOk && summary.anyHazard === true &&
-  !bandIsTheOnlySummaryTerm && !anyUngatedContent();
 ```
 
-Then add the composed case to the `cr02-...` probe (elapsed band **plus** each of `days: null` / corrupt days / suppressed-only) — the missing composition is why 173 green scenarios did not catch this.
+`summary` is `this.spcrisk.summary` (`:1055`) and is explicitly allowed to be absent — that is precisely what `summaryOk` (`:1056`) exists to express, and what the block comment at `:1049-1054` promises is survivable:
 
----
+> "summary is read defensively everywhere below — an absent or malformed summary **can never throw out of getDom()**"
 
-### BL-02: two co-equal survivors on one dimension render as winner + `also:` competitor
+It is no longer read defensively here. `&&` short-circuits on `rawWindowBandCount > 0` and `gridReadable`, so the crash needs all three of: a non-empty top-level `windowBand`, a readable fourteen-day grid, and nothing rendered. Every one of those is an ordinary state (`showHazardsOutlook` defaults to `false`, so a non-empty band routinely renders nothing).
 
-**Classification:** BLOCKER
-**File:** `MMM-SPCOutlook.js:514-523` (grouping), `:561-576` (`also:` rows)
-
-**Issue:** `renderDaySubRows` assigns the first `suppressedBy === null` entry per dimension as the winner and pushes **everything else** — including a second, equally-unsuppressed entry — into `group.competitors`, which renders as an `also:` row. The comment calls this "defensively including a second `suppressedBy === null` entry should the resolution invariant ever be violated." The invariant is not violated; the model is wrong.
-
-`_addHazardsOutlookGridEntries` dedupes by **label** within a grid day (node_helper.js:2996 — `h.source === "wpc-hazards" && h.label === match.label`), not by dimension. `hazardTaxonomy.js` maps multiple `wpc-hazards` labels onto one dimension: `Heavy Snow` / `Freezing Rain` / `Heavy Ice` → `winter`; `Hazardous Heat` / `Excessive Heat` / `Much Above Normal Temperatures` → `heat`; `High Winds` / `Significant Waves` → `wind`; `Frost/Freeze` / `Hazardous Cold` / `Much Below Normal Temperatures` → `cold`. `_resolveGridDayPrecedence` (node_helper.js:3595) then sets `suppressedBy = null` on **both**, because both come from the winning source.
-
-Reproduced against the real `getDom` with `dayReportDetail: true` and a day carrying `Heavy Snow` + `Freezing Rain`, both `wpc-hazards`, both `suppressedBy: null`:
+Reproduced by direct execution against the real `getDom` through the probe harness's own `renderDom`:
 
 ```
-Day 5 (Sun)  Winter Heavy Snow · Winter Freezing Rain
-  Winter       Heavy Snow                — WPC Hazards
-                 also: Freezing Rain     — WPC Hazards
+THREW: TypeError Cannot read properties of undefined (reading 'activeDays')
 ```
 
-The compact header presents two peer hazards; the detail expansion presents one as a suppressed competitor of the other. `also:` is D-05's suppressed-competitor row, so detail mode asserts a suppression relationship that does not exist — the two modes contradicting each other about the same entry, which is exactly the class the CR-02/03/04 collapse was created to make unrepresentable.
+with `spcrisk = { days: <14 well-formed empty days>, advisories: {spcMD:[],mpd:[]}, windowBand: [<one future entry>] }` and default config. The consequence is total: `getDom()` throws past every day block, the advisory band and the window band, and MagicMirror renders nothing at all — the identical blast radius this phase's CR-03 (`DIMENSION_LABELS["toString"].padEnd`) and WR-07 (`advisories.mpd is not iterable`) were both raised for.
 
-**Fix:** distinguish co-winners from suppressed competitors rather than by arrival order:
+Today's backend cannot emit a summary-less non-error payload (the hard-failure path emits `{ error }`, which the `:1059` branch takes first), so this is version-skew / shape-drift reachable rather than remote-triggerable. That is exactly the standard this file applies to itself: CR-03's own note (`:355-359`) states the defect was "that the containment posture was asserted rather than implemented", and `:1049-1054` asserts this posture in so many words.
+
+**Fix:**
 
 ```js
-if (h.suppressedBy === null) {
-  if (!group.winner) group.winner = h; else group.coWinners.push(h);
-} else {
-  group.competitors.push(h);
-}
+const bandIsTheOnlySummaryTerm =
+  summaryOk && rawWindowBandCount > 0 && gridReadable &&
+  Array.isArray(summary.activeDays) && summary.activeDays.length === 0 &&
+  !!summary.bandDiagnostics && summary.bandDiagnostics.advisoryCount === 0;
 ```
 
-and render `group.coWinners` as full winner-shaped rows (blank dimension field, no `also:` prefix), reserving `also:` for `suppressedBy !== null`. Add a probe fixture with two same-source, same-dimension `wpc-hazards` labels on one day.
+`summaryOk` leading the conjunction is also semantically right, not merely defensive: the carve-out's whole claim is "the summary's *own other two terms* are empty", which is unassertable when there is no summary. With `summaryOk` false, `unconfirmed` is already true at `:1360`, so the corrected expression changes no reachable output — it only removes the throw.
 
----
-
-### BL-03: the window band renders `D0` / negative day numbers for a partially-elapsed window
-
-**Classification:** BLOCKER
-**File:** `MMM-SPCOutlook.js:616-623` (`renderableWindowEntries`), `:707-710` (`off`)
-
-**Issue:** The elapsed-window filter drops an entry only when `offsetEnd < 0`. An entry whose window **started** in the past but has not ended (`offsetStart < 0 <= offsetEnd`) survives, and `off()` renders `Math.trunc(n) + 1` verbatim, producing `D0` or `D-1`.
-
-Reproduced: a band entry with `offsetStart: -1, offsetEnd: 3` renders
-
-```
-Extended Hazards:
-Mon–Fri (D0–4): Heavy Snow
-```
-
-under a day grid whose first row is `Day 1`. This is the same "band disagrees with the grid directly above it about what day it means" defect the 19-08 Run B `+ 1` conversion was introduced to fix (the comment at `:699-706` states exactly that intent); the fix addressed the constant offset but not the negative domain.
-
-This is not a synthetic shape. `_bucketHazardMatch` computes `offsetStart = this._hazardDayOffset(match.startDate, todayUtcMs)` with no lower clamp, and routes every non-`precipitation` group (Temperature, Wildfire/Drought) to `windowEntries` unconditionally with its raw observed span. A multi-day WPC/CPC hazard whose `start_date` was yesterday is an everyday payload.
-
-**Fix:** clamp the displayed start to the grid's own first day, since the elapsed portion is not forecastable content:
-
-```js
-const off = (n) => (typeof n === "number" && isFinite(n)
-  ? String(Math.max(1, Math.trunc(n) + 1)) : "?");
-```
-
-and consider suppressing the range's low end entirely (render `(→D4)` or `(D1–4)`) so the band never advertises a day the grid does not have. Pin it with a probe using `offsetStart: -1, offsetEnd: 3`.
+Add a probe scenario alongside `cr02-…` (h)-(l): `unifiedPayload({ windowBand: [futureBandEntry()] })` with `delete payload.summary`, asserting `"No Hazards Forecast (unconfirmed)"` rather than a throw. Mutation to prove RED: drop the `summaryOk &&` term.
 
 ---
 
 ## Warnings
 
-### WR-01: the window band renders the literal word `undefined` for a label-less entry
+### WR-01: `wr03-a-malformed-advisory-array-is-never-blamed-on-settings` part (b) passes for the wrong reason
 
 **Classification:** WARNING
-**File:** `MMM-SPCOutlook.js:712`
+**File:** `scripts/probe-payload-resilience.js:12693-12703` (the `honest` fixture)
 
-**Issue:** `escapeHtml(truncateHazardLabel(entry.label))` with `truncateHazardLabel` doing `String(label)`. `renderableWindowEntries` type-checks `offsetEnd` but never `label`. Reproduced: a band entry with no `label` key renders
+**Issue:** Part (b) builds `unifiedPayload({ advisories: { spcMD: [null, {}], mpd: [] } })` and asserts `"No Hazards Forecast"`. `unifiedPayload`'s default summary carries `anyHazard: false`, so this payload never reaches the `contentMarker` ladder at all — it is answered by the confident short-circuit at `MMM-SPCOutlook.js:1090` (`summaryOk && summary.anyHazard === false && !_stale && !anyProximityOnlyDay()`) before `enabledAdvisories`, `advisoryEntryDisplayable` or the three-way ladder are consulted. The scenario's own stated mutation ("drop the `.filter(advisoryEntryDisplayable)` from `enabledAdvisories`") cannot turn part (b) red.
 
-```
-Extended Hazards:<br/>Wed–Thu (D3–4): <span style="color:#a80000">undefined</span><br/>
-```
+I verified this by applying the stated mutation: the scenario fails, but on part **(a)** only. Parts (a) and (c) carry the whole scenario; (b) contributes no signal while reading as though it does.
 
-This is precisely the failure class the day path just fixed structurally in this iteration (`entryText(h) === ""` in `hazardEntryDisplayable`, `MMM-SPCOutlook.js:765`) and that this file names at `cigLabel` ("no segment rather than a bad one"). The band was not brought along. Backend-unreachable today (`_hazardMatchesFromHits` rejects a non-string/empty label, node_helper.js:455-456), so this is defense-in-depth — but it is a stated file-wide rule with one unimplemented site.
+This matters beyond tidiness: the comment on (b) claims it proves "the same malformed array under an HONEST summary is simply a quiet poll", i.e. an assertion *about the advisory predicate*. It proves only that `anyHazard: false` short-circuits, which a dozen other scenarios already establish.
 
-**Fix:** add the structural term to the shared predicate:
+**Fix:** make (b) reach the ladder, so the advisory predicate is actually the thing under test:
 
 ```js
-return windowBand.filter((entry) => (
-  entry && typeof entry === "object" &&
-  typeof entry.label === "string" && entry.label.length > 0 &&
-  !(typeof entry.offsetEnd === "number" && entry.offsetEnd < 0) &&
-  (applyDisplayGates === false || hazardsLabelDisplayable(entry.label))
-));
+const honest = unifiedPayload({ advisories: { spcMD: [null, {}], mpd: [] } });
+// A band entry the render legitimately drops sets anyHazard without adding renderable
+// content, so the ladder — not the anyHazard short-circuit — has to answer this one.
+honest.windowBand = [elapsedBandEntry()];
+honest.summary.anyHazard = true;
+honest.summary.bandDiagnostics = { windowBandCount: 1, advisoryCount: 0 };
 ```
 
-### WR-02: an advisory entry with no `label` renders `undefined in effect.`
+…then keep the existing `!== "No Hazards Forecast"` assertion. Under the stated mutation the unrenderable `[null, {}]` entries become ungated content and (b) flips to `"(filtered by settings)"` — which is the claim its comment already makes.
+
+### WR-02: `also:` competitor rows are indented to the nominal dimension width while winner rows are indented to the actual one
 
 **Classification:** WARNING
-**File:** `MMM-SPCOutlook.js:1099-1101`
+**File:** `MMM-SPCOutlook.js:604-618` vs `:651-665`
 
-**Issue:** The guard immediately above says "skip a null/non-object entry rather than rendering `undefined in effect.` — the failure class CR-02 already fixed once on the backend", but it only checks `!entry || typeof entry !== "object"`. `escapeHtml(entry.label)` on `{}` produces the string `"undefined"`, so `{}` renders `undefined in effect.` — the exact output the guard names.
+**Issue:** WR-04 (iteration 2) made the winner/co-winner rows resilient to an unmapped `dimension` whose payload string overruns the field. `dimensionField` is `truncateHazardLabel(...)` (up to 60 chars) `.padEnd(DIMENSION_FIELD_WIDTH)` — so it can be **wider** than `DIMENSION_FIELD_WIDTH` — and the co-winner row correctly pads to `dimensionField.length` (`:618`), with the comment stating exactly why:
 
-**Fix:** extend the guard to the field it is actually about:
+> "Padded to the first row's own rendered width rather than to `DIMENSION_FIELD_WIDTH`, so an unmapped dimension whose payload string overruns the field … still columns correctly."
+
+The `also:` rows two blocks below do **not** get that treatment:
 
 ```js
-if (!entry || typeof entry !== "object" ||
-    typeof entry.label !== "string" || entry.label.length === 0) continue;
+const alsoIndent = " ".repeat(2 + DIMENSION_FIELD_WIDTH + 2);
+const alsoLabelFieldWidth = DETAIL_LABEL_FIELD_WIDTH - 2 - "also: ".length;
 ```
 
-### WR-03: a malformed advisory array is reported to the user as `(filtered by settings)`
+Both are derived from the nominal `DIMENSION_FIELD_WIDTH` (13). For a mapped dimension the winner's em dash lands at column 38 and so does the competitor's — correct. For an unmapped 30-character passthrough dimension the winner row's em dash moves to column 55 while its own `also:` rows stay at 38, so the suppressed competitor detaches from the block it belongs to. This is the same class of column-grid break WR-04 named as its reason for existing ("the '…' landed mid-field and destroyed the column grid the whole detail layout exists to maintain"), left unfixed in one of the two row kinds. `dimension: null` unmapped entries are a shipped path (18 D-07) and `truncateHazardLabel`'s presence on `:604` is an explicit acknowledgement that the string is unbounded.
 
-**Classification:** WARNING
-**File:** `MMM-SPCOutlook.js:637-650`, `:1180-1184`
+**Fix:** derive both from the group's own rendered width, exactly as `blankDimensionField` already does:
 
-**Issue:** `enabledAdvisories` spreads the whole array without validating entries, so `advisories: { spcMD: [null], mpd: [] }` makes `anyUngatedContent()` true. The advisory render loop then skips the `null`, nothing renders, and the empty-state ladder concludes `NO_HAZARD_TEXT_FILTERED`. Reproduced: output is `"No Hazards Forecast (filtered by settings)"`. No setting filtered anything; the payload was malformed. The whole point of the three-way split (WR-01, iteration 2) is that each string describes a distinct real state, and this one sends the operator to check config over a data defect.
+```js
+const alsoIndent = " ".repeat(2 + dimensionField.length + 2);
+const alsoLabelFieldWidth = DETAIL_LABEL_FIELD_WIDTH - 2 - "also: ".length;
+```
 
-**Fix:** apply the same entry-shape predicate in `enabledAdvisories` that the render loop applies (see WR-02), so the ungated reading and the render agree about what counts as an advisory — the same "one predicate, both readings" rule `hazardEntryDisplayable` already establishes for the day path.
-
-### WR-04: a suppressed `dimension: null` entry is silently dropped in detail mode
-
-**Classification:** WARNING
-**File:** `MMM-SPCOutlook.js:503-505`, `:525`
-
-**Issue:** A `dimension: null` entry always gets a fresh group with `winner: null`. If it carries `suppressedBy !== null` it lands in `group.competitors` of its own group, and `if (!group.winner) continue;` then discards the group — the entry renders in neither the compact header nor the detail rows. That is the *hidden* direction of the fail-safe, which the `DAY_SOURCE_FLAGS` note two hundred lines below explicitly forbids ("an UNLISTED source is never hidden ... degrades to today's (visible) behaviour rather than silently disappearing"). Unreachable today (`_resolveGridDayPrecedence` `continue`s on `dimension === null` — "never suppresses, never suppressed"), but the containment posture is asserted rather than implemented, which is the same critique CR-03 made of the prototype-chain lookups.
-
-**Fix:** promote a lone competitor to winner when a group has no winner, or render the group with an empty dimension field rather than `continue`ing.
-
-### WR-05: a non-string upstream `LABEL` takes the whole poll to `{ error }`
-
-**Classification:** WARNING
-**File:** `node_helper.js:2058`, `node_helper.js:3574`
-
-**Issue:** `extractPolygons` does `const label = f.properties.LABEL || "";` with no `String()` coercion, so a numeric (or object) `LABEL` attribute propagates verbatim into the grid hazard entries. `_resolveGridDayPrecedence`'s comparator then calls `a.label.localeCompare(b.label)`, which throws `TypeError: a.label.localeCompare is not a function` on a number. That throw is outside `extractPolygons`' per-feature containment and lands in `getSpcOutlook`'s shared catch — the same "one bad feature blanks days 1-8, fire weather and the ERO together" outcome the WR-08 note at `:2062-2069` exists to prevent. Every other consumer already coerces (`dimensionOf` does `String(label)`, heatrisk emits `String(category)`), so this comparator is the only site trusting the raw type.
-
-**Fix:** coerce at the boundary — `const label = f.properties.LABEL == null ? "" : String(f.properties.LABEL);` — and/or make the comparator total: `String(a.label).localeCompare(String(b.label))`.
-
-### WR-06: the frontend probe's DOM stub cannot observe `innerHTML` re-serialization
-
-**Classification:** WARNING
-**File:** `scripts/probe-lib/module-stubs.js:293`, `:323-334`
-
-**Issue:** `document.createElement` returns `{ innerHTML: "", textContent: "", style: {} }`, so `getDom`'s ~15 `wrapper.innerHTML +=` sites are plain string concatenation. A real DOM node **re-parses and re-serializes** on every assignment: unbalanced markup is auto-closed, attributes are normalized, and the resulting tree can differ from the concatenated string. `assertInertMarkup` is a lexical scan over that concatenated string, so it validates something the browser never sees. The stub's own comment is honest about alignment and whitespace being MANUAL ONLY, but does not name this gap, and `assertInertMarkup` is presented as the backstop for the whole class of escaping defects (WR-07(a)).
-
-**Fix:** state the limitation in the `assertInertMarkup` comment alongside the existing "lexical rather than parsed tree" note, and add the round-trip mismatch to `19-PARITY-CHECKLIST.md`'s Probe Coverage as a MANUAL ONLY row. A stronger option, if a dev dependency is ever acceptable, is a `linkedom` round trip in one dedicated scenario.
-
-### WR-07: the poll interval timer is never retained or cleared
-
-**Classification:** WARNING
-**File:** `MMM-SPCOutlook.js:98`
-
-**Issue:** `setInterval(...)` result is discarded and the module implements no `stop`/`suspend`/`resume`. MagicMirror keeps a hidden module's timers alive, so a suspended instance continues polling `www.spc.noaa.gov` and `mapservices.weather.noaa.gov` forever. `resolveUpdateInterval` (added for the same class of concern) bounds the *rate* but not the *lifetime*.
-
-**Fix:** store the handle (`this._pollTimer = setInterval(...)`) and add `suspend: function() { clearInterval(this._pollTimer); this._pollTimer = null; }` plus a `resume` that re-arms it.
+(`alsoLabelFieldWidth` is already relative to the label field and needs no change; only the indent is measured against the wrong quantity.) Pin it with a probe: an unmapped `dimension: null`-adjacent group whose winner carries a >13-char dimension string plus one suppressed competitor, asserting both em dashes land on the same column.
 
 ---
 
@@ -246,17 +158,18 @@ if (!entry || typeof entry !== "object" ||
 
 **Classification:** CONVENTION
 **File:** `hazardTaxonomy.js:363-372` (checks a value declared at `:32`)
+**Status:** unchanged since iteration 3; `hazardTaxonomy.js` was not touched by the fix pass. Re-reported because it is still valid.
 
-**Issue:** `DIMENSION_ORDER` is `Object.freeze([...DIMENSIONS])`, so the sorted-equality check at load time can never fail. It reads as a real invariant guard beside genuine ones.
+**Issue:** `DIMENSION_ORDER` is `Object.freeze([...DIMENSIONS])`, so the sorted-equality check at load time can never fail.
 
 **Convention violated:** this file's own "assertions fail loudly on a bad edit" discipline (`assertTaxonomyIntegrity`'s stated purpose at `:264-267`) — an assertion that cannot fail is not one.
 
-**Fix (recommend):** either delete it, or make it load-bearing by declaring `DIMENSION_ORDER` as its own explicit literal and letting the check enforce the permutation relationship it claims to.
+**Fix (recommend):** delete it, or make it load-bearing by declaring `DIMENSION_ORDER` as its own explicit literal and letting the check enforce the permutation relationship it claims to.
 
 ### IN-02: `hasConvectiveDetail` is set by any entry carrying a `detail` object
 
 **Classification:** CONVENTION
-**File:** `node_helper.js:3637-3643`
+**File:** `node_helper.js:3652-3658`
 
 **Issue:** The loop sets `hasConvectiveDetail = true` for `entry.detail && typeof entry.detail === "object"` regardless of `entry.dimension`/`entry.source`. Correct today only because convective is the sole dimension with a `detail` sub-object; the name asserts a check the code does not perform.
 
@@ -269,7 +182,7 @@ if (!entry || typeof entry !== "object" ||
 **Classification:** CONVENTION
 **File:** `hazardTaxonomy.js:95-108`
 
-**Issue:** The throw fires when a `displayColor` label has no dimension entry, but nothing detects a `hazardsOutlookDimensionByLabel` entry with no `displayColor` key. Such an entry is dead — the derived key set excludes it — so a label that quietly loses its registry colour silently degrades to the D-07 unmapped path with no signal. Both sets currently match exactly (verified).
+**Issue:** The throw fires when a `displayColor` label has no dimension entry, but nothing detects a `hazardsOutlookDimensionByLabel` entry with no `displayColor` key. Such an entry is dead — the derived key set excludes it — so a label that quietly loses its registry colour silently degrades to the D-07 unmapped path with no signal. Both sets currently match exactly (re-verified this iteration).
 
 **Convention violated:** the file's own "never restate a derived value / catch drift at require() time" rule (`:29-32`, `:91-94`).
 
@@ -278,13 +191,35 @@ if (!entry || typeof entry !== "object" ||
 ### IN-04: `anyUngatedContent()` is evaluated twice on the same branch
 
 **Classification:** CONVENTION
-**File:** `MMM-SPCOutlook.js:1174-1182`
+**File:** `MMM-SPCOutlook.js:1358` and `:1363` (line references refreshed — the two call sites now bracket the rewritten BL-01 block at `:1341-1356`)
 
-**Issue:** Once inside `summaryContradictsRender` and again in the `else if`. It walks 14 days, the window band and both advisory arrays each time. Correctness is unaffected (it is pure over an unchanged `this.spcrisk`), but the two calls can visually read as two different questions.
+**Issue:** Called once inside `summaryContradictsRender` (`:1358`) and again in the `else if` (`:1363`). It walks fourteen days, the window band and both advisory arrays each time. Correctness is unaffected (it is pure over an unchanged `this.spcrisk`), but the two calls read as two different questions — and the BL-01 rewrite has now put ~15 lines of new logic between them, which makes the reader's job harder, not easier.
 
-**Convention violated:** this file's "declared once, called from both the render-decision site and the render body (WR-04's rule) so the two can never disagree" pattern, stated at `daySurvivors` (`:803-807`).
+**Convention violated:** this file's "declared once, called from both the render-decision site and the render body (WR-04's rule) so the two can never disagree" pattern, stated at `daySurvivors` (`:950-957`).
 
-**Fix (recommend):** `const ungated = anyUngatedContent();` above the ladder and read the local at both sites.
+**Fix (recommend):** `const ungated = anyUngatedContent();` above the `rawWindowBandCount` declaration and read the local at both sites.
+
+### IN-05: `renderableWindowEntries` type-checks `label` and `offsetEnd` but not `offsetStart`/`offsetEnd` as a pair
+
+**Classification:** CONVENTION
+**File:** `MMM-SPCOutlook.js:717-722`, rendered at `:850-857`
+
+**Issue:** The WR-01 fix made a usable `label` structural in the shared band predicate, but the offset terms remain half-checked: the elapsed filter only fires `typeof entry.offsetEnd === "number" && entry.offsetEnd < 0`, so an entry with a non-numeric or absent `offsetEnd` survives and renders `off()`'s `"?"` fallback — `Heavy Snow` at `(D?)`, or `(→D?)` when `offsetStart` is a negative number and `offsetEnd` is not. `anyUngatedContent()` reads the same predicate, so such an entry also counts as content that "settings filtered", steering the operator at a config that filtered nothing (the exact complaint WR-03 raised about the advisory path).
+
+**Convention violated:** this file's own "no segment rather than a bad one" rule, stated at `cigLabel` (`:242-244`) and made structural for the band's `label` in this same predicate one line above.
+
+**Fix (recommend):** add `typeof entry.offsetStart === "number" && typeof entry.offsetEnd === "number" &&` to the shared filter, and demote `off()`'s `"?"` branch to a genuinely unreachable assertion (or delete it) once the predicate owns the guarantee. Backend-unreachable today (`_hazardDayOffset` returns a `Math.round` of a validated input), so this is defence in depth in the same sense WR-01 was.
+
+### IN-06: `100 * detail.torRisk` is rendered unrounded
+
+**Classification:** CONVENTION
+**File:** `MMM-SPCOutlook.js:466`, `:475`, `:484`
+
+**Issue:** The probabilistic sub-line concatenates `(100 * detail.torRisk) + "% "` with no rounding. The risk value is `parseFloat` of a remote `LABEL` (`node_helper.js:4162`) reduced by `evaluatePolygons`, so any fraction upstream chooses to publish flows straight into IEEE-754 multiplication: `100 * 0.29` is `28.999999999999996`, which would reach the screen verbatim. SPC's shipped probability ladder (0.02/0.05/0.10/0.15/0.30/0.45/0.60) happens to be free of such values today, so this is latent rather than live — and it is faithful legacy parity (`9143705:MMM-SPCOutlook.js:546-548` did the same).
+
+**Convention violated:** this file's own numeric-rendering discipline — `proximityBadge` formats with `weight.toFixed(1)` rather than raw concatenation for exactly this reason.
+
+**Fix (recommend):** `Math.round(100 * detail.torRisk)` at all three sites (SPC's ladder is integral in percent, so rounding is lossless for every real value). This is a display change, so it belongs on the parity checklist as a deliberate deviation rather than being slipped in silently.
 
 ---
 
