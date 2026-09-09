@@ -12882,7 +12882,23 @@ const scenarios = [
       // (b) The same malformed array under an HONEST summary is simply a quiet poll: the
       // entry was never renderable content, so there is nothing for either qualifier to
       // describe.
+      //
+      // 19-REVIEW iteration-4 WR-01: this part used to leave `summary.anyHazard` at its
+      // `unifiedPayload` default of false, so it was answered by the confident short-circuit
+      // at MMM-SPCOutlook.js:1090 and never reached the contentMarker ladder at all —
+      // `enabledAdvisories`, `advisoryEntryDisplayable` and the three-way split were never
+      // consulted. It passed for the wrong reason: under this scenario's own stated mutation
+      // only part (a) went red, while (b) read as though it carried signal about the advisory
+      // predicate. A wholly elapsed band entry is the cheapest way to set `anyHazard`
+      // honestly without adding renderable content — the BL-01 carve-out then makes the
+      // ladder, not the short-circuit, answer this payload.
       const honest = unifiedPayload({ advisories: { spcMD: [null, {}], mpd: [] } });
+      honest.windowBand = [{
+        label: "Hazardous Heat", color: "a80000", mapped: true,
+        startDate: "2026-08-01", endDate: "2026-08-02", offsetStart: -3, offsetEnd: -1
+      }];
+      honest.summary.anyHazard = true;
+      honest.summary.bandDiagnostics = { windowBandCount: 1, advisoryCount: 0 };
       const honestRendered = renderDom(frontend, { config, spcrisk: honest });
       if (honestRendered !== "No Hazards Forecast") {
         throw new Error(
