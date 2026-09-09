@@ -13907,6 +13907,111 @@ const scenarios = [
     }
   },
   {
+    // 19-REVIEW iteration-4 WR-02: WR-04 (iteration 2) made the winner/co-winner rows
+    // resilient to an unmapped dimension whose payload string overruns the 13-char field —
+    // `blankDimensionField` pads to `dimensionField.length`, the group's OWN rendered width —
+    // but the `also:` competitor rows two blocks below still derived their indent from the
+    // nominal DIMENSION_FIELD_WIDTH. For a mapped dimension the two agree, which is why every
+    // existing detail probe (all of which use mapped dimensions) stayed green; for an unmapped
+    // pass-through dimension (a shipped path, 18 D-07) the winner's em dash moved right while
+    // its own competitor stayed at column 38, detaching the suppressed row from the block it
+    // belongs to. This scenario asserts the two em dashes share a column, which is the
+    // invariant both indent rules exist to hold.
+    // Mutation to prove RED: restore `" ".repeat(2 + DIMENSION_FIELD_WIDTH + 2)` for
+    // alsoIndent.
+    name: "wr02-also-rows-column-with-the-winner-row-under-an-unmapped-dimension",
+    run: async (_helper) => {
+      const frontend = loadFrontendModule();
+      const config = {
+        lat: PROBE_LAT, lon: PROBE_LON, extended: false, updateInterval: 60,
+        proximityWeighting: false, dayReportDetail: true,
+        showHazardsOutlook: true, showWinterImpact: true
+      };
+      // Plain text of each rendered row: the column contract is a property of the CHARACTER
+      // stream (every sub-row is white-space:pre-wrap monospace), so the colour spans have to
+      // come off before anything is measured.
+      const plainRows = (markup) => markup
+        .split("<br/>")
+        .map((row) => row.replace(/<[^>]*>/g, ""));
+      const emDashColumn = (rows, needle) => {
+        const row = rows.find((r) => r.includes(needle));
+        if (row === undefined) return null;
+        return row.indexOf("—");
+      };
+
+      // A >13-character unmapped dimension: `lookup` falls back to the payload's own string,
+      // which `truncateHazardLabel(...).padEnd(DIMENSION_FIELD_WIDTH)` leaves at its full
+      // 29 characters because padEnd only pads UP.
+      const unmappedDimension = "unmapped-future-dimension-xyz";
+      const overrun = unifiedPayload({});
+      overrun.days["2"].hazards = [
+        { dimension: unmappedDimension, source: "wpc-wssi", label: "Winner",
+          text: "Winner Hazard", value: 3, color: "e69138", suppressedBy: null },
+        { dimension: unmappedDimension, source: "wpc-hazards", label: "Comp",
+          text: "Competitor", value: null, color: "63be7b", suppressedBy: "wpc-wssi" }
+      ];
+      overrun.summary.anyHazard = true;
+      overrun.summary.activeDays = [2];
+      const overrunRendered = renderDom(frontend, { config, spcrisk: overrun });
+
+      // Vacuity guard: both row kinds actually rendered, and the dimension survived whole.
+      const overrunRows = plainRows(overrunRendered);
+      if (!overrunRendered.includes("also: ") || !overrunRendered.includes("— WSSI")) {
+        throw new Error(
+          `vacuity guard failed: expected a winner sub-row and an also: row, ` +
+          `got: ${overrunRendered}`
+        );
+      }
+      const overrunWinnerColumn = emDashColumn(overrunRows, unmappedDimension + "Winner Hazard");
+      const overrunAlsoColumn = emDashColumn(overrunRows, "also: Competitor");
+      if (overrunWinnerColumn === null || overrunAlsoColumn === null ||
+          overrunWinnerColumn < 0 || overrunAlsoColumn < 0) {
+        throw new Error(
+          `vacuity guard failed: both sub-rows must carry a source attribution em dash, ` +
+          `got winner=${overrunWinnerColumn} also=${overrunAlsoColumn}: ${overrunRendered}`
+        );
+      }
+      if (overrunAlsoColumn !== overrunWinnerColumn) {
+        throw new Error(
+          `an also: row must land its em dash on the winner row's own column even when the ` +
+          `dimension string overruns the field — winner=${overrunWinnerColumn}, ` +
+          `also=${overrunAlsoColumn}: ${overrunRendered}`
+        );
+      }
+
+      // Control: a MAPPED dimension (12 chars at most, so the field pads out to exactly
+      // DIMENSION_FIELD_WIDTH) must be unaffected by the change — the two indent rules agree
+      // for every mapped group, and this pins that the fix did not shift the ordinary case.
+      const mapped = unifiedPayload({});
+      mapped.days["2"].hazards = [
+        { dimension: "wind", source: "wpc-wssi", label: "Winner",
+          text: "Winner Hazard", value: 3, color: "e69138", suppressedBy: null },
+        { dimension: "wind", source: "wpc-hazards", label: "Comp",
+          text: "Competitor", value: null, color: "63be7b", suppressedBy: "wpc-wssi" }
+      ];
+      mapped.summary.anyHazard = true;
+      mapped.summary.activeDays = [2];
+      const mappedRendered = renderDom(frontend, { config, spcrisk: mapped });
+      const mappedRows = plainRows(mappedRendered);
+      // The needle carries the padded dimension field so it selects the winner SUB-ROW rather
+      // than the compact header above it, which repeats the same label with no em dash.
+      const mappedWinnerColumn = emDashColumn(mappedRows, "Wind         Winner Hazard");
+      const mappedAlsoColumn = emDashColumn(mappedRows, "also: Competitor");
+      if (mappedWinnerColumn === null || mappedAlsoColumn === null) {
+        throw new Error(
+          `control vacuity guard failed: expected both sub-rows for a mapped dimension, ` +
+          `got: ${mappedRendered}`
+        );
+      }
+      if (mappedAlsoColumn !== mappedWinnerColumn) {
+        throw new Error(
+          `control: a mapped dimension's also: row must still column with its winner — ` +
+          `winner=${mappedWinnerColumn}, also=${mappedAlsoColumn}: ${mappedRendered}`
+        );
+      }
+    }
+  },
+  {
     // 19-REVIEW CR-02: the showMinorHeat display floor is a property of the SHARED display
     // predicate, so an expanded day cannot contradict its own compact header. Before the fix,
     // daySurvivors applied the floor and renderDaySubRows re-read `day.hazards` and applied

@@ -649,9 +649,20 @@
           if (augment.subLineHtml) html += augment.subLineHtml;
         }
         for (const competitor of group.competitors) {
-          // 17 literal spaces (2 + the dimension field width + 2 more), derived rather than
-          // hardcoded so it stays in step with DIMENSION_FIELD_WIDTH above.
-          const alsoIndent = " ".repeat(2 + DIMENSION_FIELD_WIDTH + 2);
+          // 17 literal spaces for a mapped dimension (2 + the dimension field width + 2
+          // more), derived rather than hardcoded so it stays in step with the field above.
+          //
+          // 19-REVIEW iteration-4 WR-02: measured against `dimensionField.length` — the
+          // group's OWN rendered width — rather than the nominal DIMENSION_FIELD_WIDTH, for
+          // exactly the reason `blankDimensionField` gives above. `dimensionField` is a
+          // truncateHazardLabel result (up to 60 chars) that is only padded UP to
+          // DIMENSION_FIELD_WIDTH, so an unmapped dimension whose payload string overruns the
+          // field (a shipped path, 18 D-07) pushed the winner row's em dash right while its
+          // own `also:` rows stayed at column 38 — detaching the suppressed competitor from
+          // the block it belongs to. Both row kinds now derive the indent from one quantity,
+          // so they cannot disagree. `alsoLabelFieldWidth` below needs no change: it is
+          // measured against the LABEL field, which is the same width on both rows.
+          const alsoIndent = " ".repeat(2 + dimensionField.length + 2);
           // The label field's remaining width once "also: " (6 chars) has already
           // consumed part of it — derived so the em dash still lands on the winner row's
           // own column regardless of DETAIL_LABEL_FIELD_WIDTH/DIMENSION_FIELD_WIDTH.
