@@ -2,201 +2,217 @@
 phase: 19-unified-day-report-getdom-rewrite
 fixed_at: 2026-09-08T00:00:00Z
 review_path: .planning/phases/19-unified-day-report-getdom-rewrite/19-REVIEW.md
-iteration: 2
-findings_in_scope: 9
-fixed: 8
-skipped: 1
-status: partial
+iteration: 3
+findings_in_scope: 10
+fixed: 10
+skipped: 0
+status: all_fixed
 ---
 
-# Phase 19: Code Review Fix Report
+# Phase 19: Code Review Fix Report (iteration 3)
 
 **Fixed at:** 2026-09-08
 **Source review:** `.planning/phases/19-unified-day-report-getdom-rewrite/19-REVIEW.md`
-**Iteration:** 2 (fix pass for the second review; `fix_scope: critical_warning`)
+**Iteration:** 3
 
 **Summary:**
-- Findings in scope: 9 (CR-01, CR-02, CR-03, WR-01 … WR-06)
-- Fixed: 8
-- Skipped: 1 (WR-05 — needs a D-16 payload-contract decision, see below)
+- Findings in scope: 10 (3 BLOCKER + 7 WARNING; the 4 Info findings are out of `critical_warning` scope)
+- Fixed: 10
+- Skipped: 0
 
-**Harness:** `scripts/probe-payload-resilience.js` — **173 passed, 0 failed, 0 skipped**
-(168 at the start of this pass; +5 new scenarios). Every fix below was mutation-verified RED
-before being committed: the mutation is stated in each new scenario's own header comment and the
-RED transcript was produced by reverting the fix in place and re-running the suite.
+**Harness:** `node scripts/probe-payload-resilience.js` → `181 passed, 0 failed, 0 skipped`
+(was `173 passed` at review time; 8 new scenarios, 5 existing scenarios extended in place).
+Every fix was mutation-verified RED by reverting it in place and re-running, and the mutation
+is named in the source comment or the scenario comment so the next reader can repeat it.
+
+---
 
 ## Fixed Issues
 
-### CR-01: The D-08 proximity-only day row is unreachable against any real payload
+### BL-01: the CR-02 carve-out reopens the confident-all-clear-over-a-contradicting-summary hole
 
 **Files modified:** `MMM-SPCOutlook.js`, `scripts/probe-payload-resilience.js`
-**Commit:** `806e7bb`
-**Applied fix:** Added `anyProximityOnlyDay()` beside `dayProximityOnly` and a
-`&& !anyProximityOnlyDay()` term to the no-risk short-circuit. The helper loops the payload's own
-14 day keys through `dayProximityOnly` — the *same* predicate the render branch consults — so the
-gate and the row it was starving cannot drift apart the way the pre-19
-`hasAnyRenderableProximity` terms did when they were dropped.
+**Commit:** `5efe2ce`
 
-Probe work: `rpt02-proximity-only-day-renders-badge-alone-with-a-two-space-gap` no longer forces
-`summary.anyHazard = true` (it now asserts the fixture's own `false`, i.e. what
-`_buildGridSummary` really emits for a quiet day carrying only a proximity subtree), its
-below-floor control now also pins that a sub-noise-floor proximity must NOT hold the
-short-circuit open, and a new
-`cr01-proximity-only-day-survives-the-no-risk-short-circuit` covers the gate directly with
-`proximityWeighting:false` and stale-payload controls. Both fail RED without the gate term.
+The iteration-2 `rawWindowBandCount === 0` term disabled the disagreement check for every
+reason `anyHazard` can be true, not just the wholly-elapsed-band reason it documents. It is
+replaced by `bandIsTheOnlySummaryTerm`, which excuses `anyHazard` only when the band is the
+only term that could have set it — reading the summary's own published `activeDays` and
+`bandDiagnostics.advisoryCount` (D-16 fields, no new payload contract).
 
-### CR-02: A confident all-clear is rendered over a payload that says a hazard exists
+**One term added beyond the review's suggestion:** `gridReadable`. The carve-out asserts "the
+render is empty for a structural reason", which is only assertable when the grid this render
+walked was readable at all. With the review's term alone, the review's own row 1 and row 2
+(`days: null` / all-14-corrupt, each beside an elapsed band) would have stayed CONFIDENT,
+because a fixture whose summary reports `activeDays: []` does not claim a day hazard — the
+band really would be the only summary term. `gridReadable` is what makes those two rows red:
+`anyUngatedContent()`'s day loop reports "nothing" from evidence it could not read, the exact
+circularity CR-02's own note names, so a band entry must not license a confident all-clear
+over it.
 
-**Files modified:** `MMM-SPCOutlook.js`, `scripts/probe-payload-resilience.js`
-**Commit:** `135c7a0`
-**Applied fix:** Added `summaryContradictsRender` as a term of `unconfirmed` at the
-`contentMarker` fallback, keeping case 1's documented precedence.
+The review's row 3 (suppressed-only day + band) is red for a different and more precise
+reason: its composed fixture carries `activeDays: [3]`, which is what `_buildGridSummary`
+publishes alongside a day-derived `anyHazard`. A summary naming an active day over a grid with
+no survivor is a genuine disagreement; the same grid under `activeDays: []` is not one, and is
+deliberately left confident.
 
-**Deviation from the suggested patch, deliberate:** the review's proposed term
-(`summaryOk && summary.anyHazard === true && !anyUngatedContent()`) fires on a payload the
-backend emits routinely and correctly — `_buildGridSummary`'s `windowBandCount` is a *raw*
-`windowBand.length` while `renderableWindowEntries` drops wholly-elapsed windows with the display
-gates OFF too. Applying it verbatim turned the existing
-`wr01-empty-render-...`'s elapsed-window assertion RED, i.e. it would have made a healthy poll
-render "(unconfirmed)". The committed term therefore carries a `rawWindowBandCount === 0` carve-out
-(any *renderable* band entry would have made `anyUngatedContent()` true and never reached the
-line), which preserves both reviewer reproductions and the documented structural rule. Both halves
-are mutation-verified: dropping the term loses the reviewer's cases; dropping the carve-out turns
-the elapsed-window assertions RED.
+Probe `cr02-...` gains cases (h)-(l): the elapsed band composed with `days: null`, corrupt
+days, the summary-names-an-active-day contradiction, and the advisory term — plus (l), a
+healthy fourteen-quiet-day poll carrying one elapsed band entry, which must stay confident.
 
-Also corrected one fixture: `wr01-...`'s suppressed-only day hand-set `anyHazard: true`, which no
-backend can emit (the day scan skips `suppressedBy !== null` entries). It now uses the derivation's
-own `false`; the `true` variant is proved as a genuine disagreement in the new scenario.
+Mutation-verified RED **three** ways, both directions pinned as required:
+- restore `rawWindowBandCount === 0` (over-broad) → (h) goes confident
+- drop the carve-out entirely (the pre-iteration-2 form) → (e) and (l) slander a healthy poll
+- neutralize `gridReadable` → (h) goes confident
 
-New scenario `cr02-a-summary-that-contradicts-the-render-is-never-a-confident-all-clear` covers
-seven cases: null grid, 14-corrupt-day grid, a WR-01 case-2 control, a case-3 control, the elapsed
-band, suppressed-only, and case-1 precedence with the stale badge.
-
-### CR-03: Payload-keyed prototype-chain lookups
+### BL-02: two co-equal survivors on one dimension render as winner + `also:` competitor
 
 **Files modified:** `MMM-SPCOutlook.js`, `scripts/probe-payload-resilience.js`
-**Commit:** `c22cd59`
-**Applied fix:** One `lookup(map, key, fallback)` helper (`Object.prototype.hasOwnProperty.call`),
-applied at all four sites exactly as the review specified — `SOURCE_SHORT_NAMES` in
-`detailSourceAttribution` (now escaping unconditionally rather than only on the fallback branch),
-`DIMENSION_LABELS` in both the detail dimension field and the compact segment, and
-`DAY_SOURCE_FLAGS` in `hazardEntryDisplayable` (fallback `null`).
+**Commit:** `ae26a99`
 
-New scenario `cr03-prototype-chain-keys-in-a-payload-neither-throw-nor-hide-an-entry` feeds
-`__proto__`, `constructor`, `toString`, `hasOwnProperty` and `valueOf` as both `dimension` and
-`source`, asserting (i) no throw, (ii) the entry still renders and the display does not blame the
-user's settings for it, (iii) no function body reaches the markup, (iv) `assertInertMarkup`
-passes; plus a hostile-content case and a real-keys control. **Each of the four call sites was
-mutation-verified RED independently.**
+Winners are now distinguished by what the payload says (`suppressedBy === null`) rather than
+by arrival order; a second survivor on the same dimension becomes a co-winner and renders as a
+full winner-shaped row with the dimension field blank (padded to the first row's own rendered
+width, so an over-long unmapped dimension string still columns). `also:` is reserved for
+`suppressedBy !== null`. `convectiveDetailAugment` moved inside the row loop so it is read
+per entry rather than once per group — its whole input is `entry.detail`.
 
-### WR-01: `showHazardsOutlook` is read three different ways
+Probe `bl02-...`: two `wpc-hazards` winter labels on one day, asserting both render, no
+`also:` is claimed, the dimension label is written once, the co-winner's field is blank and
+column-aligned, and the compact header agrees — plus a control that a genuinely suppressed
+competitor still renders `also:`. Mutation-verified RED.
 
-**Files modified:** `MMM-SPCOutlook.js`, `scripts/probe-payload-resilience.js`
-**Commit:** `352285c`
-**Applied fix:** `if (this.config.showHazardsOutlook === true)` at the window-band gate and
-`this.config[ADVISORY_SOURCES[key]] !== true` in `enabledAdvisories`, matching
-`hazardEntryDisplayable`'s stated CFG-01 convention.
+### BL-03: the window band renders `D0` / negative day numbers for a partially-elapsed window
 
-`cr03-day-rows-honor-every-per-product-toggle` case (d) extended: under
-`showHazardsOutlook: "yes"` / `showSPCMD: "yes"` the day row, the "Extended Hazards:" band and the
-advisory sub-section must ALL be hidden, with a boolean control proving the fixture renders every
-half. Each gate mutation-verified RED separately.
+**Files modified:** `MMM-SPCOutlook.js`, `scripts/probe-payload-resilience.js`,
+`.planning/phases/19-unified-day-report-getdom-rewrite/19-UI-SPEC.md`
+**Commit:** `11d8e4e`
 
-### WR-02: The compact line and its own detail sub-row disagree about an entry with no label
+A window that started in the past and has not ended now renders open at the low end
+(`through Fri (→D4)`) rather than clamped. Clamping alone — the review's literal suggestion —
+would have paired a PAST start weekday with a present-day offset, reproducing the same
+two-halves-disagreeing shape one level down; the elapsed portion is not forecastable content,
+so it is not advertised at all. `off()` also gains the `Math.max(1, ...)` floor, documented as
+second-line defence rather than as the fix, so no future call site can reintroduce a `D0`.
 
-**Files modified:** `MMM-SPCOutlook.js`, `scripts/probe-payload-resilience.js`
-**Commit:** `016c9ae`
-**Applied fix:** Hoisted `entryText(h)` = `String((h && (h.text || h.label)) || "")` and routed
-the compact segment, the detail winner row and the `also:` competitor row through it.
+UI-SPEC's band section records the new offset form (its previous text said the formatting was
+"unchanged from today", which the fix would otherwise have silently falsified).
 
-**Extension beyond the suggested patch:** the review said "skip the entry entirely when it yields
-`""`" at the render sites; the skip is instead implemented once *structurally* in
-`hazardEntryDisplayable`, above the `applyDisplayGates === false` escape hatch. This is the file's
-own architecture ("the ONE definition of may this hazard entry be shown at all") and it also keeps
-the CR-02 discriminator honest — a textless entry is not content the user's settings hid, so it
-must not read as "(filtered by settings)". Consequence: a textless entry now produces no segment,
-no day row and no sub-row in either mode, rather than a day row with an empty segment.
+Probe `bl03-...`: `offsetStart: -1, offsetEnd: 3` plus start-today and single-day controls
+proving the non-negative formatting is untouched. Mutation-verified RED.
 
-New scenario `wr02-an-entry-with-no-text-renders-nothing-rather-than-the-word-undefined` covers
-compact, detail, a mixed day proving both modes agree entry-by-entry, a label-only vacuity guard
-and the empty-string case.
-
-### WR-03: Detail-mode vertical rhythm is driven by days that never render
+### WR-01: the window band renders the literal word `undefined` for a label-less entry
 
 **Files modified:** `MMM-SPCOutlook.js`, `scripts/probe-payload-resilience.js`
-**Commit:** `9dd0a97`
-**Applied fix:** Added `daySurvivors(d).length > 0` to the `autoExpand` scan, the review's second
-option — the same set the day loop below renders and expands. A proximity-only day is excluded for
-the same reason (it renders, but its `continue` means it never expands).
+**Commit:** `d77f680`
 
-New scenario `wr03-vertical-rhythm-follows-the-days-that-actually-render`: the gated case, a
-`showHeatRisk: true` control proving the rhythm IS applied when a day really expands, and a
-suppressed-only variant.
+`typeof entry.label === "string" && entry.label.length > 0` added to the shared
+`renderableWindowEntries` predicate, so the empty-render discriminator and the renderer keep
+agreeing about what the band holds. Probe `wr01-a-label-less-band-entry-...` covers a mixed
+band, a band whose only entry is label-less (no orphan heading, no false settings blame), and
+an empty-string label. Mutation-verified RED.
 
-### WR-04: The 60-char label bound still means two different things in the two modes
+### WR-02: an advisory entry with no `label` renders `undefined in effect.`
 
 **Files modified:** `MMM-SPCOutlook.js`, `scripts/probe-payload-resilience.js`
-**Commit:** `de24c21`
-**Applied fix:** Both sites now apply `truncateHazardLabel` to the entry's own text and compose
-prefix / proximity badge / padding around the truncated result. The unmapped-dimension passthrough
-is payload-controlled and unbounded, so it is truncated on its own account (T-16-20) rather than
-spending the label's budget — a no-op for a mapped dimension.
+**Commit:** `7e2a931`
 
-Two existing scenarios pinned the *defective* semantics and were corrected, not worked around:
-`wr02-unified-compact-segment-...` expected 55 A's (55 + the 5-char "Wind " prefix = the old,
-wrong composition) and now expects 60, with a new cross-mode assertion that both modes cut the
-same label at the same offset and a long-unmapped-dimension case;
-`wr04-detail-label-truncation-...` counted 2 truncated rows and now counts 3 — the compact header
-agreeing with its own sub-rows is the point of the finding — plus a new assertion that the
-proximity badge survives a truncated label intact. Both call sites mutation-verified RED.
+"Has a usable label" extracted into a shared `advisoryEntryDisplayable` predicate and read by
+the render loop, so the guard tests the field it is about. Probe `wr02-a-labelless-advisory-...`
+covers `{}`, empty-string and non-string labels, with a well-formed control (label plus hazard
+type suffix). Mutation-verified RED.
 
-### WR-06: The probe runner owns helper isolation but not log isolation
+### WR-03: a malformed advisory array is reported to the user as `(filtered by settings)`
 
-**Files modified:** `scripts/probe-payload-resilience.js`, `scripts/probe-lib/module-stubs.js`
-**Commit:** `b047ac9`
-**Applied fix:** (a) `resetLogs()` now runs immediately after `resetHelper(helper)` in the runner
-loop, and `module-stubs.js`'s stale comment ("every scenario calls resetLogs() after
-resetHelper()") is replaced with the contract that is now true. (b) the per-scenario catch prints
-`err && err.stack ? err.stack : err`, consistent with `main().catch` two lines below.
+**Files modified:** `MMM-SPCOutlook.js`, `scripts/probe-payload-resilience.js`
+**Commit:** `7e8e62f`
 
-Verified empirically rather than by a new scenario (the runner cannot assert on itself from inside
-a scenario): (a) by temporarily asserting `logCalls.length === 0` at the top of every scenario
-across a full 173-scenario run; (b) by injecting a `TypeError` into `getDom()` and confirming the
-failure output now names the `getDom` frame and its call site.
+`enabledAdvisories` now filters through the same `advisoryEntryDisplayable` the render loop
+applies — one predicate, both readings. `advisories: { spcMD: [null] }` under a summary that
+counts it is now `(unconfirmed)` (a payload/summary disagreement) rather than blaming the
+user's config; under an honest summary it is simply a quiet poll. Probe `wr03-...` pins all
+three states including the control that a real advisory hidden by this instance's own setting
+still says `(filtered by settings)`. Mutation-verified RED.
+
+### WR-04: a suppressed `dimension: null` entry is silently dropped in detail mode
+
+**Files modified:** `MMM-SPCOutlook.js`, `scripts/probe-payload-resilience.js`
+**Commit:** `ec52f0b`
+
+`if (!group.winner) continue;` replaced with promotion of the first competitor. Nothing is
+misrepresented by promotion: `suppressedBy` is rendered nowhere (an `also:` row does not name
+its suppressor either), so it changes only whether the entry is SEEN — and D-05 already shows
+suppressed entries in detail mode. Probe `wr04-...` pins the containment posture with a
+`some-future-source` unmapped entry beside a survivor. Mutation-verified RED.
+
+### WR-05: a non-string upstream `LABEL` takes the whole poll to `{ error }`
+
+**Files modified:** `node_helper.js`, `scripts/probe-payload-resilience.js`
+**Commit:** `aa036ee`
+
+Both halves the review offered, deliberately: coerced at the boundary
+(`f.properties.LABEL == null ? "" : String(f.properties.LABEL)`) as the fix, and
+`String(a.label).localeCompare(String(b.label))` as second-line defence for the several other
+entry paths into `day.hazards` that never pass through `extractPolygons`.
+
+Probe `wr05-...` calls the two production methods directly (the precedent
+`rpt02-autoexpand-...` set): `extractPolygons` with a numeric `LABEL`, which the probability
+layers' own `parseFloat(label)` toValue admits without complaint, and
+`_resolveGridDayPrecedence` on a day carrying **two** numeric labels — one is not enough,
+because the engine may call the comparator as `(b, a)` and a lone numeric label that lands in
+`b` never touches `.localeCompare`. Each half mutation-verified RED independently.
+
+### WR-06: the frontend probe's DOM stub cannot observe `innerHTML` re-serialization
+
+**Files modified:** `scripts/probe-lib/module-stubs.js`,
+`.planning/phases/19-unified-day-report-getdom-rewrite/19-PARITY-CHECKLIST.md`
+**Commit:** `ea8bf90`
+
+Documentation-only, as the review scoped it. `assertInertMarkup`'s comment now names BOTH
+limitations (lexical rather than parsed, and scanning a concatenated string a real node would
+have re-parsed and re-serialized on every `+=`), and Probe Coverage gains row 41 as
+`MANUAL ONLY`. The "three rows marked MANUAL ONLY" cross-reference further down the checklist
+was updated in the same commit so the document does not contradict itself.
+
+### WR-07: the poll interval timer is never retained or cleared
+
+**Files modified:** `MMM-SPCOutlook.js`, `scripts/probe-lib/module-stubs.js`,
+`scripts/probe-payload-resilience.js`
+**Commit:** `bd28b32`
+
+`_armPollTimer` / `_clearPollTimer` are the single sites that create and destroy the handle,
+with `suspend`/`resume` on top; arming is idempotent, so a double `resume` (which MagicMirror
+is free to deliver) cannot leave two timers polling the same endpoints.
+
+The probe's DOM stub had `setInterval: () => 0` and no `clearInterval` at all — it could not
+express the state this fix is about, so it gained an observable pair backed by a
+per-loaded-module `Map` exposed as a non-enumerable `frontend._probeLiveTimers`. Probe
+`wr07-...` covers start / suspend / resume / double-resume plus the re-armed timer's interval
+and callback. Mutation-verified RED for a discarded handle and for non-idempotent arming.
+
+---
 
 ## Skipped Issues
 
-### WR-05: `enabledSourceCount` is now dead payload weight with a probe pinning a value nothing reads
+None — all ten in-scope findings were fixed.
 
-**File:** `node_helper.js:3717-3741`; `scripts/probe-payload-resilience.js`
-(`rpt05-no-products-enabled-branch-is-retired-and-its-count-has-a-floor-of-two`)
-**Reason:** skipped — every available option is a payload-contract or product decision, not a code
-correctness fix. The review's own preferred remedy is to "open a D-16 contract amendment to drop
-the field", and D-16 explicitly locks the seven flat summary fields; removing one from a locked
-contract is an operator decision. The stated alternative (re-deriving the count from
-`SOURCE_IDS.length` minus disabled toggles) changes the field's meaning while keeping it unread,
-which is not obviously an improvement, and the third suggestion (giving `reportingSourceCount` the
-retired branch's discriminator role) is a new user-facing empty state — new UI in a phase framed as
-display-only, and directly adjacent to the operator decision that retired the branch in the first
-place.
+For the record, matching the previous report's disclosure: the iteration-2 `WR-05`
+(`enabledSourceCount`) was skipped pending a D-16 contract decision and the reviewer confirmed
+that skip was correct and did not re-report it. The `WR-05` fixed above is a **different**
+finding that reuses the identifier (`extractPolygons` LABEL coercion). The `enabledSourceCount`
+question remains where the operator left it.
 
-Nothing here is incorrect at runtime: the field is emitted, documented as diagnostic-only, and its
-probe currently pins a real product fact (the always-on core cannot be disabled). The finding is
-about dead weight and a probe that documents rather than tests, both of which are safe to carry
-until the D-16 amendment is decided.
+## Not in scope
 
-**Recommended next step:** decide the D-16 amendment; if the field is dropped, the computation,
-its 25-line justification comment in `_buildGridSummary` and the `rpt05-...-floor-of-two` scenario
-should all go in one commit.
-
-## Not in scope (carried forward)
-
-IN-01 through IN-05 were not attempted — `fix_scope: critical_warning`. Note that IN-04
-(`truncateHazardLabel` can split a surrogate pair) is now touched by WR-04's changes at both call
-sites and remains the cheapest of the five; the WR-04 commit did not change the slicing behaviour.
+IN-01 (`DIMENSION_ORDER`'s vacuous permutation assertion), IN-02 (`hasConvectiveDetail`'s
+name), IN-03 (`buildWpcHazardsMap`'s one-directional validation) and IN-04
+(`anyUngatedContent()` evaluated twice) are Info-severity and outside this pass's
+`critical_warning` scope. None were touched. IN-04 in particular is now adjacent to changed
+code (the BL-01 rewrite sits between its two call sites), so a future pass should re-read it
+rather than assuming the review text still describes the lines verbatim.
 
 ---
 
 _Fixed: 2026-09-08_
 _Fixer: Claude (gsd-code-fixer)_
-_Iteration: 2_
+_Iteration: 3_
