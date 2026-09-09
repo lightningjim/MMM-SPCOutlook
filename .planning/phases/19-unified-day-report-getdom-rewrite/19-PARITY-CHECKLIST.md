@@ -177,6 +177,7 @@ Every scenario name cited below was verified present via `grep -n "name: \"<scen
 | 38 | `hazardsLabelDisplayable` applied to day rows | `cr04-day-rows-apply-the-same-label-filter-as-the-window-band` (drought label suppressed at the default with a `showDrought: true` control; the exclusion list unconditional even under `showDrought: true`; case/whitespace-folded variants cannot walk past it; a `wpc-ero` entry carrying a listed label still renders, pinning the fail-safe scope) |
 | 39 | Three-way empty-render split | `wr01-empty-render-distinguishes-unconfirmed-from-filtered-from-genuinely-clear` (all three cases; case-1-outranks-case-2 on the SAME payload made stale; malformed-summary variant; the band, advisory, `showMinorHeat` and `showDrought` gates each producing case 2 on their own; and two negative controls proving structurally-unrenderable content stays case 3), `wr01-gated-and-ungated-readings-share-one-predicate` (the structural half — exactly one parameterized definition of each gate-bearing predicate, exactly three `applyDisplayGates:false` arguments and all of them inside the discriminator, so the ungated reading can never become a second copy of the survivor logic) |
 | 40 | `enabledSourceCount` retirement | `rpt05-no-products-enabled-branch-is-retired-and-its-count-has-a-floor-of-two` (replaces the deleted `rpt05-no-products-enabled-is-not-an-all-clear`, which asserted an impossible payload state and therefore read as proof of a branch that could never fire). Pins both halves: the backend still emits the D-16 field and its floor really is 2 with every configurable flag off, and the frontend branch is gone, inert to the count, and absent from the source. Mutation-verified RED by making `spc-fire` configurable and by reinstating the branch. |
+| 41 | `innerHTML` re-serialization round trip | `MANUAL ONLY` — 19-REVIEW WR-06. `document.createElement` in `scripts/probe-lib/module-stubs.js` returns a plain `{ innerHTML: "", textContent: "", style: {} }` bag, so getDom's ~15 `wrapper.innerHTML +=` sites are string CONCATENATION. A real DOM node re-parses and re-serializes the whole accumulated markup on every assignment: unbalanced markup is auto-closed, attributes are normalized and reordered, entities are rewritten. `assertInertMarkup` is a lexical scan over the concatenated string, so it validates something the browser never sees — a difference in the resulting tree is structurally unobservable here. This is a SECOND limitation beside the already-disclosed "lexical rather than parsed tree" one, and it is the reason `assertInertMarkup` is a backstop for the escaping class rather than a proof of it. Closing it means a real parse (a `linkedom`/`jsdom` round trip in one dedicated scenario), which the harness's core-`vm`/`fs`-only rule currently forbids; until then it belongs on the operator's manual worklist alongside rows 1, 2 and 8. |
 
 ### Carried-forward zero-RED / weakened-proof disclosures (19-02 through 19-07)
 
@@ -333,9 +334,12 @@ session. This is signed off anyway, for reasons stated directly rather than assu
    exercised the renderer end-to-end against real remote data without a single discrepancy.
 
    **Exception, stated rather than buried — rows 1, 2 and 8 have NO evidence from either leg.**
-   They are the three rows marked `MANUAL ONLY` in `## Probe Coverage` (no scenario can observe
+   They are three of the four rows marked `MANUAL ONLY` in `## Probe Coverage` — row 41
+   (19-REVIEW WR-06's `innerHTML` re-serialization gap) is the fourth and is not a behavior row
+   of the 35 but a disclosed limit on what the harness's evidence MEANS. (No scenario can observe
    them: nothing constructs an unset-`spcrisk` render, nothing constructs an `{error}` render, and
-   the harness stubs `moment` to a constant so the real `fromNow()` age string is unreachable) AND
+   the harness stubs `moment` to a constant so the real `fromNow()` age string is unreachable), AND
+   they are
    `NOT OBSERVABLE` in both run columns (`_stale` was never true this session, and neither the
    loading nor the error state was induced). For these three the honest statement is not "proven by
    the other leg" but "unproven, and known to be unproven." They are carried as their own deferred

@@ -320,6 +320,23 @@ const INERT_MARKUP_ALLOWLIST = [
 
 // Throws unless every `<...>` in `html` is one of the module's own tags. Called on every
 // render (see renderDom) so no scenario has to remember to ask.
+//
+// 19-REVIEW WR-06 — TWO stated limitations, not one:
+//
+//  1. It is a LEXICAL scan, not a parsed tree. It sees the tags a string contains; it does
+//     not see the DOM those tags would build.
+//  2. It scans a string the browser never sees. `document.createElement` here returns a
+//     plain `{ innerHTML: "" }` bag, so getDom's ~15 `wrapper.innerHTML +=` sites are string
+//     concatenation. A REAL node re-parses and re-serializes on every assignment: unbalanced
+//     markup is auto-closed, attributes are normalized and reordered, entities are rewritten,
+//     and the tree that results can differ from the concatenation this function inspects.
+//     The `+=` idiom re-parses the ENTIRE accumulated markup each time, so this is not a
+//     theoretical difference.
+//
+// Both are strictly weaker than parsing and strictly stronger than the per-scenario substring
+// checks this backstops. The gap belongs on 19-PARITY-CHECKLIST.md's Probe Coverage as a
+// MANUAL ONLY row; closing it properly means a real parse (a `linkedom`/`jsdom` round trip in
+// one dedicated scenario), which this harness's "core `vm`/`fs` only" rule currently forbids.
 function assertInertMarkup(html, label) {
   const tags = String(html).match(/<[^<>]*>?/g) || [];
   for (const tag of tags) {
