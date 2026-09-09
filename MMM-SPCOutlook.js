@@ -95,7 +95,44 @@
     Log.info("SPC-Outlook: GET_SPC_DATA - " + this.config.lat + "," + this.config.lon + "," + this.config.extended);
     this.sendSocketNotification("GET_SPC_DATA", this.buildRequestPayload());
     // Set an interval to update every updateInterval minutes (default 60).
-    setInterval(() => {this.sendSocketNotification("GET_SPC_DATA", this.buildRequestPayload());}, this.resolveUpdateInterval() * 60000);
+    // 19-REVIEW WR-07: the handle is RETAINED. MagicMirror keeps a hidden module's timers
+    // running, so a discarded handle meant a suspended instance polled www.spc.noaa.gov and
+    // mapservices.weather.noaa.gov forever with no way to stop it — `resolveUpdateInterval`
+    // bounds the poll RATE but nothing bounded its LIFETIME. `_armPollTimer` is the single
+    // site that creates one, so `start`, `suspend` and `resume` cannot drift apart about the
+    // interval or the notification they use.
+    this._armPollTimer();
+  },
+
+  // 19-REVIEW WR-07: idempotent by construction — clears any existing handle before arming,
+  // so a double `resume` (or a `resume` MagicMirror delivers without an intervening
+  // `suspend`) can never leave two timers polling the same endpoints.
+  _armPollTimer: function() {
+    this._clearPollTimer();
+    this._pollTimer = setInterval(
+      () => { this.sendSocketNotification("GET_SPC_DATA", this.buildRequestPayload()); },
+      this.resolveUpdateInterval() * 60000
+    );
+  },
+
+  _clearPollTimer: function() {
+    if (this._pollTimer !== null && this._pollTimer !== undefined) {
+      clearInterval(this._pollTimer);
+      this._pollTimer = null;
+    }
+  },
+
+  // MagicMirror calls suspend() when the module's region is hidden and resume() when it is
+  // shown again. Polling a remote endpoint for a display nobody is looking at is bandwidth
+  // and upstream load spent on nothing; `resume` re-arms rather than waiting out the
+  // remainder of an interval, so a re-shown module renders fresh data rather than whatever
+  // was last cached.
+  suspend: function() {
+    this._clearPollTimer();
+  },
+
+  resume: function() {
+    this._armPollTimer();
   },
 
   socketNotificationReceived: function(notification, payload) {

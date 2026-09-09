@@ -12627,6 +12627,75 @@ const scenarios = [
     }
   },
   {
+    // 19-REVIEW WR-07: `setInterval(...)`'s handle was discarded and the module implemented
+    // no `suspend`/`resume`. MagicMirror keeps a hidden module's timers alive, so a suspended
+    // instance kept polling www.spc.noaa.gov and mapservices.weather.noaa.gov forever.
+    // `resolveUpdateInterval` (added for the same class of concern) bounds the poll RATE;
+    // nothing bounded its LIFETIME.
+    // Mutations to prove RED: (1) discard the handle in `_armPollTimer`; (2) delete
+    // `suspend`; (3) make `_armPollTimer` skip its `_clearPollTimer()` call (part (d) fails).
+    name: "wr07-a-suspended-module-stops-polling-and-a-resumed-one-arms-exactly-one-timer",
+    run: async (_helper) => {
+      const frontend = loadFrontendModule();
+      const timers = frontend._probeLiveTimers;
+      timers.clear();
+      let polls = 0;
+      const ctx = Object.create(frontend);
+      ctx.config = {
+        lat: PROBE_LAT, lon: PROBE_LON, extended: false, updateInterval: 60,
+        proximityWeighting: false
+      };
+      ctx.sendSocketNotification = () => { polls += 1; };
+
+      // (a) start() arms exactly one poll timer, and it is retained.
+      ctx.start();
+      if (timers.size !== 1) {
+        throw new Error(`start() must arm exactly one poll timer, got ${timers.size}`);
+      }
+      if (polls !== 1) {
+        throw new Error(`start() must issue exactly one immediate poll, got ${polls}`);
+      }
+
+      // (b) suspend() actually stops it — the whole finding. A retained handle that is never
+      // cleared is no better than a discarded one.
+      if (typeof ctx.suspend !== "function") {
+        throw new Error("the module must implement suspend() — MagicMirror calls it when the region is hidden");
+      }
+      ctx.suspend();
+      if (timers.size !== 0) {
+        throw new Error(`suspend() must clear the poll timer, ${timers.size} still live`);
+      }
+
+      // (c) resume() re-arms one.
+      if (typeof ctx.resume !== "function") {
+        throw new Error("the module must implement resume() — a suspended module must be able to poll again");
+      }
+      ctx.resume();
+      if (timers.size !== 1) {
+        throw new Error(`resume() must re-arm exactly one poll timer, got ${timers.size}`);
+      }
+
+      // (d) A double resume — which MagicMirror is free to deliver — must not leave two
+      // timers polling the same endpoints at once.
+      ctx.resume();
+      if (timers.size !== 1) {
+        throw new Error(`a second resume() left ${timers.size} timers live; arming must be idempotent`);
+      }
+
+      // (e) The re-armed timer polls the same way start()'s did, at the resolved interval —
+      // so a resumed module is not quietly a different module.
+      const [{ fn, ms }] = Array.from(timers.values());
+      if (ms !== ctx.resolveUpdateInterval() * 60000) {
+        throw new Error(`the re-armed timer must use the resolved interval, got ${ms}`);
+      }
+      const before = polls;
+      fn();
+      if (polls !== before + 1) {
+        throw new Error("the re-armed timer's callback must issue a poll");
+      }
+    }
+  },
+  {
     // 19-REVIEW WR-05: `extractPolygons` did `f.properties.LABEL || ""` with no coercion, so
     // a numeric (or object) LABEL propagated verbatim into the grid hazard entries, where
     // `_resolveGridDayPrecedence`'s comparator calls `a.label.localeCompare(b.label)` and

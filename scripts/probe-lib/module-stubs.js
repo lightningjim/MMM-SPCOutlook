@@ -268,6 +268,12 @@ function resetHelper(helper) {
 function loadFrontendModule() {
   const source = fs.readFileSync(path.join(__dirname, "..", "..", "MMM-SPCOutlook.js"), "utf-8");
   let captured = null;
+  // 19-REVIEW WR-07: live timer handles for THIS loaded module, exposed to the scenario as
+  // `frontend._probeLiveTimers` below. Scoped to the load rather than module-global for the
+  // same reason resetHelper exists: one scenario's leaked state must never be another's
+  // evidence.
+  const liveTimers = new Map();
+  let nextTimerHandle = 1;
   const sandbox = {
     Module: { register: (_name, definition) => { captured = definition; } },
     Log: loggerStub,
@@ -291,7 +297,18 @@ function loadFrontendModule() {
     // resulting screen is aligned. Alignment, whitespace collapsing and column layout remain
     // MANUAL ONLY rows in 19-PARITY-CHECKLIST.md's Probe Coverage.
     document: { createElement: () => ({ innerHTML: "", textContent: "", style: {} }) },
-    setInterval: () => 0,
+    // 19-REVIEW WR-07: the timer pair is OBSERVABLE, not a `() => 0` no-op. The module's
+    // poll timer had no retained handle and no `suspend`/`resume`, so a hidden instance
+    // polled the SPC and NWS endpoints forever; a stub that cannot say whether a timer is
+    // live cannot pin the fix. Handles are opaque positive integers, as a browser's are, and
+    // `liveTimers` is per-loaded-module state (this closure), so one scenario's timers can
+    // never be counted by another.
+    setInterval: (fn, ms) => {
+      const handle = nextTimerHandle++;
+      liveTimers.set(handle, { fn, ms });
+      return handle;
+    },
+    clearInterval: (handle) => { liveTimers.delete(handle); },
     console
   };
   vm.createContext(sandbox);
@@ -299,6 +316,12 @@ function loadFrontendModule() {
   if (!captured) {
     throw new Error("MMM-SPCOutlook.js did not call Module.register — the frontend probe cannot run");
   }
+  // 19-REVIEW WR-07: read-only view of the sandbox's live timers, hung off the returned
+  // definition so a scenario needs no second import. Non-enumerable so it cannot be mistaken
+  // for one of the module's own fields by anything that walks the object.
+  Object.defineProperty(captured, "_probeLiveTimers", {
+    value: liveTimers, enumerable: false, writable: false
+  });
   return captured;
 }
 
