@@ -12624,6 +12624,43 @@ const scenarios = [
           `got: ${JSON.stringify(healthyBandedRendered)}`
         );
       }
+
+      // 19-REVIEW iteration-4 CR-01: the BL-01 carve-out above reads `summary.activeDays`
+      // and `summary.bandDiagnostics` DIRECTLY. Every other read on this branch is behind
+      // `summaryOk`, and `:1049-1054` promises in so many words that an absent or malformed
+      // summary can never throw out of getDom() — so the unguarded reads made that promise
+      // false for an ordinary shape: raw band non-empty, grid readable, nothing rendered.
+      // The 181 green scenarios missed it because no summary-less fixture was ever composed
+      // with a non-empty windowBand: the `summaryOk`-guarded fixtures all leave the band at
+      // its empty default, and every banded fixture above carries a full summary.
+      // Mutation to prove RED: drop the leading `summaryOk &&` from `bandIsTheOnlySummaryTerm`
+      // — (m) and (n) both throw `TypeError: Cannot read properties of undefined`.
+      //
+      // (m) The summary is gone entirely, beside the same elapsed band entry. Must render
+      // the unconfirmed string — an unassertable summary is exactly what `unconfirmed`'s own
+      // `!summaryOk` term already answers — rather than take the whole render down.
+      const summarylessBanded = unifiedPayload({ windowBand: [elapsedBandEntry()] });
+      delete summarylessBanded.summary;
+      const summarylessBandedRendered = renderDom(frontend, { config, spcrisk: summarylessBanded });
+      if (summarylessBandedRendered !== "No Hazards Forecast (unconfirmed)") {
+        throw new Error(
+          `an absent summary beside a non-empty windowBand must render the unconfirmed ` +
+          `string, not throw out of getDom(), got: ${JSON.stringify(summarylessBandedRendered)}`
+        );
+      }
+
+      // (n) ...and the malformed-but-present shape the same guard covers: a summary that is
+      // not an object at all. `summaryOk` is the only term that distinguishes it, so this
+      // pins the guard rather than the `delete`.
+      const scalarSummaryBanded = unifiedPayload({ windowBand: [elapsedBandEntry()] });
+      scalarSummaryBanded.summary = "not a summary";
+      const scalarSummaryBandedRendered = renderDom(frontend, { config, spcrisk: scalarSummaryBanded });
+      if (scalarSummaryBandedRendered !== "No Hazards Forecast (unconfirmed)") {
+        throw new Error(
+          `a non-object summary beside a non-empty windowBand must render the unconfirmed ` +
+          `string, not throw out of getDom(), got: ${JSON.stringify(scalarSummaryBandedRendered)}`
+        );
+      }
     }
   },
   {

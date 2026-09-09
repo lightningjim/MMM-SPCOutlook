@@ -1350,8 +1350,16 @@
           }
           return true;
         })();
+        // 19-REVIEW iteration-4 CR-01: `summaryOk` leads the conjunction. The three
+        // `summary.*` reads below are otherwise unguarded, and this branch is reached with
+        // an absent/malformed summary by construction (`summaryOk` false is precisely the
+        // case `:1049-1054` promises can never throw out of getDom()). It is also the
+        // semantically right leading term: the carve-out claims "the summary's own other
+        // two terms are empty", which is unassertable when there is no summary. Output is
+        // unchanged for every reachable payload — with `summaryOk` false, `unconfirmed`
+        // below is already true via its own `!summaryOk` term.
         const bandIsTheOnlySummaryTerm =
-          rawWindowBandCount > 0 && gridReadable &&
+          summaryOk && rawWindowBandCount > 0 && gridReadable &&
           Array.isArray(summary.activeDays) && summary.activeDays.length === 0 &&
           !!summary.bandDiagnostics && summary.bandDiagnostics.advisoryCount === 0;
         const summaryContradictsRender = summaryOk && summary.anyHazard === true &&
