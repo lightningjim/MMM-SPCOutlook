@@ -1215,6 +1215,25 @@
     // unaffected. Probe-invisible by construction (the DOM stub cannot observe alignment),
     // so this is a MANUAL ONLY row — see 19-PARITY-CHECKLIST.md "Probe Coverage".
     wrapper.style.textAlign = "left";
+    // UI-SPEC "Region Containment" (NEW, independent of the column-alignment mechanism above):
+    // MagicMirror's `.region` sets no width/max-width/overflow (main.css, 2.37.0, verified on
+    // the target Pi), so a position:absolute region with width:auto shrink-to-fits (CSS2.1
+    // §10.3.7) to this wrapper's max-content width — the only lever this module controls
+    // directly inside the region (RESEARCH.md Pitfall 2: the column fix above changes HOW a
+    // row's width is produced, not how WIDE it is, and does not alone stop the region growing).
+    // Derivation, traceable not magic: 2 (indent) + DIMENSION_FIELD_WIDTH(13) +
+    // DETAIL_LABEL_FIELD_WIDTH(23) + 3 (gap) + 1 (dash) + 1 (space) + 11 ("WPC Hazards") ≈ 54
+    // monospace chars × ~0.6em assumed advance = 32.4em, expressed as `rem` against
+    // MagicMirror's `--font-size:20px` root (≈650px today) — recompute from this formula, never
+    // nudge independently, if the two field widths change. `rem` not `px` (tracks the host's
+    // root font-size instead of silently drifting from it) and not `ch` (resolves per-ELEMENT,
+    // and this wrapper mixes monospace detail rows with proportional compact/band content, so a
+    // `ch` cap would be ambiguous). Applies to ALL content here, not only detail rows — the
+    // compact line's "wrap naturally" policy and the band both wrap under the same cap, now
+    // actually enforceable. [ASSUMED — pending the live measurement in plan 19.1-05]: neither
+    // jsdom nor linkedom implements CSS layout, so no probe scenario can confirm this value is
+    // wide enough for the common case or narrow enough to clear the deployed centre column.
+    wrapper.style.maxWidth = "32.4rem";
     // Phase 19 (RPT-05/RPT-06): summary is read defensively everywhere below — an absent or
     // malformed summary can never throw out of getDom(), and can never be trusted to assert
     // a confident empty state either. A malformed summary falls through both guarded empty-
