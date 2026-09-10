@@ -14487,6 +14487,158 @@ const scenarios = [
     }
   },
   {
+    // 19.1-04 Task 3 (BL-02 + iteration-4 WR-02, restated for the box mechanism): the first
+    // scenario to exercise all three row kinds (winner, co-winner, also: competitor) in ONE
+    // dimension group, proving the one derived quantity
+    // (Math.max(DIMENSION_FIELD_WIDTH, dimensionField.length)) that feeds the winner box, the
+    // BL-02 blank co-winner box and the also: spacer can never disagree. wr02-* covers the
+    // UNMAPPED overrun case; bl02-* covers two co-winners with no competitor; this scenario is
+    // the first to combine a co-winner AND a suppressed competitor on the same dimension.
+    // NONE of this scenario's assertions prove the region stopped overlapping the centre
+    // column — they prove the mechanism is in place and correctly derived. The overlap itself
+    // stays MANUAL ONLY (plan 19.1-05's job).
+    // Mutation to prove RED: replace Math.max(DIMENSION_FIELD_WIDTH, dimensionField.length)
+    // with DIMENSION_FIELD_WIDTH + 1 (assertion 5 goes RED on the concrete 13); separately,
+    // emit the co-winner's blank field as " ".repeat(DIMENSION_FIELD_WIDTH) instead of an
+    // empty box (assertion 1 goes RED).
+    name: "uat05-co-winner-and-also-rows-derive-their-boxes-from-the-groups-own-width",
+    run: async (_helper) => {
+      const frontend = loadFrontendModule();
+      const config = {
+        lat: PROBE_LAT, lon: PROBE_LON, extended: false, updateInterval: 60,
+        proximityWeighting: false, dayReportDetail: true,
+        showHazardsOutlook: true, showWinterImpact: true
+      };
+      const firstMinWidth = (str) => Number(((str || "").match(/min-width:(\d+)ch/) || [])[1]);
+
+      const buildPayload = (includeCoWinner) => {
+        const p = unifiedPayload({});
+        const hazards = [
+          { dimension: "winter", source: "wpc-hazards", label: "Heavy Snow", text: "Heavy Snow",
+            value: null, color: "6fa8dc", suppressedBy: null }
+        ];
+        if (includeCoWinner) {
+          hazards.push({
+            dimension: "winter", source: "wpc-hazards", label: "Freezing Rain", text: "Freezing Rain",
+            value: null, color: "6fa8dc", suppressedBy: null
+          });
+        }
+        hazards.push({
+          dimension: "winter", source: "wpc-wssi", label: "Comp", text: "Competitor",
+          value: null, color: "63be7b", suppressedBy: "wpc-hazards"
+        });
+        p.days["5"].hazards = hazards;
+        p.summary.anyHazard = true;
+        p.summary.activeDays = [5];
+        p.summary.dimensions = ["winter"];
+        return p;
+      };
+
+      const rendered = renderDom(frontend, { config, spcrisk: buildPayload(true) });
+      const rows = rendered.split("<br/>");
+      // Detail sub-rows carry a min-width box; the compact header line above them repeats the
+      // same entry text without one, so that term is required to select the sub-row and not
+      // its own compact header.
+      const winnerRow = rows.find((r) => r.includes("Heavy Snow") && r.includes("min-width:"));
+      const coWinnerRow = rows.find((r) => r.includes("Freezing Rain") && r.includes("min-width:") && !r.includes("also:"));
+      const alsoRow = rows.find((r) => r.includes("also:") && r.includes("Competitor"));
+
+      // Precondition guard: all three row kinds must have actually rendered, or every
+      // assertion below would be measuring something other than what it names.
+      const attributionCount = (rendered.match(/— WPC Hazards/g) || []).length;
+      if (!winnerRow || !coWinnerRow || !alsoRow || attributionCount !== 2) {
+        throw new Error(
+          `precondition failed: expected a winner row, a co-winner row and an also: row ` +
+          `(two "— WPC Hazards" attributions), got: ${rendered}`
+        );
+      }
+
+      // Assertion 1: BL-02 survives as an EMPTY box, not spaces — an immediately-closed
+      // min-width span, same floor width as the winner's own dimension box, no &nbsp;/&#160;.
+      const winnerDimWidth = firstMinWidth(winnerRow);
+      if (!coWinnerRow.includes(
+        `<span style="display:inline-block;min-width:${winnerDimWidth}ch"></span>` +
+        `<span style="display:inline-block;min-width:23ch">Freezing Rain`
+      )) {
+        throw new Error(
+          `expected the co-winner's dimension box to be EMPTY (not "Winter" again) and stay ` +
+          `column-aligned with the winner row above it, got: ${coWinnerRow}`
+        );
+      }
+      if (coWinnerRow.includes("&nbsp;") || coWinnerRow.includes("&#160;")) {
+        throw new Error(
+          `the co-winner's blank box must never be filled with a padding character, got: ${coWinnerRow}`
+        );
+      }
+
+      // Assertion 2: the co-winner reads as a peer, not a subordinate — same label box width.
+      const winnerLabelWidth = Number((winnerRow.match(/min-width:(\d+)ch/g) || [])[1]?.match(/\d+/)?.[0]);
+      const coWinnerLabelWidth = Number((coWinnerRow.match(/min-width:(\d+)ch/g) || [])[1]?.match(/\d+/)?.[0]);
+      if (winnerLabelWidth !== 23 || coWinnerLabelWidth !== 23) {
+        throw new Error(
+          `expected both the winner's and the co-winner's label box to declare min-width:23ch, ` +
+          `got winner=${winnerLabelWidth}, co-winner=${coWinnerLabelWidth}`
+        );
+      }
+
+      // Assertion 3: the also: spacer derives from the group's own width (2 + 13 + 2 = 17 for
+      // this mapped dimension), is EMPTY, and carries no color: declaration (structural,
+      // uncoloured, per 19.1-UI-SPEC.md's Colour section).
+      const spacerMatch = alsoRow.match(/<span style="display:inline-block;min-width:(\d+)ch">(.*?)<\/span>also: /);
+      if (!spacerMatch) {
+        throw new Error(`expected the also: row to open with an empty, uncoloured spacer box, got: ${alsoRow}`);
+      }
+      const spacerWidth = Number(spacerMatch[1]);
+      if (spacerMatch[2] !== "") {
+        throw new Error(`expected the also: spacer box to be EMPTY, got content: ${JSON.stringify(spacerMatch[2])}`);
+      }
+      if (spacerWidth !== 17) {
+        throw new Error(`expected the also: spacer to derive its width as 2 + 13 + 2 = 17, got ${spacerWidth}: ${alsoRow}`);
+      }
+
+      // Assertion 4: the literal `also: ` text is still outside any colour span (unchanged
+      // from rpt03-also-line-…; restated here because the nesting changed around it and
+      // T-19-17 depends on it).
+      if (!/<\/span>also: <span style="color:/.test(alsoRow)) {
+        throw new Error(`expected the literal "also: " text to sit outside any colour span, got: ${alsoRow}`);
+      }
+
+      // Assertion 5: one quantity, three consumers — the winner's dimension box, the
+      // co-winner's blank box and (spacer - 4) must all be the SAME number, computed from the
+      // markup rather than hardcoded, and that number must be 13 for this fixture — so both a
+      // drift between the three and a wholesale shift of all three go RED.
+      const coWinnerDimWidth = firstMinWidth(coWinnerRow);
+      if (winnerDimWidth !== coWinnerDimWidth || winnerDimWidth !== spacerWidth - 4) {
+        throw new Error(
+          `expected the winner box, the co-winner blank box and (spacer - 4) to all agree, ` +
+          `got winner=${winnerDimWidth}, co-winner=${coWinnerDimWidth}, spacer-4=${spacerWidth - 4}`
+        );
+      }
+      if (winnerDimWidth !== 13) {
+        throw new Error(`expected the concrete derived width to be 13 for this fixture, got ${winnerDimWidth}`);
+      }
+
+      // Control: the SAME payload with the co-winner removed must produce exactly ONE
+      // dimension box carrying the label and NO empty-box occurrence, proving assertion 1 is
+      // observing the co-winner path rather than matching anything anywhere.
+      const controlRendered = renderDom(frontend, { config, spcrisk: buildPayload(false) });
+      if (!controlRendered.includes("Heavy Snow") || !controlRendered.includes("also: ")) {
+        throw new Error(
+          `control precondition failed: expected the winner and an also: row without the ` +
+          `co-winner, got: ${controlRendered}`
+        );
+      }
+      const labelledBoxes = (controlRendered.match(/min-width:13ch">Winter<\/span>/g) || []).length;
+      const emptyBoxes = (controlRendered.match(/min-width:13ch"><\/span>/g) || []).length;
+      if (labelledBoxes !== 1 || emptyBoxes !== 0) {
+        throw new Error(
+          `control failed: expected exactly one labelled dimension box and zero empty boxes ` +
+          `without a co-winner present, got labelled=${labelledBoxes}, empty=${emptyBoxes}: ${controlRendered}`
+        );
+      }
+    }
+  },
+  {
     // 19-REVIEW CR-02: the showMinorHeat display floor is a property of the SHARED display
     // predicate, so an expanded day cannot contradict its own compact header. Before the fix,
     // daySurvivors applied the floor and renderDaySubRows re-read `day.hazards` and applied
