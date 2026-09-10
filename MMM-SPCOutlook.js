@@ -1080,7 +1080,7 @@
     const summary = this.spcrisk && typeof this.spcrisk === "object" ? this.spcrisk.summary : null;
     const summaryOk = !!(summary && typeof summary === "object");
     if (!this.spcrisk) {
-      wrapper.innerHTML = "Loading SPC Outlook...";
+      wrapper.innerHTML = "Loading NWS outlooks...";
     } else if (this.spcrisk.error) {
       wrapper.textContent = "Error: " + this.spcrisk.error;
     } else if (
