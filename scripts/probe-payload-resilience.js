@@ -13390,21 +13390,22 @@ const scenarios = [
       }
 
       // (b) The dimension label is written once for the GROUP — the first winner row carries
-      // it and the co-winner row's field is blank — so the two rows read as one labelled
-      // block rather than as two unrelated dimensions. Counted over the monospaced sub-row
-      // spans only; the compact header above legitimately prefixes each entry with its own
-      // dimension and is asserted separately in (c).
-      const subRowDimensionFields = detail.match(/monospace">Winter/g) || [];
+      // it in its own inline-block dimension box, and the co-winner row's box is present but
+      // EMPTY (19.1-03 AMENDED mechanism: a min-width box, not a padEnd() string) — so the
+      // two rows read as one labelled block rather than as two unrelated dimensions. Counted
+      // over the nested dimension-field boxes only; the compact header above legitimately
+      // prefixes each entry with its own dimension and is asserted separately in (c).
+      const subRowDimensionFields = detail.match(/min-width:13ch">Winter<\/span>/g) || [];
       if (subRowDimensionFields.length !== 1) {
         throw new Error(
           `the dimension field belongs to the group, not to each row — expected exactly one ` +
           `sub-row carrying "Winter", got ${subRowDimensionFields.length}: ${detail}`
         );
       }
-      if (!/monospace">\s{2,}Freezing Rain/.test(detail)) {
+      if (!/min-width:13ch"><\/span><span style="display:inline-block;min-width:23ch">Freezing Rain/.test(detail)) {
         throw new Error(
-          `the co-winner row must leave the dimension field blank and stay column-aligned ` +
-          `with the winner row above it, got: ${detail}`
+          `the co-winner row must leave the dimension box EMPTY (not "Winter" again) and stay ` +
+          `column-aligned with the winner row above it, got: ${detail}`
         );
       }
 
@@ -14044,8 +14045,8 @@ const scenarios = [
     // to content that already carried the 13-char dimension field plus its padding, so a
     // pass-through label was cut at ~47 source characters here versus 60 there, and the "…"
     // landed mid-field, destroying the column grid the detail layout exists to maintain.
-    // Mutation to prove RED: move truncateHazardLabel back inside detailColoredSpan and drop
-    // it from the two call sites.
+    // Mutation to prove RED (19.1-03 box mechanism): re-add .padEnd(DETAIL_LABEL_FIELD_WIDTH)
+    // to labelContent.
     name: "wr04-detail-label-truncation-counts-source-characters-not-padding",
     run: async (_helper) => {
       const frontend = loadFrontendModule();
@@ -14091,16 +14092,21 @@ const scenarios = [
           `apply the same bound to the same string, got ${truncatedRows}: ${rendered}`
         );
       }
-      // The ellipsis is the END of the label, never mid-column: the dimension field must
-      // survive intact ahead of it on the winner row.
-      if (!rendered.includes("Wind         " + "A".repeat(60) + "…")) {
+      // The ellipsis is the END of the label, never mid-column: the dimension field's own box
+      // must render intact ("Wind" alone, no appended content) and the truncated label with
+      // its "…" must render inside the FOLLOWING box — asserted as an ordered substring
+      // sequence rather than a character-index offset (19.1-03 box mechanism).
+      const dimBoxIdx = rendered.indexOf('min-width:13ch">Wind</span>');
+      const labelBoxIdx = rendered.indexOf('min-width:23ch">' + "A".repeat(60) + "…");
+      if (dimBoxIdx === -1 || labelBoxIdx === -1 || labelBoxIdx <= dimBoxIdx) {
         throw new Error(
-          `expected the 13-char dimension field to survive ahead of the truncated label ` +
-          `(the "…" must not land mid-field), got: ${rendered}`
+          `expected the dimension box ("Wind", intact) to render ahead of the truncated label ` +
+          `box (the "…" must not land mid-field), got: ${rendered}`
         );
       }
-      // Control: a label under the bound is untouched and still padded to the label field
-      // width, so truncation is not silently firing on ordinary content.
+      // Control: a label under the bound is untouched and still renders inside its 23ch label
+      // box, so truncation is not silently firing on ordinary content — and no space-run
+      // padding (the defect this phase fixes) reaches the emitted markup either.
       const shortPayload = unifiedPayload({});
       shortPayload.days["2"].hazards = [
         { dimension: "wind", source: "wpc-wssi", label: "Winner", text: "High Winds", value: 3, color: "e69138", suppressedBy: null }
@@ -14110,8 +14116,11 @@ const scenarios = [
       if (shortRendered.includes("…")) {
         throw new Error(`control: a short label must not be truncated at all, got: ${shortRendered}`);
       }
-      if (!shortRendered.includes("Wind         High Winds             ")) {
-        throw new Error(`control: a short label must still be padded to the label field width, got: ${shortRendered}`);
+      if (!shortRendered.includes('min-width:23ch">High Winds</span>')) {
+        throw new Error(`control: a short label must still render inside its 23ch label box, got: ${shortRendered}`);
+      }
+      if (/High Winds {3,}/.test(shortRendered)) {
+        throw new Error(`control: no space-run padding may reach the emitted markup, got: ${shortRendered}`);
       }
 
       // 19-REVIEW WR-04 (iteration 2): the other half of "the bound counts source
@@ -14135,18 +14144,16 @@ const scenarios = [
     }
   },
   {
-    // 19-REVIEW iteration-4 WR-02: WR-04 (iteration 2) made the winner/co-winner rows
-    // resilient to an unmapped dimension whose payload string overruns the 13-char field —
-    // `blankDimensionField` pads to `dimensionField.length`, the group's OWN rendered width —
-    // but the `also:` competitor rows two blocks below still derived their indent from the
-    // nominal DIMENSION_FIELD_WIDTH. For a mapped dimension the two agree, which is why every
-    // existing detail probe (all of which use mapped dimensions) stayed green; for an unmapped
-    // pass-through dimension (a shipped path, 18 D-07) the winner's em dash moved right while
-    // its own competitor stayed at column 38, detaching the suppressed row from the block it
-    // belongs to. This scenario asserts the two em dashes share a column, which is the
-    // invariant both indent rules exist to hold.
-    // Mutation to prove RED: restore `" ".repeat(2 + DIMENSION_FIELD_WIDTH + 2)` for
-    // alsoIndent.
+    // 19-REVIEW iteration-4 WR-02, restated for the 19.1-03 box mechanism: the also: spacer
+    // box's own min-width now derives from `2 + dimensionFieldWidthCh + 2` — the SAME
+    // Math.max(DIMENSION_FIELD_WIDTH, dimensionField.length) quantity the winner box and the
+    // BL-02 blank co-winner box use — so all three can never disagree. For a mapped dimension
+    // the values are the nominal ones (13, 17); for an unmapped pass-through dimension (a
+    // shipped path, 18 D-07) they scale together (29, 33). This scenario asserts the concrete
+    // pairs, not only the relationship, so a mutation that scales both values together still
+    // goes RED.
+    // Mutation to prove RED: replace Math.max(DIMENSION_FIELD_WIDTH, dimensionField.length)
+    // with the bare DIMENSION_FIELD_WIDTH.
     name: "wr02-also-rows-column-with-the-winner-row-under-an-unmapped-dimension",
     run: async (_helper) => {
       const frontend = loadFrontendModule();
@@ -14155,21 +14162,15 @@ const scenarios = [
         proximityWeighting: false, dayReportDetail: true,
         showHazardsOutlook: true, showWinterImpact: true
       };
-      // Plain text of each rendered row: the column contract is a property of the CHARACTER
-      // stream (every sub-row is white-space:pre-wrap monospace), so the colour spans have to
-      // come off before anything is measured.
-      const plainRows = (markup) => markup
-        .split("<br/>")
-        .map((row) => row.replace(/<[^>]*>/g, ""));
-      const emDashColumn = (rows, needle) => {
-        const row = rows.find((r) => r.includes(needle));
-        if (row === undefined) return null;
-        return row.indexOf("—");
-      };
+      // The invariant now lives in each box's own min-width declaration, not in a
+      // character-index measurement of the tag-stripped text stream — rows stay RAW.
+      const rawRows = (markup) => markup.split("<br/>");
+      const rowContainingAll = (rows, needles) => rows.find((r) => needles.every((n) => r.includes(n)));
+      const minWidthsInRow = (row) => (row.match(/min-width:(\d+)ch/g) || []).map((m) => Number(m.match(/\d+/)[0]));
 
       // A >13-character unmapped dimension: `lookup` falls back to the payload's own string,
-      // which `truncateHazardLabel(...).padEnd(DIMENSION_FIELD_WIDTH)` leaves at its full
-      // 29 characters because padEnd only pads UP.
+      // and dimensionFieldWidthCh's Math.max derives the dimension box to its full 29
+      // characters — the box mechanism's replacement for "padEnd only pads UP".
       const unmappedDimension = "unmapped-future-dimension-xyz";
       const overrun = unifiedPayload({});
       overrun.days["2"].hazards = [
@@ -14183,31 +14184,52 @@ const scenarios = [
       const overrunRendered = renderDom(frontend, { config, spcrisk: overrun });
 
       // Vacuity guard: both row kinds actually rendered, and the dimension survived whole.
-      const overrunRows = plainRows(overrunRendered);
-      if (!overrunRendered.includes("also: ") || !overrunRendered.includes("— WSSI")) {
+      if (!overrunRendered.includes("also: ") || !overrunRendered.includes("— WSSI") ||
+          !overrunRendered.includes(unmappedDimension)) {
         throw new Error(
-          `vacuity guard failed: expected a winner sub-row and an also: row, ` +
+          `vacuity guard failed: expected a winner sub-row, an also: row, and the full ` +
+          `unmapped dimension string, got: ${overrunRendered}`
+        );
+      }
+      const overrunRows = rawRows(overrunRendered);
+      const overrunWinnerRow = rowContainingAll(overrunRows, ["Winner Hazard", "WSSI"]);
+      const overrunAlsoRow = rowContainingAll(overrunRows, ["also:", "Competitor"]);
+      if (overrunWinnerRow === undefined || overrunAlsoRow === undefined) {
+        throw new Error(
+          `vacuity guard failed: could not isolate the winner sub-row and the also: row, ` +
           `got: ${overrunRendered}`
         );
       }
-      const overrunWinnerColumn = emDashColumn(overrunRows, unmappedDimension + "Winner Hazard");
-      const overrunAlsoColumn = emDashColumn(overrunRows, "also: Competitor");
-      if (overrunWinnerColumn === null || overrunAlsoColumn === null ||
-          overrunWinnerColumn < 0 || overrunAlsoColumn < 0) {
+      const overrunWinnerCh = minWidthsInRow(overrunWinnerRow)[0];
+      const overrunAlsoCh = minWidthsInRow(overrunAlsoRow)[0];
+      if (overrunWinnerCh === undefined || overrunAlsoCh === undefined) {
         throw new Error(
-          `vacuity guard failed: both sub-rows must carry a source attribution em dash, ` +
-          `got winner=${overrunWinnerColumn} also=${overrunAlsoColumn}: ${overrunRendered}`
+          `vacuity guard failed: expected both sub-rows to carry a min-width dimension/spacer ` +
+          `box, got winner row: ${overrunWinnerRow}, also row: ${overrunAlsoRow}`
         );
       }
-      if (overrunAlsoColumn !== overrunWinnerColumn) {
+      // The Math.max branch was actually taken — the exact term a regression would delete.
+      if (overrunWinnerCh !== 29) {
         throw new Error(
-          `an also: row must land its em dash on the winner row's own column even when the ` +
-          `dimension string overruns the field — winner=${overrunWinnerColumn}, ` +
-          `also=${overrunAlsoColumn}: ${overrunRendered}`
+          `expected the unmapped dimension's own 29-character width to win over the nominal ` +
+          `DIMENSION_FIELD_WIDTH, got winner box min-width:${overrunWinnerCh}ch: ${overrunRendered}`
+        );
+      }
+      if (overrunAlsoCh !== 33) {
+        throw new Error(
+          `expected the also: spacer to derive its width from the SAME quantity as the ` +
+          `winner box (29 + 4 = 33), got min-width:${overrunAlsoCh}ch: ${overrunRendered}`
+        );
+      }
+      if (overrunAlsoCh !== overrunWinnerCh + 4) {
+        throw new Error(
+          `an also: row's spacer must land at the winner row's own dimension width + 4 even ` +
+          `when the dimension string overruns the field — winner=${overrunWinnerCh}, ` +
+          `also=${overrunAlsoCh}: ${overrunRendered}`
         );
       }
 
-      // Control: a MAPPED dimension (12 chars at most, so the field pads out to exactly
+      // Control: a MAPPED dimension (12 chars at most, so the box floors at exactly
       // DIMENSION_FIELD_WIDTH) must be unaffected by the change — the two indent rules agree
       // for every mapped group, and this pins that the fix did not shift the ordinary case.
       const mapped = unifiedPayload({});
@@ -14220,21 +14242,33 @@ const scenarios = [
       mapped.summary.anyHazard = true;
       mapped.summary.activeDays = [2];
       const mappedRendered = renderDom(frontend, { config, spcrisk: mapped });
-      const mappedRows = plainRows(mappedRendered);
-      // The needle carries the padded dimension field so it selects the winner SUB-ROW rather
-      // than the compact header above it, which repeats the same label with no em dash.
-      const mappedWinnerColumn = emDashColumn(mappedRows, "Wind         Winner Hazard");
-      const mappedAlsoColumn = emDashColumn(mappedRows, "also: Competitor");
-      if (mappedWinnerColumn === null || mappedAlsoColumn === null) {
+      const mappedRows = rawRows(mappedRendered);
+      const mappedWinnerRow = rowContainingAll(mappedRows, ["Winner Hazard", "WSSI"]);
+      const mappedAlsoRow = rowContainingAll(mappedRows, ["also:", "Competitor"]);
+      if (mappedWinnerRow === undefined || mappedAlsoRow === undefined) {
         throw new Error(
           `control vacuity guard failed: expected both sub-rows for a mapped dimension, ` +
           `got: ${mappedRendered}`
         );
       }
-      if (mappedAlsoColumn !== mappedWinnerColumn) {
+      const mappedWinnerCh = minWidthsInRow(mappedWinnerRow)[0];
+      const mappedAlsoCh = minWidthsInRow(mappedAlsoRow)[0];
+      if (mappedWinnerCh !== 13) {
+        throw new Error(
+          `control: a mapped dimension's box must floor at the nominal DIMENSION_FIELD_WIDTH ` +
+          `(13), got min-width:${mappedWinnerCh}ch: ${mappedRendered}`
+        );
+      }
+      if (mappedAlsoCh !== 17) {
+        throw new Error(
+          `control: a mapped dimension's also: spacer must be 13 + 4 = 17, got ` +
+          `min-width:${mappedAlsoCh}ch: ${mappedRendered}`
+        );
+      }
+      if (mappedAlsoCh !== mappedWinnerCh + 4) {
         throw new Error(
           `control: a mapped dimension's also: row must still column with its winner — ` +
-          `winner=${mappedWinnerColumn}, also=${mappedAlsoColumn}: ${mappedRendered}`
+          `winner=${mappedWinnerCh}, also=${mappedAlsoCh}: ${mappedRendered}`
         );
       }
     }
