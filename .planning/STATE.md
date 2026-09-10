@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: WPC & CPC Integration + Unified Day Report
-status: executing
-stopped_at: Phase 19.1 UI-SPEC approved
+status: gaps_found
+stopped_at: Phase 19.1 verification — blocking gap on limb 1 (UAT-5 width/overlap); awaiting gap-closure planning
 last_updated: "2026-09-10T02:15:59.610Z"
-last_activity: 2026-09-10 -- Phase 19.1 execution started
+last_activity: 2026-09-10 -- Phase 19.1 executed 4/5 plans; live check FAILED limb 1, escalated to gap closure
 progress:
   total_phases: 7
   completed_phases: 6
   total_plans: 63
-  completed_plans: 58
+  completed_plans: 62
   percent: 86
 ---
 
@@ -25,10 +25,10 @@ See: .planning/PROJECT.md (updated 2026-08-15 after v2.0 scoping)
 
 ## Current Position
 
-Phase: 19.1 (day-report-render-width-product-neutral-copy-and-config-key-) — EXECUTING
-Plan: 1 of 5
-Status: Executing Phase 19.1
-Last activity: 2026-09-10 -- Phase 19.1 execution started
+Phase: 19.1 (day-report-render-width-product-neutral-copy-and-config-key-) — GAPS FOUND (blocking)
+Plan: 4 of 5 complete; 19.1-05 status gaps_found
+Status: Phase 19.1 verification found 1 blocking gap — limb 1 (UAT-5 detail-mode width/overlap) NOT achieved
+Last activity: 2026-09-10 -- Phase 19.1 live check on ssh mm FAILED items 1-2; root-caused to a cap derived without reference to available space (rotated 1080x1920 display, 960px usable, 648px cap, 168px overshoot); operator escalated to gap closure
 
 Progress: [██████████] 100%
 
