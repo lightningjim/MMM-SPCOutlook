@@ -58,6 +58,58 @@
     return n;
   },
 
+  // 19.1-02: dependency-free edit-distance helper backing the unrecognised-config-key
+  // suggestion below. Standard iterative dynamic-programming Levenshtein distance — no
+  // package added (19.1-RESEARCH.md "Don't Hand-Roll": a ~15-line restatement is not worth a
+  // dependency for this one call site). `String(...)` on both arguments so a non-string key
+  // (e.g. a `constructor`/`toString` config entry) can never throw.
+  _levenshtein: function(a, b) {
+    a = String(a);
+    b = String(b);
+    const m = a.length;
+    const n = b.length;
+    const dp = new Array(n + 1);
+    for (let j = 0; j <= n; j++) {
+      dp[j] = j;
+    }
+    for (let i = 1; i <= m; i++) {
+      let prev = dp[0];
+      dp[0] = i;
+      for (let j = 1; j <= n; j++) {
+        const temp = dp[j];
+        dp[j] = a[i - 1] === b[j - 1] ? prev : 1 + Math.min(prev, dp[j], dp[j - 1]);
+        prev = temp;
+      }
+    }
+    return dp[n];
+  },
+
+  // 19.1-02: nearest-`defaults`-key suggestion for the unrecognised-config-key warning.
+  // The threshold rejects a "nearest match" that is not actually close, so a wildly
+  // unrelated typo does not get told "did you mean lat?" — `dayReportDetails` →
+  // `dayReportDetail` is distance 1 and lands well inside `max(2, ceil(len/3))` for any key
+  // longer than a couple characters. Iterates `knownKeys` in order and uses strict `<` (not
+  // `<=`) when updating the best match, so the first-declared `defaults` key wins a tie —
+  // deterministic output for a log line an operator will diff between runs. This is a
+  // deliberate restatement, not a shared helper, matching this file's established
+  // "frontend/backend restatement over sharing" convention (19.1-CONTEXT.md `<code_context>`
+  // → Established Patterns).
+  _nearestKnownConfigKey: function(key, knownKeys) {
+    const target = String(key);
+    const threshold = Math.max(2, Math.ceil(target.length / 3));
+    let best = null;
+    let bestDist = Infinity;
+    for (let i = 0; i < knownKeys.length; i++) {
+      const candidate = knownKeys[i];
+      const dist = this._levenshtein(target, candidate);
+      if (dist < bestDist) {
+        bestDist = dist;
+        best = candidate;
+      }
+    }
+    return best !== null && bestDist <= threshold ? best : null;
+  },
+
   // WR-15: single source of truth for the GET_SPC_DATA payload. It was previously written
   // out twice — on startup and inside the interval — so a flag added to only one copy
   // rendered correctly at startup and silently reverted on the first refresh.
