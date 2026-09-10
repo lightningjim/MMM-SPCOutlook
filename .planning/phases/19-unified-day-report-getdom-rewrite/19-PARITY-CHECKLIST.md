@@ -6,6 +6,9 @@ baseline_probe_result: "123 passed, 0 failed, 0 skipped"
 final_probe_result: "161 passed, 0 failed, 0 skipped"
 # 19-REVIEW fix pass (post-sign-off): rows 36-38 added, rows 24 and 30 corrected.
 review_fix_probe_result: "168 passed, 0 failed, 0 skipped"
+# Phase 19.1 (post-sign-off): row 1's loading string updated (D-03); see "Phase 19.1 Addendum".
+# UAT test 5's width defect is NOT resolved by phase 19.1 — see 19.1-LIVE-CHECK.md.
+phase_19_1_probe_result: "190 passed, 0 failed, 0 skipped"
 ---
 
 # Phase 19 RPT-06 Behavior-Parity Checklist
@@ -35,7 +38,7 @@ match).
 
 | # | ID | Behavior (observable) | Old site | New site | Run A (no risk anywhere) | Run B (everything active) | Notes |
 |---|----|------------------------|----------|----------|--------------------------|----------------------------|-------|
-| 1 | (loading) | `!this.spcrisk` → literal `"Loading SPC Outlook..."` via `innerHTML` (hardcoded string, safe) | MMM-SPCOutlook.js:419-420 | MMM-SPCOutlook.js:646-647 — carried forward verbatim: same hardcoded string, same unconditional `innerHTML` assignment | NOT OBSERVABLE | NOT OBSERVABLE | RESEARCH.md #1  **Run A/B (19-08 Task 3):** Run A NOT OBSERVABLE (transient pre-fetch state, never present in a completed screenshot); Run B NOT OBSERVABLE (same — transient state, not screenshotted). |
+| 1 | (loading) | `!this.spcrisk` → literal `"Loading NWS outlooks..."` via `innerHTML` (hardcoded string, safe) | MMM-SPCOutlook.js:419-420 | MMM-SPCOutlook.js:646-647 — carried forward verbatim: same unconditional `innerHTML` assignment, same hardcoded-string mechanism; only the string's wording changed (see Phase 19.1 note below) | NOT OBSERVABLE | NOT OBSERVABLE | RESEARCH.md #1  **Run A/B (19-08 Task 3):** Run A NOT OBSERVABLE (transient pre-fetch state, never present in a completed screenshot); Run B NOT OBSERVABLE (same — transient state, not screenshotted).  **Phase 19.1 note (2026-09-10, plan 19.1-01/19.1-05):** the literal was `"Loading SPC Outlook..."` before Phase 19.1 D-03; plan 19.1-01 changed it to `"Loading NWS outlooks..."` so the loading string names the same umbrella as the `getHeader()` fallback (19-UAT.md test 11). The preserved behavior itself — hardcoded literal, unconditional `innerHTML`, no payload participation — is unchanged; only the wording changed. This row now has probe coverage for the string's identity via `uat11-loading-string-names-the-nws-umbrella-not-spc-alone` (Probe Coverage moves off `MANUAL ONLY` for that narrow claim); the branch's *transient visibility* remains structurally unobservable by either leg, same as before — see 19-UAT.md test 9, recorded NOT OBSERVABLE again during the Phase 19.1 live check (`19.1-LIVE-CHECK.md` item 9). |
 | 2 | (error) | `this.spcrisk.error` → `"Error: " + error` via `textContent` (never `innerHTML`) | MMM-SPCOutlook.js:421-422 | MMM-SPCOutlook.js:648-649 — carried forward verbatim, still routed through `textContent`, never `innerHTML` | NOT OBSERVABLE | NOT OBSERVABLE | RESEARCH.md #2  **Run A/B (19-08 Task 3):** Run A NOT OBSERVABLE (no error occurred during the session); Run B NOT OBSERVABLE (no error occurred during the session). |
 | 3 | BUG-03 | No-risk gate term: `!(extended && day48Risk)` | MMM-SPCOutlook.js:437 | Closed by construction — retired with the retired ~15-term boolean gate; replaced by the single `summaryOk && summary.anyHazard === false && !this.spcrisk._stale` read at MMM-SPCOutlook.js:666, with day-span concerns closed by the unified day loop's own bound on `this.spcrisk.days`' 14 keys at MMM-SPCOutlook.js:700/714 — no `day48Risk`-specific term survives anywhere in `getDom()` | NOT OBSERVABLE | NOT OBSERVABLE | RESEARCH.md #3 — retired with the code it defended (row-20-style resolution): the term itself is gone, the backend-computed `summary.anyHazard` already unions day 4-8 SPC risk with everything else, verified by `merge-summary-all-quiet-is-an-all-clear` and `frontend-follows-the-payload-day-span-not-a-hardcoded-one`  **Run A/B (19-08 Task 3):** Run A NOT OBSERVABLE (code-structural retirement claim; Run A's correct all-clear is consistent with, not proof of, this specific term's absence — mechanism proof is the cited probe scenarios); Run B NOT OBSERVABLE (the no-risk gate is not exercised in Run B (live hazards present)). |
 | 4 | CR-01 | Staleness (`!this.spcrisk._stale`) disqualifies the whole no-risk short-circuit — a degraded read is never an all-clear | MMM-SPCOutlook.js:430 | MMM-SPCOutlook.js:666 — `summaryOk && summary.anyHazard === false && !this.spcrisk._stale`, the same staleness disqualifier as one explicit term in the new single-condition gate | NOT OBSERVABLE | NOT OBSERVABLE | RESEARCH.md #4  **Run A/B (19-08 Task 3):** Run A NOT OBSERVABLE (only the non-stale path fired (confident string rendered); _stale was never set true this session, so the disqualification behavior itself, the bare-warning-badge check (CR-01), and the unconfirmed-string branch were never induced); Run B NOT OBSERVABLE (the short-circuit gate is not exercised in Run B (live hazards present)).  **EXTENDED (19-REVIEW WR-01, operator decision):** the contentMarker fallback beneath this gate is now a three-way split rather than an unconditional `"(unconfirmed)"`. Staleness (and a malformed summary) still wins — case 1 OUTRANKS the new filtered form, because if the read was not confirmed that is the more important fact about the screen and this row's own doctrine says so. What changed is the OTHER two exits, which this row never covered. |
@@ -137,7 +140,7 @@ Every scenario name cited below was verified present via `grep -n "name: \"<scen
 
 | # | Behavior | Probe coverage |
 |---|----------|-----------------|
-| 1 | Loading passthrough | `MANUAL ONLY` — no scenario in `scripts/probe-payload-resilience.js` exercises `getDom()`'s `!this.spcrisk` branch at all; every frontend scenario constructs a payload before rendering. Trivial, hardcoded, single-line string assignment with no XSS surface (never reaches `innerHTML` with anything but a literal), but genuinely unobserved by the suite. |
+| 1 | Loading passthrough | `MANUAL ONLY` for the branch's transient visibility — no scenario in `scripts/probe-payload-resilience.js` exercises `getDom()`'s `!this.spcrisk` branch by rendering it and observing the screen; every frontend scenario constructs a payload before rendering, and the branch itself is never present in a completed screenshot (19-UAT.md test 9, reconfirmed NOT OBSERVABLE at `19.1-LIVE-CHECK.md` item 9). **Phase 19.1 addition:** the string's own identity now has probe coverage — `uat11-loading-string-names-the-nws-umbrella-not-spc-alone` mutation-proves the literal reads `"Loading NWS outlooks..."` — which is a narrower and weaker claim than "observed on the mirror": it pins what the code emits, not that the emission was seen rendered. Trivial, hardcoded, single-line string assignment with no XSS surface (never reaches `innerHTML` with anything but a literal). |
 | 2 | Error passthrough | `MANUAL ONLY` — same as row 1; no scenario constructs `{ error: ... }` and renders it. Uses `textContent`, not `innerHTML`, so there is no escaping concern to mutation-prove even if a scenario existed. |
 | 3 | BUG-03 (retired term) | `merge-summary-all-quiet-is-an-all-clear` (proves `summary.anyHazard` is the sole backend-computed no-risk signal that replaced the retired term), `frontend-follows-the-payload-day-span-not-a-hardcoded-one` (proves no day-span literal, including a day-48-style boundary, survives in `getDom()`) |
 | 4 | CR-01 staleness disqualifier | `rpt05-stale-quiet-payload-renders-unconfirmed-under-the-badge` |
@@ -359,3 +362,66 @@ If a future live session observes conditions this one could not (a stale cache r
 MD/MPD, a below-ENH/MDT convective day that still shows detail via `dayReportDetail: true`, a
 proximity-only day), those rows should be upgraded from the deferred table rather than re-run from
 scratch.
+
+## Phase 19.1 Addendum (2026-09-10)
+
+Phase 19.1 amended two of this checklist's rows and closed one UAT test; it did **not** resolve
+the phase's third target. Recorded here rather than rewriting the rows above (per this checklist's
+own append-don't-overwrite convention).
+
+**UAT test 5 (the MAJOR width defect) is NOT resolved by Phase 19.1.** Plan 19.1-05's live check
+on the deployed Pi (`ssh mm`, 2026-09-10, `19.1-LIVE-CHECK.md`) confirmed the detail-mode day
+report still extends into the centre column and compact rows still look displaced — items 1 and 2
+of that check both FAILED. Root cause: the shipped `32.4rem`/648px `max-width` cap was derived from
+content needs alone (54 monospace characters × ~0.6em) and never cross-checked against the
+deployed region's actual available space (measured: 960px usable, budget ≤480px/~450px with a gap
+— a 168px overshoot). Phase 19.1's own `19.1-UI-SPEC.md` "Region Containment" derivation is marked
+SUPERSEDED for this reason, not merely re-tuned. **Do not close UAT test 5 or this checklist's row
+1's width-adjacent claims as resolved on the strength of Phase 19.1** — the region-overlap claim
+remains exactly what it was before this phase: `MANUAL ONLY`, and now additionally confirmed
+FAILING rather than merely unconfirmed. Its only evidence is `19.1-LIVE-CHECK.md` item 1. The
+remedy was escalated to a gap-closure phase (replace character-advance alignment with
+layout-based alignment) rather than tuned inside plan 19.1-05 — see `19.1-LIVE-CHECK.md`'s
+"Disposition" section.
+
+**UAT tests 11 and 13 ARE addressed, at different strengths of claim — do not conflate them:**
+
+- **Test 13 (misspelled config key silently ignored):** plan 19.1-02 added a `start()`-time
+  validator that warns on any config key absent from `Object.keys(this.defaults)`, naming the key
+  and its nearest match. This is **confirmed on the deployed mirror**, not merely landed in code —
+  `19.1-LIVE-CHECK.md` item 10 is a machine-checked observation: `grep -i
+  "unrecognized\|unrecognised"` over the restart-onward `mm-out.log` window returned no matches,
+  which is the *correct* result for the deployed config's well-formed `dayReportDetail` key. The
+  absence of a false-positive warning on a valid config is live, on-mirror evidence the validator
+  does not over-fire — the strongest form of confirmation this feature can get short of deliberately
+  redeploying a misspelled key.
+- **Test 11 (loading/header copy names only SPC):** plan 19.1-01 changed the loading string to
+  `"Loading NWS outlooks..."` and added a `getHeader()` fallback of `"NWS Hazard Outlooks"`. The
+  loading string's change is now probe-pinned (`uat11-loading-string-names-the-nws-umbrella-not-spc-alone`,
+  row 1 above) — the code change **landed and is guarded against regression**. This is a weaker
+  claim than "observed on the mirror": the operator's live check did **not** state a verdict for the
+  header item (`19.1-LIVE-CHECK.md` item 8 is NOT STATED — the deployed config sets `header: "SPC
+  Forecast"` explicitly, so the `getHeader()` fallback string was never exercised on this mirror in
+  the first place), and the loading string is transient and was also NOT STATED (item 9). **Do not
+  claim test 11 was observed working on the deployed mirror** — claim only that the code change
+  shipped, is deployed (byte-identical, confirmed by `19.1-LIVE-CHECK.md`'s code-presence markers),
+  and is probe-pinned against regression.
+
+**New Probe Coverage from Phase 19.1 (width mechanism, all `MANUAL ONLY` for the layout claim
+itself):**
+
+- `uat05-wrapper-declares-both-region-containment-contracts`
+- `uat05-detail-fields-carry-no-space-run-padding-and-declare-a-ch-floor`
+- `uat05-co-winner-and-also-rows-derive-their-boxes-from-the-groups-own-width`
+
+These three scenarios pin today's mechanism (the `display:inline-block;min-width:Nch` column
+boxes and the `wrapper.style.maxWidth` declaration) exactly as designed — they are mutation-proven
+and green (suite: `190 passed, 0 failed, 0 skipped`, per this file's `phase_19_1_probe_result`).
+**They do not, and structurally cannot, prove the region does not overlap the centre column** — no
+scenario in this harness has a layout engine (RESEARCH.md Pitfall 1, restated in `19.1-UI-SPEC.md`
+Verification Honesty). That overlap claim is `MANUAL ONLY` and is now confirmed FAILING per the
+paragraph above. **When the gap-closure phase replaces the alignment mechanism, these three
+`uat05-*` scenarios must be RE-EXPRESSED against the replacement mechanism (layout-based alignment
+— CSS grid or a fixed-layout table), not simply deleted** — they are correct about today's
+mechanism and encode real regression value (no space-run padding, a declared floor width, boxes
+derived from the group's own width) that the replacement will need re-pinned in its own terms.
