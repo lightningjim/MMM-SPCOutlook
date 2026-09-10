@@ -13390,21 +13390,22 @@ const scenarios = [
       }
 
       // (b) The dimension label is written once for the GROUP — the first winner row carries
-      // it and the co-winner row's field is blank — so the two rows read as one labelled
-      // block rather than as two unrelated dimensions. Counted over the monospaced sub-row
-      // spans only; the compact header above legitimately prefixes each entry with its own
-      // dimension and is asserted separately in (c).
-      const subRowDimensionFields = detail.match(/monospace">Winter/g) || [];
+      // it in its own inline-block dimension box, and the co-winner row's box is present but
+      // EMPTY (19.1-03 AMENDED mechanism: a min-width box, not a padEnd() string) — so the
+      // two rows read as one labelled block rather than as two unrelated dimensions. Counted
+      // over the nested dimension-field boxes only; the compact header above legitimately
+      // prefixes each entry with its own dimension and is asserted separately in (c).
+      const subRowDimensionFields = detail.match(/min-width:13ch">Winter<\/span>/g) || [];
       if (subRowDimensionFields.length !== 1) {
         throw new Error(
           `the dimension field belongs to the group, not to each row — expected exactly one ` +
           `sub-row carrying "Winter", got ${subRowDimensionFields.length}: ${detail}`
         );
       }
-      if (!/monospace">\s{2,}Freezing Rain/.test(detail)) {
+      if (!/min-width:13ch"><\/span><span style="display:inline-block;min-width:23ch">Freezing Rain/.test(detail)) {
         throw new Error(
-          `the co-winner row must leave the dimension field blank and stay column-aligned ` +
-          `with the winner row above it, got: ${detail}`
+          `the co-winner row must leave the dimension box EMPTY (not "Winter" again) and stay ` +
+          `column-aligned with the winner row above it, got: ${detail}`
         );
       }
 
