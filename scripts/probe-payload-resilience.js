@@ -14339,6 +14339,154 @@ const scenarios = [
     }
   },
   {
+    // 19.1-04 Task 2 (UAT-5): pins the ABSENCE of the defective construct (literal space-run
+    // padding baked into escaped text — the root cause of the region-overlap defect) and the
+    // PRESENCE of both min-width ch floors, colocated with the monospace font-family that lets
+    // `ch` resolve correctly (Pitfall 4). Does not itself pin the wr04-*/wr02-* scenarios'
+    // own concerns (truncation order, indent derivation) — see those scenarios for the
+    // positive mechanism this one covers only negatively/structurally.
+    //
+    // Space-run exemption list — exactly two, both pre-existing, module-authored, and out of
+    // this phase's scope:
+    //  1. detailSourceAttribution's three-space attribution gap immediately before the em dash
+    //     ("   — ", MMM-SPCOutlook.js's detailSourceAttribution) — structural attribution
+    //     spacing, not a column-alignment padding mechanism.
+    //  2. convectiveDetailAugment's five-space probabilistic sub-line indent (the `subLineHtml`
+    //     literal in MMM-SPCOutlook.js's convectiveDetailAugment, out of scope for this phase —
+    //     the plan names this exemption by its historical ":490" line reference; the line has
+    //     since drifted to ~630 across this wave's edits, so this comment names the function
+    //     instead of a line number that would itself go stale). Neither exemption may be
+    //     widened to also cover a reintroduced .padEnd() — a future reader must not enlarge
+    //     this list to make a real regression disappear.
+    // Mutation to prove RED: re-add .padEnd(DETAIL_LABEL_FIELD_WIDTH) to labelContent
+    // (assertion 1 goes RED); separately, move the font-family declaration off the row span and
+    // off detailColoredWrapper (assertion 3 goes RED).
+    name: "uat05-detail-fields-carry-no-space-run-padding-and-declare-a-ch-floor",
+    run: async (_helper) => {
+      const frontend = loadFrontendModule();
+      const config = {
+        lat: PROBE_LAT, lon: PROBE_LON, extended: false, updateInterval: 60,
+        proximityWeighting: false, dayReportDetail: true,
+        showHazardsOutlook: true, showWinterImpact: true
+      };
+      const payload = unifiedPayload({});
+      payload.days["2"].hazards = [
+        { dimension: "wind", source: "wpc-wssi", label: "Winner", text: "High Winds",
+          value: 3, color: "e69138", suppressedBy: null },
+        { dimension: "wind", source: "wpc-hazards", label: "Comp", text: "Competitor",
+          value: null, color: "63be7b", suppressedBy: "wpc-wssi" }
+      ];
+      payload.summary.anyHazard = true;
+      const rendered = renderDom(frontend, { config, spcrisk: payload });
+
+      // Precondition guard (Phase 15 D-10 failure mode (a)): the fixture's winner entry must
+      // have actually rendered, or the negative assertion below would trivially pass against
+      // an empty render — a negative assertion is exactly what that failure mode is most
+      // vulnerable to (/ {3,}/ trivially fails to match an empty string).
+      if (!rendered.includes("— WSSI")) {
+        throw new Error(
+          `precondition failed: expected the winner sub-row to render, got: ${rendered}`
+        );
+      }
+
+      // Assertion 1: no space-run padding reaches the markup, beyond the two named exemptions
+      // above. Rows are split on <br/> first so they are independent, then tags are stripped
+      // and the two exemptions removed before testing for any remaining run of 3+ spaces.
+      const rows = rendered.split("<br/>");
+      for (const row of rows) {
+        const textOnly = row.replace(/<[^>]*>/g, "");
+        const exempted = textOnly
+          .replace(/ {3}—/g, "") // exemption 1: the three-space attribution gap
+          .replace(/^ {5}/, ""); // exemption 2: the five-space sub-line indent
+        if (/ {3,}/.test(exempted)) {
+          throw new Error(
+            `row carries space-run padding outside the two named exemptions (the defect ` +
+            `this phase fixes): ${JSON.stringify(row)}`
+          );
+        }
+      }
+
+      // Assertion 2: both field boxes declare their ch floor.
+      if (!rendered.includes("min-width:13ch") || !rendered.includes("min-width:23ch")) {
+        throw new Error(
+          `expected both a min-width:13ch dimension box and a min-width:23ch label box, ` +
+          `got: ${rendered}`
+        );
+      }
+
+      // Assertion 3 (Pitfall 4): every min-width: occurrence is preceded, within its own
+      // <br/>-delimited row, by at least one font-family:'DejaVu Sans Mono' declaration —
+      // otherwise ch would resolve against the host's proportional font, silently misaligning
+      // the whole mechanism while every other assertion here stays green.
+      for (const row of rows) {
+        if (!row.includes("min-width:")) continue;
+        const fontIdx = row.indexOf("font-family:'DejaVu Sans Mono'");
+        const minWidthIdx = row.indexOf("min-width:");
+        if (fontIdx === -1 || fontIdx > minWidthIdx) {
+          throw new Error(
+            `row declares a ch width with no preceding monospace font-family in scope ` +
+            `(Pitfall 4), got: ${JSON.stringify(row)}`
+          );
+        }
+      }
+
+      // Assertion 4: overflow still pushes right, never clips. A 200-character label still
+      // floors at min-width:23ch (a floor, not a ceiling) and the 60-character truncated label
+      // renders in full inside it; no hard width or clip declaration reaches the markup.
+      const longLabel = "B".repeat(200);
+      const overflowPayload = unifiedPayload({});
+      overflowPayload.days["2"].hazards = [
+        { dimension: "wind", source: "wpc-wssi", label: "Winner", text: longLabel,
+          value: 3, color: "e69138", suppressedBy: null }
+      ];
+      overflowPayload.summary.anyHazard = true;
+      const overflowRendered = renderDom(frontend, { config, spcrisk: overflowPayload });
+      if (!overflowRendered.includes("— WSSI")) {
+        throw new Error(
+          `precondition failed: expected the overflow winner sub-row to render, ` +
+          `got: ${overflowRendered}`
+        );
+      }
+      const expectedTruncated = "B".repeat(60) + "…";
+      if (!overflowRendered.includes('min-width:23ch">' + expectedTruncated)) {
+        throw new Error(
+          `expected the 60-character truncated label to render in full inside its ` +
+          `min-width:23ch box (a floor, not a ceiling), got: ${overflowRendered}`
+        );
+      }
+      if (/(?<!min-)width:23ch/.test(overflowRendered)) {
+        throw new Error(
+          `a hard width (not min-width) reached the markup, got: ${overflowRendered}`
+        );
+      }
+      if (overflowRendered.includes("overflow:hidden") || overflowRendered.includes("text-overflow")) {
+        throw new Error(
+          `a clip declaration (overflow:hidden/text-overflow) reached the markup, which would ` +
+          `silently delete overflow content today's mechanism degrades gracefully instead, ` +
+          `got: ${overflowRendered}`
+        );
+      }
+
+      // Control: the compact header row above the expanded day — which is NOT a detail row
+      // and carries no boxes — renders and contains no min-width: declaration, proving
+      // assertion 2 is selecting the detail rows specifically rather than matching anything.
+      const compactRows = rendered.split("<br/>").filter((r) => r.includes("Day 2 ("));
+      if (compactRows.length === 0) {
+        throw new Error(
+          `control precondition failed: expected a compact header row for Day 2, ` +
+          `got: ${rendered}`
+        );
+      }
+      for (const row of compactRows) {
+        if (row.includes("min-width:")) {
+          throw new Error(
+            `control failed: the compact header row must carry no min-width box, got: ${row}`
+          );
+        }
+      }
+    }
+  },
+  {
     // 19-REVIEW CR-02: the showMinorHeat display floor is a property of the SHARED display
     // predicate, so an expanded day cannot contradict its own compact header. Before the fix,
     // daySurvivors applied the floor and renderDaySubRows re-read `day.hazards` and applied
