@@ -2,10 +2,10 @@
 gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: WPC & CPC Integration + Unified Day Report
-status: verifying
+status: executing
 stopped_at: Phase 19.1 UI-SPEC approved
-last_updated: "2026-09-10T01:31:53.096Z"
-last_activity: "2026-09-09 -- Phase 19 UAT on target Pi: 4 passed, 4 issues, 5 not observable"
+last_updated: "2026-09-10T02:15:59.610Z"
+last_activity: 2026-09-10 -- Phase 19.1 execution started
 progress:
   total_phases: 7
   completed_phases: 6
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-08-15 after v2.0 scoping)
 
 **Core value:** Accurately and efficiently tell the user if they're in a weather risk zone right now — no false negatives, no unnecessary CPU burn on the RPi.
-**Current focus:** v2.0 milestone close — Phase 19 complete, all six phases done
+**Current focus:** Phase 19.1 — day-report-render-width-product-neutral-copy-and-config-key-
 
 ## Current Position
 
-Phase: 19.1 (day-report-render-width-product-neutral-copy-and-config-key) — INSERTED, not planned
-Plan: 0 of 0
-Status: Phase 19 closed (VERIFICATION passed). 19.1 inserted from 19-UAT.md: 4 issues — detail-row render width overflows the module region (major), SPC-only copy, first-paint under feed degradation, unknown config key silently ignored
-Last activity: 2026-09-09 -- Phase 19 UAT on target Pi: 4 passed, 4 issues, 5 not observable
+Phase: 19.1 (day-report-render-width-product-neutral-copy-and-config-key-) — EXECUTING
+Plan: 1 of 5
+Status: Executing Phase 19.1
+Last activity: 2026-09-10 -- Phase 19.1 execution started
 
 Progress: [██████████] 100%
 

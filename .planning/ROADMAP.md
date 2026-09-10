@@ -451,10 +451,10 @@ Phases execute in numeric order: 14 → 15 → 16 → 17 → 18 → 19
 **Goal:** Fix the three display/config defects Phase 19's UAT found against the unified day report: the detail-mode day report no longer widens its MagicMirror region or overlaps neighbouring columns; user-facing copy names the products the module actually aggregates rather than SPC alone; and a config key the module does not recognise is surfaced to the operator instead of being silently ignored.
 **Requirements**: none — defect-fix phase traced to 19-UAT.md tests 5, 11, 13 and 19.1-CONTEXT.md D-01..D-06 (no REQ-IDs exist for this phase)
 **Depends on:** Phase 19
-**Plans:** 5 plans
+**Plans:** 1/5 plans executed
 
 Plans:
-- [ ] 19.1-01-PLAN.md — product-neutral copy: getHeader() three-state fallback, `Loading NWS outlooks...`, README (UAT 11, D-02..D-05)
+- [x] 19.1-01-PLAN.md — product-neutral copy: getHeader() three-state fallback, `Loading NWS outlooks...`, README (UAT 11, D-02..D-05)
 - [ ] 19.1-02-PLAN.md — unrecognised-config-key warning at start() with a nearest-`defaults` suggestion (UAT 13)
 - [ ] 19.1-03-PLAN.md — render width, both halves: inline-block `min-width:Nch` columns AND the wrapper `max-width` region cap (UAT 5, MAJOR)
 - [ ] 19.1-04-PLAN.md — width regression guards: harness wrapper accessor plus three mutation-proven structural scenarios
