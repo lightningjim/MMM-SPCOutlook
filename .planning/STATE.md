@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: WPC & CPC Integration + Unified Day Report
-status: phase-complete
-stopped_at: Phase 19 complete — verifier PASS 6/6
-last_updated: "2026-09-07T13:59:55.981Z"
-last_activity: 2026-09-07 -- Phase 19 complete (9/9 plans, verifier PASS 6/6, probe suite 157/0/0)
+status: verifying
+stopped_at: Phase 19.1 context gathered
+last_updated: "2026-09-10T00:28:01.734Z"
+last_activity: "2026-09-09 -- Phase 19 UAT on target Pi: 4 passed, 4 issues, 5 not observable"
 progress:
-  total_phases: 6
+  total_phases: 7
   completed_phases: 6
   total_plans: 58
   completed_plans: 58
-  percent: 100
+  percent: 86
 ---
 
 # Project State
@@ -25,10 +25,10 @@ See: .planning/PROJECT.md (updated 2026-08-15 after v2.0 scoping)
 
 ## Current Position
 
-Phase: 19 (unified-day-report-getdom-rewrite) — COMPLETE
-Plan: 9 of 9
-Status: Phase 19 complete — verifier PASS 6/6, RPT-01..06 all met
-Last activity: 2026-09-07 -- Phase 19 complete (probe suite 157 passed, 0 failed, 0 skipped)
+Phase: 19.1 (day-report-render-width-product-neutral-copy-and-config-key) — INSERTED, not planned
+Plan: 0 of 0
+Status: Phase 19 closed (VERIFICATION passed). 19.1 inserted from 19-UAT.md: 4 issues — detail-row render width overflows the module region (major), SPC-only copy, first-paint under feed degradation, unknown config key silently ignored
+Last activity: 2026-09-09 -- Phase 19 UAT on target Pi: 4 passed, 4 issues, 5 not observable
 
 Progress: [██████████] 100%
 
@@ -52,6 +52,10 @@ requirements, 3 Info findings, 0 blocking. Two live production defects found and
 v2.0 Phase 17 P09 (2026-09-01) — mutation inventory + DATA-03 spot check + human UAT, 2 tasks, 3 files, ~45min plus an operator UAT window on live production hardware. Closes out Phase 17's plan-level work (9/9 plans executed); phase-level close remains the orchestrator's responsibility.
 
 ## Accumulated Context
+
+### Roadmap Evolution
+
+- Phase 19.1 inserted after Phase 19: Day report render width, product-neutral copy, and config key validation (URGENT)
 
 ### Decisions
 
@@ -154,6 +158,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-09-07T01:25:13.598Z
-Stopped at: Phase 19 UI-SPEC approved
-Resume file: .planning/phases/19-unified-day-report-getdom-rewrite/19-UI-SPEC.md
+Last session: 2026-09-10T00:28:01.719Z
+Stopped at: Phase 19.1 context gathered
+Resume file: .planning/phases/19.1-day-report-render-width-product-neutral-copy-and-config-key-/19.1-CONTEXT.md
