@@ -11703,6 +11703,155 @@ const scenarios = [
     }
   },
   {
+    // UAT-13 (19.1-02): MagicMirror merges `this.config` as
+    // `Object.assign({}, this.defaults, data.config)` with no validation, so a typo like
+    // `dayReportDetails` against the real `dayReportDetail` is silently absorbed and never
+    // read — this is the exact defect that cost the 2026-09-09 UAT session real debugging
+    // time. Pins the fix: start() warns, once, naming the offending key and its nearest
+    // `defaults` match.
+    // Mutation to prove RED: widen the allowlist to include the unrecognised key, or drop the
+    // _nearestKnownConfigKey call so the line carries no suggestion.
+    name: "uat13-unrecognized-config-key-warns-with-its-nearest-defaults-match",
+    run: async (_helper) => {
+      const frontend = loadFrontendModule();
+
+      // Precondition guard: without this, a future rename of the real key would make this
+      // scenario assert a suggestion for a key that no longer exists.
+      if (Object.keys(frontend.defaults).indexOf("dayReportDetail") === -1) {
+        throw new Error(
+          "precondition failed: 'dayReportDetail' is no longer a defaults key; update this scenario"
+        );
+      }
+
+      const runStart = (config) => {
+        resetLogs();
+        const ctx = Object.create(frontend);
+        ctx.config = config;
+        ctx.sendSocketNotification = () => {};
+        ctx.name = "MMM-SPCOutlook";
+        frontend.start.call(ctx);
+        ctx._clearPollTimer.call(ctx);
+        return logCalls.slice();
+      };
+
+      const typoConfig = Object.assign({}, frontend.defaults, { dayReportDetails: true });
+      const typoLogs = runStart(typoConfig);
+      const typoWarnLines = typoLogs.filter((line) => line.includes("unrecognized config key"));
+      if (typoWarnLines.length !== 1) {
+        throw new Error(
+          `expected exactly one unrecognized-key warn line, got ${typoWarnLines.length}: ` +
+          JSON.stringify(typoLogs)
+        );
+      }
+      if (!typoWarnLines[0].includes("dayReportDetails")) {
+        throw new Error(`warn line must name the offending key: ${typoWarnLines[0]}`);
+      }
+      if (!typoWarnLines[0].includes('did you mean "dayReportDetail"')) {
+        throw new Error(`warn line must suggest the nearest defaults key: ${typoWarnLines[0]}`);
+      }
+
+      // Control: the same start() with a clean config (every defaults key, nothing extra)
+      // must emit ZERO such lines — proving the gate is not simply always firing, which is
+      // the most likely regression a validator like this can suffer.
+      const cleanLogs = runStart(Object.assign({}, frontend.defaults));
+      const cleanWarnLines = cleanLogs.filter((line) => line.includes("unrecognized config key"));
+      if (cleanWarnLines.length !== 0) {
+        throw new Error(
+          `control failed: a fully-correct config produced ${cleanWarnLines.length} ` +
+          `warning(s): ${JSON.stringify(cleanLogs)}`
+        );
+      }
+    }
+  },
+  {
+    // UAT-13 (19.1-02) / Pitfall 5: the validator must never let a config VALUE reach
+    // mm-out.log — only the key name and its suggested match. Uses the real deployed
+    // coordinate (19.1-CONTEXT.md "Target hardware") as the offending value, exactly the
+    // class of value Pitfall 5 protects.
+    // Mutation to prove RED: interpolate this.config[key] into the Log.warn message.
+    name: "uat13-config-key-validator-never-logs-a-config-value",
+    run: async (_helper) => {
+      const frontend = loadFrontendModule();
+      const ctx = Object.create(frontend);
+      ctx.config = Object.assign({}, frontend.defaults, {
+        dayReportDetails: "35.4432156,-97.595822"
+      });
+      ctx.sendSocketNotification = () => {};
+      ctx.name = "MMM-SPCOutlook";
+      resetLogs();
+      frontend.start.call(ctx);
+      ctx._clearPollTimer.call(ctx);
+
+      const leaked = logCalls.filter((line) => line.includes("35.4432156"));
+      if (leaked.length > 0) {
+        throw new Error(`a config VALUE reached the log: ${JSON.stringify(leaked)}`);
+      }
+
+      // Vacuity guard: the warn line for dayReportDetails WAS emitted — otherwise the
+      // non-disclosure assertion above is satisfied trivially by a validator that logged
+      // nothing at all (Phase 15 D-10 failure mode: an assertion that observes nothing).
+      const warnLines = logCalls.filter((line) => line.includes("unrecognized config key"));
+      if (!warnLines.some((line) => line.includes("dayReportDetails"))) {
+        throw new Error(
+          `vacuity guard failed: no warn line named dayReportDetails at all: ${JSON.stringify(logCalls)}`
+        );
+      }
+    }
+  },
+  {
+    // UAT-13 (19.1-02) / T-19.1-06: a config typo, a prototype-shaped key, or a null config
+    // must never throw out of start() and must never stop the render — the module's
+    // established "warn and degrade for user input" posture (resolveUpdateInterval's
+    // precedent), never the "fail loud" posture reserved for module-authored static data.
+    // Mutation to prove RED: change Log.warn to a throw in _warnUnrecognizedConfigKeys.
+    name: "uat13-config-key-validator-warns-and-continues-never-throws",
+    run: async (_helper) => {
+      const frontend = loadFrontendModule();
+      const startWith = (config) => {
+        const ctx = Object.create(frontend);
+        ctx.config = config;
+        ctx.sendSocketNotification = () => {};
+        ctx.name = "MMM-SPCOutlook";
+        resetLogs();
+        frontend.start.call(ctx);
+        ctx._clearPollTimer.call(ctx);
+        return logCalls.slice();
+      };
+
+      // (1) a null config.
+      startWith(null);
+
+      // (2) prototype-chain shapes — the exact class that took getDom() down in 19-REVIEW
+      // CR-03.
+      startWith(Object.assign({}, frontend.defaults, { toString: 1, constructor: 1 }));
+
+      // (3) twelve unrecognised keys — exactly twelve warn lines, since the operator greps
+      // this log one line per key.
+      const manyUnrecognised = Object.assign({}, frontend.defaults);
+      for (let i = 0; i < 12; i++) {
+        manyUnrecognised["zzzUnknown" + i] = true;
+      }
+      const manyLogs = startWith(manyUnrecognised);
+      const manyWarnLines = manyLogs.filter((line) => line.includes("unrecognized config key"));
+      if (manyWarnLines.length !== 12) {
+        throw new Error(
+          `expected exactly 12 unrecognized-key warn lines, got ${manyWarnLines.length}: ` +
+          JSON.stringify(manyLogs)
+        );
+      }
+
+      // After case (3), the module must still render — a typo'd config does not brick the
+      // render path either.
+      const rendered = renderDom(frontend, { config: manyUnrecognised, spcrisk: null });
+      if (rendered !== "Loading NWS outlooks...") {
+        throw new Error(
+          `a config with 12 unrecognised keys must still render the loading string, got: ` +
+          JSON.stringify(rendered)
+        );
+      }
+    }
+  },
+  {
     // CR-01: a degraded read is never a confident all-clear. Pins the empty-state ladder's
     // staleness disqualification — a stale, quiet payload must show the ⚠ badge with the
     // unconfirmed string beneath it, never a bare badge and never the confident string.
