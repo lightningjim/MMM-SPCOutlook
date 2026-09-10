@@ -219,6 +219,20 @@
     }
   },
 
+  // The base Module class already returns this.data.header verbatim — this override's only
+  // net effect is the absent-key fallback below. MagicMirror's own updateModuleContent()
+  // treats both undefined and "" as falsy and hides the header region for either, so an
+  // explicit header: "" opt-out needs no suppression logic here; it is already handled by
+  // MagicMirror core. A configured header (any other string) is never overridden — this
+  // module only fills in when the operator left the key out of config.js entirely.
+  getHeader: function() {
+    const header = this.data && this.data.header;
+    if (header === undefined) {
+      return "NWS Hazard Outlooks";
+    }
+    return header;
+  },
+
   getStyles: function() {
     return [
       this.file("node_modules/weather-icons/css/weather-icons.min.css")
@@ -1066,7 +1080,7 @@
     const summary = this.spcrisk && typeof this.spcrisk === "object" ? this.spcrisk.summary : null;
     const summaryOk = !!(summary && typeof summary === "object");
     if (!this.spcrisk) {
-      wrapper.innerHTML = "Loading SPC Outlook...";
+      wrapper.innerHTML = "Loading NWS outlooks...";
     } else if (this.spcrisk.error) {
       wrapper.textContent = "Error: " + this.spcrisk.error;
     } else if (

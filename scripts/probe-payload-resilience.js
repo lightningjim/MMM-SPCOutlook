@@ -11624,6 +11624,85 @@ const scenarios = [
     }
   },
   {
+    // UAT-11 (19.1 D-02/D-03/D-04): getHeader() must fall back to the NWS umbrella only when
+    // the operator's config.js has no header: key at all. A truthiness check in place of the
+    // === undefined comparison would treat header: "" (D-04's deliberate opt-out) as absent
+    // and silently reinstate a header row.
+    // Mutation to prove RED: change `=== undefined` to a truthiness check — the
+    // `{header:""}` case must then fail with "returned 'NWS Hazard Outlooks', want ''".
+    name: "uat11-getheader-falls-back-only-when-the-header-key-is-absent",
+    run: async (_helper) => {
+      const frontend = loadFrontendModule();
+      const call = (data) => frontend.getHeader.call({ data });
+
+      const cases = [
+        { data: {}, want: "NWS Hazard Outlooks", label: "absent key" },
+        { data: { header: "" }, want: "", label: "explicit opt-out" },
+        { data: { header: "SPC FORECAST" }, want: "SPC FORECAST", label: "operator-configured" },
+        { data: undefined, want: "NWS Hazard Outlooks", label: "defensive (this.data undefined)" }
+      ];
+      for (const { data, want, label } of cases) {
+        const got = call(data);
+        if (got !== want) {
+          throw new Error(
+            `getHeader() ${label} state: got ${JSON.stringify(got)}, want ${JSON.stringify(want)}`
+          );
+        }
+      }
+
+      // Control assertion: proves the fallback is not simply always returned. This is the
+      // assertion that goes RED if `=== undefined` is converted to a truthiness test.
+      const configured = call({ header: "SPC FORECAST" });
+      if (configured === "NWS Hazard Outlooks") {
+        throw new Error(
+          `control failed: an operator-configured header must never equal the fallback string, got ${JSON.stringify(configured)}`
+        );
+      }
+    }
+  },
+  {
+    // UAT-11 (19.1 D-03): the pre-payload loading string must name the NWS umbrella, not SPC
+    // alone — the same claim the getHeader() fallback makes in a second location.
+    // Mutation to prove RED: restore "Loading SPC Outlook..." at MMM-SPCOutlook.js's
+    // !this.spcrisk branch.
+    name: "uat11-loading-string-names-the-nws-umbrella-not-spc-alone",
+    run: async (_helper) => {
+      const frontend = loadFrontendModule();
+      const config = {
+        lat: PROBE_LAT, lon: PROBE_LON, extended: false, updateInterval: 60,
+        proximityWeighting: false
+      };
+      const rendered = renderDom(frontend, { config, spcrisk: null });
+
+      // Precondition guard: the fixture must actually reach the loading branch. Without this,
+      // a future refactor that made !this.spcrisk unreachable would leave this scenario
+      // asserting against whatever else rendered.
+      if (rendered.includes("<br/>") || rendered.includes("Day ")) {
+        throw new Error(
+          `precondition failed: expected the loading branch (no day loop, no <br/>), got: ${rendered}`
+        );
+      }
+
+      if (rendered !== "Loading NWS outlooks...") {
+        throw new Error(`expected the NWS-umbrella loading string, got: ${JSON.stringify(rendered)}`);
+      }
+      if (rendered.includes("SPC Outlook")) {
+        throw new Error(`the loading string must not name SPC alone, got: ${JSON.stringify(rendered)}`);
+      }
+
+      // Control: a minimal populated payload must NOT produce the loading string, proving the
+      // branch is selected by !this.spcrisk rather than always taken.
+      const populatedPayload = unifiedPayload({});
+      populatedPayload.summary.anyHazard = false;
+      const populatedRendered = renderDom(frontend, { config, spcrisk: populatedPayload });
+      if (populatedRendered === rendered) {
+        throw new Error(
+          `control failed: a populated payload rendered the same as the loading branch: ${populatedRendered}`
+        );
+      }
+    }
+  },
+  {
     // CR-01: a degraded read is never a confident all-clear. Pins the empty-state ladder's
     // staleness disqualification — a stale, quiet payload must show the ⚠ badge with the
     // unconfirmed string beneath it, never a bare badge and never the confident string.
