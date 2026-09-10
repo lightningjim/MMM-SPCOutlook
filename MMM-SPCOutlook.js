@@ -46,10 +46,14 @@
   // CR-03's overlapping-poll race from occasional into continuous. Resolve once, here, so
   // the timer and the value the helper is told about can never disagree.
   resolveUpdateInterval: function() {
-    const n = Number(this.config.updateInterval);
+    // 19.1-02: `this.config` itself (not just `updateInterval`) is guarded so a null/
+    // non-object config — the same defensive shape `_warnUnrecognizedConfigKeys` tolerates —
+    // degrades to the 60-minute fallback below instead of throwing on property access.
+    const config = typeof this.config === "object" && this.config !== null ? this.config : {};
+    const n = Number(config.updateInterval);
     if (!Number.isFinite(n) || n < 1) {
       if (!this._loggedIntervalFallback) {
-        Log.warn("MMM-SPCOutlook: invalid updateInterval " + JSON.stringify(this.config.updateInterval) +
+        Log.warn("MMM-SPCOutlook: invalid updateInterval " + JSON.stringify(config.updateInterval) +
                  ", defaulting to 60 minutes");
         this._loggedIntervalFallback = true;
       }
@@ -58,26 +62,121 @@
     return n;
   },
 
+  // 19.1-02: dependency-free edit-distance helper backing the unrecognised-config-key
+  // suggestion below. Standard iterative dynamic-programming Levenshtein distance — no
+  // package added (19.1-RESEARCH.md "Don't Hand-Roll": a ~15-line restatement is not worth a
+  // dependency for this one call site). `String(...)` on both arguments so a non-string key
+  // (e.g. a `constructor`/`toString` config entry) can never throw.
+  _levenshtein: function(a, b) {
+    a = String(a);
+    b = String(b);
+    const m = a.length;
+    const n = b.length;
+    const dp = new Array(n + 1);
+    for (let j = 0; j <= n; j++) {
+      dp[j] = j;
+    }
+    for (let i = 1; i <= m; i++) {
+      let prev = dp[0];
+      dp[0] = i;
+      for (let j = 1; j <= n; j++) {
+        const temp = dp[j];
+        dp[j] = a[i - 1] === b[j - 1] ? prev : 1 + Math.min(prev, dp[j], dp[j - 1]);
+        prev = temp;
+      }
+    }
+    return dp[n];
+  },
+
+  // 19.1-02: nearest-`defaults`-key suggestion for the unrecognised-config-key warning.
+  // The threshold rejects a "nearest match" that is not actually close, so a wildly
+  // unrelated typo does not get told "did you mean lat?" — `dayReportDetails` →
+  // `dayReportDetail` is distance 1 and lands well inside `max(2, ceil(len/3))` for any key
+  // longer than a couple characters. Iterates `knownKeys` in order and uses strict `<` (not
+  // `<=`) when updating the best match, so the first-declared `defaults` key wins a tie —
+  // deterministic output for a log line an operator will diff between runs. This is a
+  // deliberate restatement, not a shared helper, matching this file's established
+  // "frontend/backend restatement over sharing" convention (19.1-CONTEXT.md `<code_context>`
+  // → Established Patterns).
+  _nearestKnownConfigKey: function(key, knownKeys) {
+    const target = String(key);
+    const threshold = Math.max(2, Math.ceil(target.length / 3));
+    let best = null;
+    let bestDist = Infinity;
+    for (let i = 0; i < knownKeys.length; i++) {
+      const candidate = knownKeys[i];
+      const dist = this._levenshtein(target, candidate);
+      if (dist < bestDist) {
+        bestDist = dist;
+        best = candidate;
+      }
+    }
+    return best !== null && bestDist <= threshold ? best : null;
+  },
+
+  // 19.1-02 (19-UAT.md test 13): MagicMirror builds `this.config` as
+  // `Object.assign({}, this.defaults, data.config)` with no validation, so a typo'd key
+  // (e.g. `dayReportDetails` against the real `dayReportDetail`) is silently absorbed and
+  // never read — the operator believes a setting is on when it never was. `start()` runs
+  // once per module load, so unlike `resolveUpdateInterval` (called on every interval tick)
+  // this needs NO `_logged*` once-only guard.
+  //
+  // Allowlist is EXACTLY `Object.keys(this.defaults)` — verified against MagicMirror 2.37.0
+  // (`~/MagicMirror/js/module.js:212-230`): `module`/`position`/`header`/`classes`/
+  // `disabled`/`hiddenOnStartup`/`animateIn`/`animateOut`/`configDeepMerge` all live on
+  // `this.data`, never on `this.config`, so they can never produce a false positive here and
+  // must NOT be added — a wider allowlist is unnecessary machinery, not a safety margin.
+  //
+  // `Log.warn`, never `Log.error`/throw: a config typo must not brick the mirror. Never logs
+  // `this.config[key]` — only the key name and the suggested `defaults` name travel to the
+  // log, because a config value can carry coordinates or anything else an operator would not
+  // want in a shared log (unlike `resolveUpdateInterval`, which deliberately logs its one
+  // narrow numeric value).
+  _warnUnrecognizedConfigKeys: function() {
+    if (typeof this.config !== "object" || this.config === null) {
+      return;
+    }
+    const knownKeys = Object.keys(this.defaults);
+    const configKeys = Object.keys(this.config);
+    for (let i = 0; i < configKeys.length; i++) {
+      const key = configKeys[i];
+      if (knownKeys.indexOf(key) !== -1) {
+        continue;
+      }
+      const suggestion = this._nearestKnownConfigKey(key, knownKeys);
+      if (suggestion !== null) {
+        Log.warn("MMM-SPCOutlook: unrecognized config key \"" + key + "\" — did you mean \"" +
+                 suggestion + "\"? This key is ignored; it is not one of this module's defaults.");
+      } else {
+        Log.warn("MMM-SPCOutlook: unrecognized config key \"" + key +
+                 "\" — this key is ignored; it is not one of this module's defaults.");
+      }
+    }
+  },
+
   // WR-15: single source of truth for the GET_SPC_DATA payload. It was previously written
   // out twice — on startup and inside the interval — so a flag added to only one copy
   // rendered correctly at startup and silently reverted on the first refresh.
   // Per-product toggles travel as one nested `products` object rather than additional flat
   // fields; Phases 15-17 add their flags here, in this one place.
   buildRequestPayload: function() {
+    // 19.1-02: same null/non-object config guard as `resolveUpdateInterval` — a broken
+    // config must degrade, never throw, out of this payload builder.
+    const config = typeof this.config === "object" && this.config !== null ? this.config : {};
     return {
-      lat: this.config.lat,
-      lon: this.config.lon,
-      extended: this.config.extended,
+      lat: config.lat,
+      lon: config.lon,
+      extended: config.extended,
       updateInterval: this.resolveUpdateInterval(),
-      proximityWeighting: this.config.proximityWeighting,
+      proximityWeighting: config.proximityWeighting,
       products: {
-        showExcessiveRain: this.config.showExcessiveRain,
-        showWinterImpact: this.config.showWinterImpact,
-        showMPD: this.config.showMPD,
-        showSPCMD: this.config.showSPCMD,
-        showHazardsOutlook: this.config.showHazardsOutlook,
-        showDrought: this.config.showDrought,
-        showHeatRisk: this.config.showHeatRisk
+        showExcessiveRain: config.showExcessiveRain,
+        showWinterImpact: config.showWinterImpact,
+        showMPD: config.showMPD,
+        showSPCMD: config.showSPCMD,
+        showHazardsOutlook: config.showHazardsOutlook,
+        showDrought: config.showDrought,
+        showHeatRisk: config.showHeatRisk
       }
     };
   },
@@ -90,9 +189,15 @@
     // proxy for first populated render.
     this._startedAtMs = Date.now();
     this._loggedFirstPayloadMs = false;
+    // 19.1-02: before the GET_SPC_DATA notification, so an unrecognised-config-key warning
+    // precedes the poll noise in mm-out.log where a troubleshooting operator will see it.
+    this._warnUnrecognizedConfigKeys();
     // Request data once the module starts
     Log.info(`Starting module: ${this.name}`);
-    Log.info("SPC-Outlook: GET_SPC_DATA - " + this.config.lat + "," + this.config.lon + "," + this.config.extended);
+    // 19.1-02: same null/non-object config guard as `resolveUpdateInterval` and
+    // `buildRequestPayload` — a broken config must degrade this log line, never throw here.
+    const startConfig = typeof this.config === "object" && this.config !== null ? this.config : {};
+    Log.info("SPC-Outlook: GET_SPC_DATA - " + startConfig.lat + "," + startConfig.lon + "," + startConfig.extended);
     this.sendSocketNotification("GET_SPC_DATA", this.buildRequestPayload());
     // Set an interval to update every updateInterval minutes (default 60).
     // 19-REVIEW WR-07: the handle is RETAINED. MagicMirror keeps a hidden module's timers
