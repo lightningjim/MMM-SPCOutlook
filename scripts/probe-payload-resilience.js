@@ -21,8 +21,8 @@
 
 const { PRODUCT_REGISTRY, daySpanOf, assertNoSharedRegistryMaps } = require("../productRegistry.js");
 const {
-  loadNodeHelper, loadFrontendModule, renderDom, assertInertMarkup, resetHelper, resetLogs, turfStub, logCalls,
-  hasRealKmlDeps, missingKmlDeps, makeKmzBuffer
+  loadNodeHelper, loadFrontendModule, renderDom, renderDomWrapper, assertInertMarkup, resetHelper, resetLogs,
+  turfStub, logCalls, hasRealKmlDeps, missingKmlDeps, makeKmzBuffer
 } = require("./probe-lib/module-stubs.js");
 // Plan 18-08: read DIMENSION_ORDER off the real taxonomy artifact so the ordering
 // control in merge-distinct-hazards-on-one-day-both-survive never restates a value
@@ -14269,6 +14269,71 @@ const scenarios = [
         throw new Error(
           `control: a mapped dimension's also: row must still column with its winner — ` +
           `winner=${mappedWinnerCh}, also=${mappedAlsoCh}: ${mappedRendered}`
+        );
+      }
+    }
+  },
+  {
+    // 19.1-04 Task 1 (T-19.1-16, UAT-5): the two width-fix contracts, pinned SEPARATELY so a
+    // mutation that drops either one is diagnosable without reading the other. Neither
+    // assertion below proves the region stopped overlapping — the `style` bag is a bare
+    // property bag (see renderDomWrapper's own comment in module-stubs.js); it only proves a
+    // value was ASSIGNED. The overlap claim stays MANUAL ONLY per 19.1-UI-SPEC.md's
+    // Verification Honesty rows 5-6.
+    // Mutation to prove RED: delete wrapper.style.maxWidth, then separately delete
+    // wrapper.style.textAlign. Each deletion must fail THIS scenario with a message naming
+    // that property.
+    name: "uat05-wrapper-declares-both-region-containment-contracts",
+    run: async (_helper) => {
+      const frontend = loadFrontendModule();
+      const config = {
+        lat: PROBE_LAT, lon: PROBE_LON, extended: false, updateInterval: 60,
+        proximityWeighting: false, dayReportDetail: true, showWinterImpact: true
+      };
+      const payload = unifiedPayload({});
+      payload.days["2"].hazards = [
+        { dimension: "wind", source: "wpc-wssi", label: "Winner", text: "High Winds",
+          value: 3, color: "e69138", suppressedBy: null }
+      ];
+      payload.summary.anyHazard = true;
+      const wrapper = renderDomWrapper(frontend, { config, spcrisk: payload });
+
+      // Vacuity guard: the render actually produced detail sub-rows — otherwise the style
+      // assertions below would pass against a wrapper the LOADING branch produced instead,
+      // which sets both properties before any content exists (Phase 15 D-10 failure mode a).
+      if (!wrapper.innerHTML.includes("— WSSI") || !/min-width:\d+ch/.test(wrapper.innerHTML)) {
+        throw new Error(
+          `vacuity guard failed: expected a rendered detail sub-row carrying a min-width box ` +
+          `and the WSSI attribution, got: ${wrapper.innerHTML}`
+        );
+      }
+
+      if (wrapper.style.maxWidth !== "32.4rem") {
+        throw new Error(
+          `expected wrapper.style.maxWidth === "32.4rem" (19.1 region-containment cap), got: ` +
+          `${JSON.stringify(wrapper.style.maxWidth)}`
+        );
+      }
+      if (wrapper.style.textAlign !== "left") {
+        throw new Error(
+          `expected wrapper.style.textAlign === "left" (the 19-08 anchor), got: ` +
+          `${JSON.stringify(wrapper.style.textAlign)}`
+        );
+      }
+
+      // Control: both properties are assigned BEFORE the branch split (loading/error/main),
+      // so a future refactor that moves them inside a branch must fail loudly here too.
+      const loadingWrapper = renderDomWrapper(frontend, { config, spcrisk: null });
+      if (loadingWrapper.style.maxWidth !== "32.4rem") {
+        throw new Error(
+          `control: the loading branch must still carry wrapper.style.maxWidth === "32.4rem", ` +
+          `got: ${JSON.stringify(loadingWrapper.style.maxWidth)}`
+        );
+      }
+      if (loadingWrapper.style.textAlign !== "left") {
+        throw new Error(
+          `control: the loading branch must still carry wrapper.style.textAlign === "left", ` +
+          `got: ${JSON.stringify(loadingWrapper.style.textAlign)}`
         );
       }
     }
