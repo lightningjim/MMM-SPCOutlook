@@ -21,8 +21,8 @@
 
 const { PRODUCT_REGISTRY, daySpanOf, assertNoSharedRegistryMaps } = require("../productRegistry.js");
 const {
-  loadNodeHelper, loadFrontendModule, renderDom, assertInertMarkup, resetHelper, resetLogs, turfStub, logCalls,
-  hasRealKmlDeps, missingKmlDeps, makeKmzBuffer
+  loadNodeHelper, loadFrontendModule, renderDom, renderDomWrapper, assertInertMarkup, resetHelper, resetLogs,
+  turfStub, logCalls, hasRealKmlDeps, missingKmlDeps, makeKmzBuffer
 } = require("./probe-lib/module-stubs.js");
 // Plan 18-08: read DIMENSION_ORDER off the real taxonomy artifact so the ordering
 // control in merge-distinct-hazards-on-one-day-both-survive never restates a value
@@ -14269,6 +14269,371 @@ const scenarios = [
         throw new Error(
           `control: a mapped dimension's also: row must still column with its winner — ` +
           `winner=${mappedWinnerCh}, also=${mappedAlsoCh}: ${mappedRendered}`
+        );
+      }
+    }
+  },
+  {
+    // 19.1-04 Task 1 (T-19.1-16, UAT-5): the two width-fix contracts, pinned SEPARATELY so a
+    // mutation that drops either one is diagnosable without reading the other. Neither
+    // assertion below proves the region stopped overlapping — the `style` bag is a bare
+    // property bag (see renderDomWrapper's own comment in module-stubs.js); it only proves a
+    // value was ASSIGNED. The overlap claim stays MANUAL ONLY per 19.1-UI-SPEC.md's
+    // Verification Honesty rows 5-6.
+    // Mutation to prove RED: delete wrapper.style.maxWidth, then separately delete
+    // wrapper.style.textAlign. Each deletion must fail THIS scenario with a message naming
+    // that property.
+    name: "uat05-wrapper-declares-both-region-containment-contracts",
+    run: async (_helper) => {
+      const frontend = loadFrontendModule();
+      const config = {
+        lat: PROBE_LAT, lon: PROBE_LON, extended: false, updateInterval: 60,
+        proximityWeighting: false, dayReportDetail: true, showWinterImpact: true
+      };
+      const payload = unifiedPayload({});
+      payload.days["2"].hazards = [
+        { dimension: "wind", source: "wpc-wssi", label: "Winner", text: "High Winds",
+          value: 3, color: "e69138", suppressedBy: null }
+      ];
+      payload.summary.anyHazard = true;
+      const wrapper = renderDomWrapper(frontend, { config, spcrisk: payload });
+
+      // Vacuity guard: the render actually produced detail sub-rows — otherwise the style
+      // assertions below would pass against a wrapper the LOADING branch produced instead,
+      // which sets both properties before any content exists (Phase 15 D-10 failure mode a).
+      if (!wrapper.innerHTML.includes("— WSSI") || !/min-width:\d+ch/.test(wrapper.innerHTML)) {
+        throw new Error(
+          `vacuity guard failed: expected a rendered detail sub-row carrying a min-width box ` +
+          `and the WSSI attribution, got: ${wrapper.innerHTML}`
+        );
+      }
+
+      if (wrapper.style.maxWidth !== "32.4rem") {
+        throw new Error(
+          `expected wrapper.style.maxWidth === "32.4rem" (19.1 region-containment cap), got: ` +
+          `${JSON.stringify(wrapper.style.maxWidth)}`
+        );
+      }
+      if (wrapper.style.textAlign !== "left") {
+        throw new Error(
+          `expected wrapper.style.textAlign === "left" (the 19-08 anchor), got: ` +
+          `${JSON.stringify(wrapper.style.textAlign)}`
+        );
+      }
+
+      // Control: both properties are assigned BEFORE the branch split (loading/error/main),
+      // so a future refactor that moves them inside a branch must fail loudly here too.
+      const loadingWrapper = renderDomWrapper(frontend, { config, spcrisk: null });
+      if (loadingWrapper.style.maxWidth !== "32.4rem") {
+        throw new Error(
+          `control: the loading branch must still carry wrapper.style.maxWidth === "32.4rem", ` +
+          `got: ${JSON.stringify(loadingWrapper.style.maxWidth)}`
+        );
+      }
+      if (loadingWrapper.style.textAlign !== "left") {
+        throw new Error(
+          `control: the loading branch must still carry wrapper.style.textAlign === "left", ` +
+          `got: ${JSON.stringify(loadingWrapper.style.textAlign)}`
+        );
+      }
+    }
+  },
+  {
+    // 19.1-04 Task 2 (UAT-5): pins the ABSENCE of the defective construct (literal space-run
+    // padding baked into escaped text — the root cause of the region-overlap defect) and the
+    // PRESENCE of both min-width ch floors, colocated with the monospace font-family that lets
+    // `ch` resolve correctly (Pitfall 4). Does not itself pin the wr04-*/wr02-* scenarios'
+    // own concerns (truncation order, indent derivation) — see those scenarios for the
+    // positive mechanism this one covers only negatively/structurally.
+    //
+    // Space-run exemption list — exactly two, both pre-existing, module-authored, and out of
+    // this phase's scope:
+    //  1. detailSourceAttribution's three-space attribution gap immediately before the em dash
+    //     ("   — ", MMM-SPCOutlook.js's detailSourceAttribution) — structural attribution
+    //     spacing, not a column-alignment padding mechanism.
+    //  2. convectiveDetailAugment's five-space probabilistic sub-line indent (the `subLineHtml`
+    //     literal in MMM-SPCOutlook.js's convectiveDetailAugment, out of scope for this phase —
+    //     the plan names this exemption by its historical ":490" line reference; the line has
+    //     since drifted to ~630 across this wave's edits, so this comment names the function
+    //     instead of a line number that would itself go stale). Neither exemption may be
+    //     widened to also cover a reintroduced .padEnd() — a future reader must not enlarge
+    //     this list to make a real regression disappear.
+    // Mutation to prove RED: re-add .padEnd(DETAIL_LABEL_FIELD_WIDTH) to labelContent
+    // (assertion 1 goes RED); separately, move the font-family declaration off the row span and
+    // off detailColoredWrapper (assertion 3 goes RED).
+    name: "uat05-detail-fields-carry-no-space-run-padding-and-declare-a-ch-floor",
+    run: async (_helper) => {
+      const frontend = loadFrontendModule();
+      const config = {
+        lat: PROBE_LAT, lon: PROBE_LON, extended: false, updateInterval: 60,
+        proximityWeighting: false, dayReportDetail: true,
+        showHazardsOutlook: true, showWinterImpact: true
+      };
+      const payload = unifiedPayload({});
+      payload.days["2"].hazards = [
+        { dimension: "wind", source: "wpc-wssi", label: "Winner", text: "High Winds",
+          value: 3, color: "e69138", suppressedBy: null },
+        { dimension: "wind", source: "wpc-hazards", label: "Comp", text: "Competitor",
+          value: null, color: "63be7b", suppressedBy: "wpc-wssi" }
+      ];
+      payload.summary.anyHazard = true;
+      const rendered = renderDom(frontend, { config, spcrisk: payload });
+
+      // Precondition guard (Phase 15 D-10 failure mode (a)): the fixture's winner entry must
+      // have actually rendered, or the negative assertion below would trivially pass against
+      // an empty render — a negative assertion is exactly what that failure mode is most
+      // vulnerable to (/ {3,}/ trivially fails to match an empty string).
+      if (!rendered.includes("— WSSI")) {
+        throw new Error(
+          `precondition failed: expected the winner sub-row to render, got: ${rendered}`
+        );
+      }
+
+      // Assertion 1: no space-run padding reaches the markup, beyond the two named exemptions
+      // above. Rows are split on <br/> first so they are independent, then tags are stripped
+      // and the two exemptions removed before testing for any remaining run of 3+ spaces.
+      const rows = rendered.split("<br/>");
+      for (const row of rows) {
+        const textOnly = row.replace(/<[^>]*>/g, "");
+        const exempted = textOnly
+          .replace(/ {3}—/g, "") // exemption 1: the three-space attribution gap
+          .replace(/^ {5}/, ""); // exemption 2: the five-space sub-line indent
+        if (/ {3,}/.test(exempted)) {
+          throw new Error(
+            `row carries space-run padding outside the two named exemptions (the defect ` +
+            `this phase fixes): ${JSON.stringify(row)}`
+          );
+        }
+      }
+
+      // Assertion 2: both field boxes declare their ch floor.
+      if (!rendered.includes("min-width:13ch") || !rendered.includes("min-width:23ch")) {
+        throw new Error(
+          `expected both a min-width:13ch dimension box and a min-width:23ch label box, ` +
+          `got: ${rendered}`
+        );
+      }
+
+      // Assertion 3 (Pitfall 4): every min-width: occurrence is preceded, within its own
+      // <br/>-delimited row, by at least one font-family:'DejaVu Sans Mono' declaration —
+      // otherwise ch would resolve against the host's proportional font, silently misaligning
+      // the whole mechanism while every other assertion here stays green.
+      for (const row of rows) {
+        if (!row.includes("min-width:")) continue;
+        const fontIdx = row.indexOf("font-family:'DejaVu Sans Mono'");
+        const minWidthIdx = row.indexOf("min-width:");
+        if (fontIdx === -1 || fontIdx > minWidthIdx) {
+          throw new Error(
+            `row declares a ch width with no preceding monospace font-family in scope ` +
+            `(Pitfall 4), got: ${JSON.stringify(row)}`
+          );
+        }
+      }
+
+      // Assertion 4: overflow still pushes right, never clips. A 200-character label still
+      // floors at min-width:23ch (a floor, not a ceiling) and the 60-character truncated label
+      // renders in full inside it; no hard width or clip declaration reaches the markup.
+      const longLabel = "B".repeat(200);
+      const overflowPayload = unifiedPayload({});
+      overflowPayload.days["2"].hazards = [
+        { dimension: "wind", source: "wpc-wssi", label: "Winner", text: longLabel,
+          value: 3, color: "e69138", suppressedBy: null }
+      ];
+      overflowPayload.summary.anyHazard = true;
+      const overflowRendered = renderDom(frontend, { config, spcrisk: overflowPayload });
+      if (!overflowRendered.includes("— WSSI")) {
+        throw new Error(
+          `precondition failed: expected the overflow winner sub-row to render, ` +
+          `got: ${overflowRendered}`
+        );
+      }
+      const expectedTruncated = "B".repeat(60) + "…";
+      if (!overflowRendered.includes('min-width:23ch">' + expectedTruncated)) {
+        throw new Error(
+          `expected the 60-character truncated label to render in full inside its ` +
+          `min-width:23ch box (a floor, not a ceiling), got: ${overflowRendered}`
+        );
+      }
+      if (/(?<!min-)width:23ch/.test(overflowRendered)) {
+        throw new Error(
+          `a hard width (not min-width) reached the markup, got: ${overflowRendered}`
+        );
+      }
+      if (overflowRendered.includes("overflow:hidden") || overflowRendered.includes("text-overflow")) {
+        throw new Error(
+          `a clip declaration (overflow:hidden/text-overflow) reached the markup, which would ` +
+          `silently delete overflow content today's mechanism degrades gracefully instead, ` +
+          `got: ${overflowRendered}`
+        );
+      }
+
+      // Control: the compact header row above the expanded day — which is NOT a detail row
+      // and carries no boxes — renders and contains no min-width: declaration, proving
+      // assertion 2 is selecting the detail rows specifically rather than matching anything.
+      const compactRows = rendered.split("<br/>").filter((r) => r.includes("Day 2 ("));
+      if (compactRows.length === 0) {
+        throw new Error(
+          `control precondition failed: expected a compact header row for Day 2, ` +
+          `got: ${rendered}`
+        );
+      }
+      for (const row of compactRows) {
+        if (row.includes("min-width:")) {
+          throw new Error(
+            `control failed: the compact header row must carry no min-width box, got: ${row}`
+          );
+        }
+      }
+    }
+  },
+  {
+    // 19.1-04 Task 3 (BL-02 + iteration-4 WR-02, restated for the box mechanism): the first
+    // scenario to exercise all three row kinds (winner, co-winner, also: competitor) in ONE
+    // dimension group, proving the one derived quantity
+    // (Math.max(DIMENSION_FIELD_WIDTH, dimensionField.length)) that feeds the winner box, the
+    // BL-02 blank co-winner box and the also: spacer can never disagree. wr02-* covers the
+    // UNMAPPED overrun case; bl02-* covers two co-winners with no competitor; this scenario is
+    // the first to combine a co-winner AND a suppressed competitor on the same dimension.
+    // NONE of this scenario's assertions prove the region stopped overlapping the centre
+    // column — they prove the mechanism is in place and correctly derived. The overlap itself
+    // stays MANUAL ONLY (plan 19.1-05's job).
+    // Mutation to prove RED: replace Math.max(DIMENSION_FIELD_WIDTH, dimensionField.length)
+    // with DIMENSION_FIELD_WIDTH + 1 (assertion 5 goes RED on the concrete 13); separately,
+    // emit the co-winner's blank field as " ".repeat(DIMENSION_FIELD_WIDTH) instead of an
+    // empty box (assertion 1 goes RED).
+    name: "uat05-co-winner-and-also-rows-derive-their-boxes-from-the-groups-own-width",
+    run: async (_helper) => {
+      const frontend = loadFrontendModule();
+      const config = {
+        lat: PROBE_LAT, lon: PROBE_LON, extended: false, updateInterval: 60,
+        proximityWeighting: false, dayReportDetail: true,
+        showHazardsOutlook: true, showWinterImpact: true
+      };
+      const firstMinWidth = (str) => Number(((str || "").match(/min-width:(\d+)ch/) || [])[1]);
+
+      const buildPayload = (includeCoWinner) => {
+        const p = unifiedPayload({});
+        const hazards = [
+          { dimension: "winter", source: "wpc-hazards", label: "Heavy Snow", text: "Heavy Snow",
+            value: null, color: "6fa8dc", suppressedBy: null }
+        ];
+        if (includeCoWinner) {
+          hazards.push({
+            dimension: "winter", source: "wpc-hazards", label: "Freezing Rain", text: "Freezing Rain",
+            value: null, color: "6fa8dc", suppressedBy: null
+          });
+        }
+        hazards.push({
+          dimension: "winter", source: "wpc-wssi", label: "Comp", text: "Competitor",
+          value: null, color: "63be7b", suppressedBy: "wpc-hazards"
+        });
+        p.days["5"].hazards = hazards;
+        p.summary.anyHazard = true;
+        p.summary.activeDays = [5];
+        p.summary.dimensions = ["winter"];
+        return p;
+      };
+
+      const rendered = renderDom(frontend, { config, spcrisk: buildPayload(true) });
+      const rows = rendered.split("<br/>");
+      // Detail sub-rows carry a min-width box; the compact header line above them repeats the
+      // same entry text without one, so that term is required to select the sub-row and not
+      // its own compact header.
+      const winnerRow = rows.find((r) => r.includes("Heavy Snow") && r.includes("min-width:"));
+      const coWinnerRow = rows.find((r) => r.includes("Freezing Rain") && r.includes("min-width:") && !r.includes("also:"));
+      const alsoRow = rows.find((r) => r.includes("also:") && r.includes("Competitor"));
+
+      // Precondition guard: all three row kinds must have actually rendered, or every
+      // assertion below would be measuring something other than what it names.
+      const attributionCount = (rendered.match(/— WPC Hazards/g) || []).length;
+      if (!winnerRow || !coWinnerRow || !alsoRow || attributionCount !== 2) {
+        throw new Error(
+          `precondition failed: expected a winner row, a co-winner row and an also: row ` +
+          `(two "— WPC Hazards" attributions), got: ${rendered}`
+        );
+      }
+
+      // Assertion 1: BL-02 survives as an EMPTY box, not spaces — an immediately-closed
+      // min-width span, same floor width as the winner's own dimension box, no &nbsp;/&#160;.
+      const winnerDimWidth = firstMinWidth(winnerRow);
+      if (!coWinnerRow.includes(
+        `<span style="display:inline-block;min-width:${winnerDimWidth}ch"></span>` +
+        `<span style="display:inline-block;min-width:23ch">Freezing Rain`
+      )) {
+        throw new Error(
+          `expected the co-winner's dimension box to be EMPTY (not "Winter" again) and stay ` +
+          `column-aligned with the winner row above it, got: ${coWinnerRow}`
+        );
+      }
+      if (coWinnerRow.includes("&nbsp;") || coWinnerRow.includes("&#160;")) {
+        throw new Error(
+          `the co-winner's blank box must never be filled with a padding character, got: ${coWinnerRow}`
+        );
+      }
+
+      // Assertion 2: the co-winner reads as a peer, not a subordinate — same label box width.
+      const winnerLabelWidth = Number((winnerRow.match(/min-width:(\d+)ch/g) || [])[1]?.match(/\d+/)?.[0]);
+      const coWinnerLabelWidth = Number((coWinnerRow.match(/min-width:(\d+)ch/g) || [])[1]?.match(/\d+/)?.[0]);
+      if (winnerLabelWidth !== 23 || coWinnerLabelWidth !== 23) {
+        throw new Error(
+          `expected both the winner's and the co-winner's label box to declare min-width:23ch, ` +
+          `got winner=${winnerLabelWidth}, co-winner=${coWinnerLabelWidth}`
+        );
+      }
+
+      // Assertion 3: the also: spacer derives from the group's own width (2 + 13 + 2 = 17 for
+      // this mapped dimension), is EMPTY, and carries no color: declaration (structural,
+      // uncoloured, per 19.1-UI-SPEC.md's Colour section).
+      const spacerMatch = alsoRow.match(/<span style="display:inline-block;min-width:(\d+)ch">(.*?)<\/span>also: /);
+      if (!spacerMatch) {
+        throw new Error(`expected the also: row to open with an empty, uncoloured spacer box, got: ${alsoRow}`);
+      }
+      const spacerWidth = Number(spacerMatch[1]);
+      if (spacerMatch[2] !== "") {
+        throw new Error(`expected the also: spacer box to be EMPTY, got content: ${JSON.stringify(spacerMatch[2])}`);
+      }
+      if (spacerWidth !== 17) {
+        throw new Error(`expected the also: spacer to derive its width as 2 + 13 + 2 = 17, got ${spacerWidth}: ${alsoRow}`);
+      }
+
+      // Assertion 4: the literal `also: ` text is still outside any colour span (unchanged
+      // from rpt03-also-line-…; restated here because the nesting changed around it and
+      // T-19-17 depends on it).
+      if (!/<\/span>also: <span style="color:/.test(alsoRow)) {
+        throw new Error(`expected the literal "also: " text to sit outside any colour span, got: ${alsoRow}`);
+      }
+
+      // Assertion 5: one quantity, three consumers — the winner's dimension box, the
+      // co-winner's blank box and (spacer - 4) must all be the SAME number, computed from the
+      // markup rather than hardcoded, and that number must be 13 for this fixture — so both a
+      // drift between the three and a wholesale shift of all three go RED.
+      const coWinnerDimWidth = firstMinWidth(coWinnerRow);
+      if (winnerDimWidth !== coWinnerDimWidth || winnerDimWidth !== spacerWidth - 4) {
+        throw new Error(
+          `expected the winner box, the co-winner blank box and (spacer - 4) to all agree, ` +
+          `got winner=${winnerDimWidth}, co-winner=${coWinnerDimWidth}, spacer-4=${spacerWidth - 4}`
+        );
+      }
+      if (winnerDimWidth !== 13) {
+        throw new Error(`expected the concrete derived width to be 13 for this fixture, got ${winnerDimWidth}`);
+      }
+
+      // Control: the SAME payload with the co-winner removed must produce exactly ONE
+      // dimension box carrying the label and NO empty-box occurrence, proving assertion 1 is
+      // observing the co-winner path rather than matching anything anywhere.
+      const controlRendered = renderDom(frontend, { config, spcrisk: buildPayload(false) });
+      if (!controlRendered.includes("Heavy Snow") || !controlRendered.includes("also: ")) {
+        throw new Error(
+          `control precondition failed: expected the winner and an also: row without the ` +
+          `co-winner, got: ${controlRendered}`
+        );
+      }
+      const labelledBoxes = (controlRendered.match(/min-width:13ch">Winter<\/span>/g) || []).length;
+      const emptyBoxes = (controlRendered.match(/min-width:13ch"><\/span>/g) || []).length;
+      if (labelledBoxes !== 1 || emptyBoxes !== 0) {
+        throw new Error(
+          `control failed: expected exactly one labelled dimension box and zero empty boxes ` +
+          `without a co-winner present, got labelled=${labelledBoxes}, empty=${emptyBoxes}: ${controlRendered}`
         );
       }
     }

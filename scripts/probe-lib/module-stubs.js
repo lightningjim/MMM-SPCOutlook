@@ -372,8 +372,21 @@ function assertInertMarkup(html, label) {
   }
 }
 
-// Render a payload through the real getDom and return the resulting markup/text.
-function renderDom(frontend, { config, spcrisk }) {
+// Render a payload through the real getDom and return the resulting stub wrapper OBJECT
+// (not its markup) so a scenario can observe properties assigned on it, e.g.
+// `wrapper.style.maxWidth`/`wrapper.style.textAlign`.
+//
+// What this does and does not prove (19.1-04, T-19.1-16): `document.createElement` above
+// returns a bare `{innerHTML, textContent, style: {}}` property bag. `style` exists only so
+// an assignment like `wrapper.style.textAlign = "left"` does not throw — nothing here lays
+// out, measures, or renders. A scenario built on this accessor may assert that a style
+// PROPERTY WAS ASSIGNED; it must never be cited as proof that the region stopped
+// overlapping, or that any layout claim is true. `textAlign` (the 19-08 anchor, previously
+// unpinned and described as "probe-invisible by construction") and `maxWidth` (the 19.1
+// region-containment cap) are the two properties this accessor exists to make observable.
+// Both remain `MANUAL ONLY` for the layout claim itself — see 19.1-UI-SPEC.md's
+// "Verification Honesty" table.
+function renderDomWrapper(frontend, { config, spcrisk }) {
   const ctx = Object.create(frontend);
   ctx.config = config;
   ctx.spcrisk = spcrisk;
@@ -383,6 +396,14 @@ function renderDom(frontend, { config, spcrisk }) {
   // construction — asserting an allowlist against it would reject the very thing that makes
   // it safe (a verbatim, unescaped remote error string that never becomes markup).
   if (wrapper.innerHTML) assertInertMarkup(wrapper.innerHTML, "getDom innerHTML");
+  return wrapper;
+}
+
+// Render a payload through the real getDom and return the resulting markup/text. Delegates
+// to renderDomWrapper so there is exactly one render path and assertInertMarkup runs exactly
+// once per render; all existing call sites are unaffected by this delegation.
+function renderDom(frontend, { config, spcrisk }) {
+  const wrapper = renderDomWrapper(frontend, { config, spcrisk });
   return wrapper.innerHTML || wrapper.textContent || "";
 }
 
@@ -416,6 +437,7 @@ module.exports = {
   loadNodeHelper,
   loadFrontendModule,
   renderDom,
+  renderDomWrapper,
   assertInertMarkup,
   resetHelper,
   resetLogs,
