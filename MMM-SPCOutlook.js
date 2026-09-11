@@ -611,9 +611,9 @@
     // wrapper's own box so its children become grid items of the enclosing row, while color — an inherited
     // property — still reaches them. That is what preserves Phase 19 D-02's "the dimension
     // name and the label share one colour" unit through the mechanism swap: one
-    // validHazardColor call, one colour decision, two cells. white-space:pre-wrap and the
-    // monospace font-family are both dropped: nothing in the row is a literal space run any
-    // more and nothing resolves ch.
+    // validHazardColor call, one colour decision, two cells. The old space-preserving
+    // white-space declaration and the monospace font-family are both dropped: nothing in
+    // this cell is a literal space run any more and nothing resolves ch.
     const detailColoredWrapper = (color, innerHtml) => (
       "<span style=\"color:#" + validHazardColor(color) + ";display:contents\">" +
       innerHtml + "</span>"
@@ -810,15 +810,17 @@
           : lookup(DIMENSION_LABELS, group.dimension, group.dimension)
         ));
         // UI-SPEC "New column contract": dimensionField keeps its own-account truncation
-        // (WR-04) but DROPS .padEnd() — the row's own grid track (Task 3) supplies the floor
-        // width, not padded text.
-        // 19-REVIEW iteration-4 WR-02, restated for the box mechanism: ONE derived quantity
-        // drives the winner box, the BL-02 blank co-winner box AND the also: spacer below, so
-        // none of the three can disagree. The explicit Math.max is now REQUIRED, not merely
-        // defensive — unlike the retired padEnd() mechanism, dimensionField's raw .length is
-        // no longer guaranteed to be at least DIMENSION_FIELD_WIDTH, so omitting Math.max
-        // would silently narrow the column for every short (mapped) dimension name.
-        const dimensionFieldWidthCh = Math.max(DIMENSION_FIELD_WIDTH, dimensionField.length);
+        // (WR-04) but DROPS .padEnd() — the row's own grid track supplies the floor width,
+        // not padded text.
+        // 19-REVIEW iteration-4 WR-02, restated for the grid-track mechanism (Phase 19.1
+        // gap closure Task 3a): ONE derived quantity now sizes the first GRID TRACK on all
+        // three row kinds (winner, BL-02 blank co-winner, `also:`), rather than a `ch` box
+        // width — the ONE-derived-quantity invariant itself does not change, only the CSS
+        // property it feeds. The explicit Math.max is still REQUIRED for the same reason it
+        // was under the box mechanism: dimensionField's raw .length is not guaranteed to
+        // reach DIMENSION_FIELD_WIDTH, so omitting it would silently narrow the column for
+        // every short (mapped) dimension name.
+        const dimensionTrackFr = Math.max(DIMENSION_FIELD_WIDTH, dimensionField.length);
         // D-07: the convective augment is read PER ENTRY, not once for the group — its whole
         // input is `entry.detail` (plus the day's proximity subtree), so a co-winner carrying
         // its own detail keeps its own probabilistic sub-line and an entry without one
@@ -843,56 +845,42 @@
             ? convectiveDetailAugment(day, entry)
             : { labelSuffix: "", subLineHtml: "" };
           const labelContent = truncateHazardLabel(entryText(entry)) + augment.labelSuffix;
-          // 19-REVIEW BL-02, restated for the box mechanism: the dimension box is written on
-          // the group's FIRST winner row only; a co-winner row gets an EMPTY box of the same
-          // floor width (dimensionFieldWidthCh) — never a run of spaces, a `&nbsp;`, a
-          // `.repeat()` string, or a zero-width space — so the co-winner still reads as a
-          // peer of the row above it rather than a subordinate of it.
+          // 19-REVIEW BL-02, restated for the grid-track mechanism: the dimension cell is
+          // written on the group's FIRST winner row only; a co-winner row gets an EMPTY cell
+          // in a track of the same width — never a run of spaces, a `&nbsp;`, a `.repeat()`
+          // string, or a zero-width space — so the co-winner still reads as a peer of the
+          // row above it rather than a subordinate of it.
           const dimensionBoxContent = escapeHtml(i === 0 ? dimensionField : "");
-          const fieldBoxesHtml =
-            detailFieldCell(dimensionBoxContent) +
-            detailFieldCell(escapeHtml(labelContent));
-          // Phase 19.1 gap closure (Task 2, interim state): the row-level monospace
-          // font-family declaration is retired here — column alignment no longer depends on
-          // a character stream, so nothing in the row needs a shared font any more. This row
-          // opener (and the literal "  " indent below it) is still the pre-mechanism-swap
-          // shape; Task 3 replaces both with detailRowOpen()'s grid-track row and the
-          // DETAIL_ROW_INDENT_REM padding, at which point this row becomes coherent again.
-          html += "<span style=\"white-space:pre-wrap\">" +
-            "  " + detailColoredWrapper(entry.color, fieldBoxesHtml) +
-            detailSourceAttribution(entry.source) + "</span><br/>";
+          // Phase 19.1 gap closure (Task 3b): detailRowOpen(dimensionTrackFr) opens an
+          // inline-grid row whose three tracks line the dimension/label/source-attribution
+          // cells up across every row kind; the literal "  " indent is gone — padding-left
+          // on the row (DETAIL_ROW_INDENT_REM) carries it now. The row still closes with
+          // exactly one </span> and one <br/>, so the tag balance of the emitted stream is
+          // unchanged.
+          html += detailRowOpen(dimensionTrackFr) +
+            detailColoredWrapper(entry.color,
+              detailFieldCell(dimensionBoxContent) + detailFieldCell(escapeHtml(labelContent))) +
+            detailFieldCell(detailSourceAttribution(entry.source)) + "</span><br/>";
           if (augment.subLineHtml) html += augment.subLineHtml;
         }
         for (const competitor of group.competitors) {
-          // 19-REVIEW iteration-4 WR-02, restated for the box mechanism: the spacer's own
-          // `ch` width is measured against `dimensionFieldWidthCh` — the group's OWN rendered
-          // width, the same single derived quantity the winner box and the BL-02 blank box
-          // above use — rather than the nominal DIMENSION_FIELD_WIDTH, for exactly the reason
-          // the blank box above does. An unmapped dimension whose payload string overruns the
-          // field (a shipped path, 18 D-07) would otherwise push the winner row's em dash
-          // right while its own `also:` rows stayed at the nominal column — detaching the
-          // suppressed competitor from the block it belongs to. All three row kinds now
-          // derive their width from one quantity, so they cannot disagree. `ch` is the
-          // advance width of the `0` glyph in the element's own font and every glyph in a
-          // monospace font shares that advance, so this empty spacer box reproduces the exact
-          // same visual width the old `" ".repeat(2 + dimensionField.length + 2)` literal did
-          // — only the unit changes, from "N literal spaces" to "N ch" (UI-SPEC "Resolving
-          // the also: indent"). `alsoLabelFieldWidth` below needs no change: it is measured
-          // against the LABEL field, which is the same width on both rows.
-          const alsoIndent = detailFieldCell("");
-          // The label field's remaining width once "also: " (6 chars) has already
-          // consumed part of it — derived so the em dash still lands on the winner row's
-          // own column regardless of DETAIL_LABEL_FIELD_WIDTH/DIMENSION_FIELD_WIDTH.
-          const alsoLabelFieldWidth = DETAIL_LABEL_FIELD_WIDTH - 2 - "also: ".length;
-          // WR-04: same truncate-then-box order as the winner row above.
+          // 19-REVIEW iteration-4 WR-02, restated for the grid-track mechanism (Task 3c):
+          // all three row kinds still derive their first track from the SAME quantity
+          // (dimensionTrackFr), so an unmapped dimension name that overruns its field still
+          // cannot detach an `also:` row from the winner row above it. The two spacer
+          // variables that used to keep the em dash on-column by arithmetic under the
+          // retired ch-box mechanism are deleted entirely: the third grid track now
+          // guarantees that structurally, so arithmetic that could drift is replaced by a
+          // contract that cannot.
+          // WR-04: same truncate-then-cell order as the winner row above.
           const competitorLabel = truncateHazardLabel(entryText(competitor));
-          // Phase 19.1 gap closure (Task 2, interim state): monospace font-family retired
-          // here too, same rationale as the winner row above; Task 3 replaces this row
-          // opener with detailRowOpen() and removes alsoIndent/alsoLabelFieldWidth entirely.
-          html += "<span style=\"white-space:pre-wrap\">" +
-            alsoIndent + "also: " +
-            detailColoredWrapper(competitor.color, detailFieldCell(escapeHtml(competitorLabel))) +
-            detailSourceAttribution(competitor.source) + "</span><br/>";
+          // The literal `also: ` token stays OUTSIDE any colour span — it is structural, not
+          // hazard data — and truncateHazardLabel is still applied to the competitor's own
+          // text (WR-04 order unchanged).
+          html += detailRowOpen(dimensionTrackFr) +
+            detailFieldCell("") +
+            detailFieldCell("also: " + detailColoredWrapper(competitor.color, escapeHtml(competitorLabel))) +
+            detailFieldCell(detailSourceAttribution(competitor.source)) + "</span><br/>";
         }
       }
       return html;

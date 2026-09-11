@@ -14842,7 +14842,15 @@ const scenarios = [
           throw new Error(`expected no ${cls} icon for the day-3 shape (no per-type breakdown), got: ${rendered}`);
         }
       }
-      if (rendered.includes("%")) {
+      // Phase 19.1 gap closure (19.1-06): the grid-track row mechanism's own
+      // `width:100%`/`max-width:100%` CSS introduces a literal "%" into every rendered row,
+      // so a bare `.includes("%")` now false-positives on markup, not content. Every
+      // probRisk percentage this module renders is followed by a literal space (`"% "`,
+      // MMM-SPCOutlook.js's convectiveDetailAugment segments); no CSS percentage in this
+      // module is ever followed by a space. Checking for `"% "` restores the assertion's
+      // original intent (no probabilistic percentage segment for this shape) without
+      // tripping on the row's own width declaration.
+      if (rendered.includes("% ")) {
         throw new Error(`expected no percentage for the day-3 shape, got: ${rendered}`);
       }
     }
@@ -14872,7 +14880,10 @@ const scenarios = [
       if (/[①②③]/.test(rendered)) {
         throw new Error(`expected no CIG glyph for the sign-only shape, got: ${rendered}`);
       }
-      if (rendered.includes("%")) {
+      // Phase 19.1 gap closure (19.1-06): same "% " (space-qualified) rationale as the
+      // day-3 scenario above — the grid row's own `width:100%` would otherwise false-positive
+      // a bare `.includes("%")` check.
+      if (rendered.includes("% ")) {
         throw new Error(`expected no percentage for the sign-only shape, got: ${rendered}`);
       }
     }
