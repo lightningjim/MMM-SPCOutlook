@@ -3,9 +3,9 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: WPC & CPC Integration + Unified Day Report
 status: executing
-stopped_at: Phase 19.1 UI-SPEC approved
-last_updated: "2026-09-11T00:03:17.810Z"
-last_activity: 2026-09-11 -- Phase 19.1 execution started
+stopped_at: Phase 19.1 wave 3 paused at 19.1-09 Task 1 blocker -- live mirror config.js reads dayReportDetail: false; operator declined the flip this session. Gap-closure code IS deployed and sha256-confirmed on the Pi (commit 2b54dc3). Resume /bm:execute-phase 19.1 at the Pi.
+last_updated: "2026-09-11T02:10:00.000Z"
+last_activity: 2026-09-11 -- Phase 19.1 gap closure: plans 19.1-06/07/08 complete and merged (probe suite 191 passed / 0 failed, net +1 guard). 19.1-09 paused at its blocking on-hardware checkpoint awaiting the live check.
 progress:
   total_phases: 7
   completed_phases: 6
@@ -25,10 +25,10 @@ See: .planning/PROJECT.md (updated 2026-08-15 after v2.0 scoping)
 
 ## Current Position
 
-Phase: 19.1 (day-report-render-width-product-neutral-copy-and-config-key-) — EXECUTING
-Plan: 1 of 9
-Status: Executing Phase 19.1
-Last activity: 2026-09-11 -- Phase 19.1 execution started
+Phase: 19.1 (day-report-render-width-product-neutral-copy-and-config-key-) — GAP CLOSURE 3/4 EXECUTED, PAUSED AT LIVE CHECK
+Plan: 8 of 9 executed (19.1-06/07/08 complete and merged; 19.1-09 paused at its blocking human-verify checkpoint)
+Status: Paused — 19.1-09 Task 1 stopped on a named blocker: the live mirror's config.js reads `dayReportDetail: false`, so the full every-day width observation cannot be made. The operator declined to flip it this session. Gap-closure code is deployed and sha256-confirmed on the Pi (2b54dc3); the 22.5rem cap remains UNPROVEN on hardware. Phase verification intentionally NOT run.
+Last activity: 2026-09-11 -- Phase 19.1 gap closure: plans 19.1-06/07/08 complete and merged (probe suite 191 passed / 0 failed, net +1 guard). 19.1-09 paused at its blocking on-hardware checkpoint awaiting the live check.
 
 Progress: [██████████] 100%
 
