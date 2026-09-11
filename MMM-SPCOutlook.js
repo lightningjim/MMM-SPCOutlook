@@ -497,6 +497,14 @@
       "spc-convective": "SPC", "spc-fire": "SPC Fire", "wpc-ero": "WPC ERO",
       "wpc-wssi": "WSSI", "wpc-hazards": "WPC Hazards", "heatrisk": "HeatRisk"
     };
+    // Phase 19.1 gap closure (grid-track column mechanism, Task 1b): the third grid track's
+    // width, derived from SOURCE_SHORT_NAMES' own longest mapped value plus the two
+    // characters of the "— " prefix — same "derive, never hardcode" idiom as
+    // DIMENSION_FIELD_WIDTH below. A future source addition widens this track automatically
+    // instead of silently truncating a longer short name against a stale magic constant.
+    const SOURCE_ATTRIBUTION_FIELD_WIDTH = Math.max(
+      ...Object.values(SOURCE_SHORT_NAMES).map((n) => n.length)
+    ) + 2;
     // Phase 19 (RPT-03/UI-SPEC "Detail line" column contract): derived from
     // DIMENSION_LABELS' own longest value plus one, never a bare 13 literal — a future
     // taxonomy addition widens this field automatically instead of silently breaking the
@@ -508,6 +516,21 @@
     // of every source-attribution string lands at the same column regardless of row content
     // length. This is the exact number the spec locks; do not round or approximate it.
     const DETAIL_LABEL_FIELD_WIDTH = 23;
+    // Phase 19.1 gap closure (Task 1a): the region-containment cap, re-derived from the
+    // module's DEPLOYED, MEASURED available space rather than from content needs. See the
+    // full available-space-first derivation above `wrapper.style.maxWidth` below, which
+    // reads this single constant; do not restate the arithmetic anywhere else in the file.
+    const REGION_CAP_REM = 22.5;
+    // Phase 19.1 gap closure (Task 1c): row-geometry constants that retire literal
+    // space-run indents now that column alignment comes from grid tracks, not a monospace
+    // character stream. Each name states the literal run it replaces so the retirement is
+    // traceable rather than looking like an unexplained new number.
+    // Retires the two-space "  " row indent (winner/co-winner row opener, pre-19.1-06).
+    const DETAIL_ROW_INDENT_REM = 0.6;
+    // Retires the three-space gap baked into detailSourceAttribution's leading-space literal.
+    const DETAIL_COLUMN_GAP_REM = 0.4;
+    // Retires the five-space run in the probabilistic sub-line ("     " at the old :630).
+    const DETAIL_SUBLINE_INDENT_REM = 1.4;
     // UI-SPEC "source attribution" — uncolored (structural, not hazard data), three literal
     // spaces then an em dash then one space then the source's short name. A source id with
     // no SOURCE_SHORT_NAMES entry falls back to its own (escaped) id rather than rendering
@@ -518,15 +541,14 @@
     // property anything should rely on. Every mapped value is plain ASCII, so escaping the
     // hit branch too is a no-op for real data.
     const detailSourceAttribution = (source) => (
-      "   — " + escapeHtml(String(lookup(SOURCE_SHORT_NAMES, source, source)))
+      "— " + escapeHtml(String(lookup(SOURCE_SHORT_NAMES, source, source)))
     );
-    // UI-SPEC "Detail-Mode Column Alignment" (AMENDED mechanism): column alignment no longer
-    // comes from literal-space padEnd() padding baked into escaped text — it comes from the
-    // CSS inline-block/min-width boxes detailFieldBox() emits below, nested inside the
-    // colored wrapper. The font-family override stays applied per sub-row's own inline style
-    // (this render mechanism has no enclosing per-day element to hold it once), and
-    // white-space:pre-wrap stays too, so the row's own literal runs ("  ", "also: ", the
-    // em-dash gap) still survive to the screen.
+    // UI-SPEC "Detail-Mode Column Alignment" (Phase 19.1 gap closure AMENDED mechanism):
+    // column alignment no longer comes from a monospace character-advance stream (ch units,
+    // a row-level font-family) — it comes from a CSS grid row (detailRowOpen below) whose
+    // three fr tracks are declared identically on every row kind. The row's own
+    // column-gap/padding-left replace the literal "  " indent and the em-dash gap that used
+    // to be baked into escaped text or a shared monospace font.
     // 19-REVIEW WR-04: escapes only, never truncates. It used to apply
     // truncateHazardLabel to content that ALREADY carried the 13-char dimension field plus
     // its padding, which broke the bound two ways: a pass-through label was cut at ~47
@@ -535,31 +557,67 @@
     // exists to maintain. It also contradicted T-16-22's rationale (line 266: "truncated
     // BEFORE escaping so the bound counts source characters") by letting padding consume the
     // budget. Both call sites below now truncate their own label content BEFORE it reaches a
-    // box (truncate-then-box, the AMENDED order), so the bound counts source characters in
-    // both modes and a box's floor width is never truncatable.
+    // cell (truncate-then-cell, the AMENDED order), so the bound counts source characters in
+    // both modes and a cell's track width is never truncatable.
     //
-    // T-19.1-9/T-19.1-17: detailFieldBox's innerHtml argument is ALREADY-ESCAPED markup or
-    // text — escaping stays at the LEAF, so this builder must never call escapeHtml itself.
-    // T-19.1-10/T-19.1-12: the width argument is sanitised digit-only
-    // (String(Math.max(0, Math.trunc(Number(widthCh)) || 0))), mirroring validHazardColor's
-    // posture for the one other value that reaches a style attribute — a payload-influenced
-    // string length can drive this number, but only digits can ever reach the attribute.
-    const detailFieldBox = (widthCh, innerHtml) => (
-      "<span style=\"display:inline-block;min-width:" +
-      String(Math.max(0, Math.trunc(Number(widthCh)) || 0)) + "ch\">" + innerHtml + "</span>"
+    // Phase 19.1 gap closure (Task 2a): one grid-template-columns track. minmax(0,Nfr) rather
+    // than a bare Nfr is load-bearing: a grid item's automatic minimum size is `auto`, which
+    // would let a long unbreakable word push its track — and therefore the row — wider than
+    // the container. minmax(0,Nfr) sets the minimum to zero so overflowing content wraps
+    // inside its own track instead of widening the row; this is the property that makes the
+    // UAT-5 defect class structurally impossible rather than merely bounded.
+    // T-19.1G-02: the fr value is sanitised digit-only exactly as the retired ch-based
+    // field-box builder's width argument was (String(Math.max(1, Math.trunc(Number(fr)) || 1))), mirroring
+    // validHazardColor's posture for the one other payload-influenced value that reaches a
+    // style attribute. The floor is 1, not 0 — a zero-width track would collapse a column
+    // entirely.
+    const detailTrack = (fr) => (
+      "minmax(0," + String(Math.max(1, Math.trunc(Number(fr)) || 1)) + "fr)"
     );
-    // The unescaped-content sibling of detailColoredSpan below: detailColoredSpan escapes its
-    // content, so it cannot receive the nested detailFieldBox markup above without double-
-    // escaping it. detailColoredWrapper emits the identical opening span and closing tag but
-    // concatenates innerHtml VERBATIM. detailColoredSpan is re-expressed in terms of it so
-    // there is ONE definition of the opening span and the two cannot drift — every existing
-    // probe assertion on the exact style string stays green either way.
+    // Phase 19.1 gap closure (Task 2b): the opening row span for a grid-track detail row.
+    // - inline-grid, not grid: the row stays inline-level so the existing <br/> row
+    //   terminator keeps its meaning and the markup stream's shape is unchanged. A
+    //   block-level grid would make each trailing <br/> render an extra empty line.
+    // - width:100% + box-sizing:border-box: the row occupies exactly the wrapper's content
+    //   width and the indent padding is drawn INSIDE that width, so the row cannot exceed
+    //   the region cap by its own padding. box-sizing is declared explicitly rather than
+    //   inherited, because MagicMirror's host CSS is not this module's to rely on.
+    // - The three tracks (dimension, label, source attribution) are declared identically on
+    //   every row kind, which is what makes columns line up ACROSS rows without any shared
+    //   parent grid and without any character-advance assumption.
+    // - No font-family and no ch anywhere: the whole point of the swap. Alignment is now a
+    //   property of the grid, not of the character stream.
+    const detailRowOpen = (dimensionTrackFr) => (
+      "<span style=\"display:inline-grid;box-sizing:border-box;width:100%;padding-left:" +
+      DETAIL_ROW_INDENT_REM + "rem;column-gap:" + DETAIL_COLUMN_GAP_REM +
+      "rem;align-items:baseline;grid-template-columns:" +
+      detailTrack(dimensionTrackFr) + " " + detailTrack(DETAIL_LABEL_FIELD_WIDTH) + " " +
+      detailTrack(SOURCE_ATTRIBUTION_FIELD_WIDTH) + "\">"
+    );
+    // Phase 19.1 gap closure (Task 2c): replaces the retired ch-based field-box builder.
+    // Takes NO width argument —
+    // width now comes from the row's track declaration, which is the single change that
+    // removes the monospace coupling. min-width:0 reinforces detailTrack's minimum-size rule
+    // at the item level; overflow-wrap:anywhere makes an over-long unbroken label wrap inside
+    // its own cell rather than overflow it.
+    // T-19.1-9/T-19.1-17 (carried forward): innerHtml is ALREADY-ESCAPED markup or text —
+    // escaping stays at the LEAF, so this builder must never call escapeHtml itself.
+    const detailFieldCell = (innerHtml) => (
+      "<span style=\"min-width:0;overflow-wrap:anywhere\">" + innerHtml + "</span>"
+    );
+    // Phase 19.1 gap closure (Task 2d): re-targeted, not deleted (the retired unescaped-
+    // content sibling — dead code, zero call sites per 19.1-VERIFICATION.md's Anti-Patterns
+    // Found table — is removed instead). The `display: contents` value below removes the
+    // wrapper's own box so its children become grid items of the enclosing row, while color — an inherited
+    // property — still reaches them. That is what preserves Phase 19 D-02's "the dimension
+    // name and the label share one colour" unit through the mechanism swap: one
+    // validHazardColor call, one colour decision, two cells. The old space-preserving
+    // white-space declaration and the monospace font-family are both dropped: nothing in
+    // this cell is a literal space run any more and nothing resolves ch.
     const detailColoredWrapper = (color, innerHtml) => (
-      "<span style=\"color:#" + validHazardColor(color) +
-      ";white-space:pre-wrap;font-family:'DejaVu Sans Mono','Liberation Mono',monospace\">" +
+      "<span style=\"color:#" + validHazardColor(color) + ";display:contents\">" +
       innerHtml + "</span>"
     );
-    const detailColoredSpan = (color, content) => detailColoredWrapper(color, escapeHtml(content));
     // Phase 19 (RPT-03/D-07/PROXUI): the convective sub-row's own inside-mode proximity
     // badge, three-shape probabilistic sub-line, and day-3 dual badge — the one dimension
     // that carries an optional `detail` sub-object (node_helper.js:3159-3167). Every mode
@@ -601,8 +659,9 @@
             segments.push(
               "<i class=\"wi wi-tornado\"></i>" + cigLabel(detail.torCig) +
               // T-19-18: the plain-tier branch of proximityBadge() passes a remote-derived
-              // tier token through verbatim; escaped here since this sub-line bypasses
-              // detailColoredSpan's own escapeHtml call (unlike the label field's badges).
+              // tier token through verbatim; escaped here since this sub-line's own markup
+              // path never routes the content through any leaf that auto-escapes (unlike the
+              // label field's badges, which reach a cell whose caller already escaped it).
               escapeHtml(proximityBadge(prox.torCig, torMode)) + (100 * detail.torRisk) + "% "
             );
           }
@@ -625,10 +684,15 @@
             );
           }
           if (segments.length > 0) {
-            // 5-space indent (2 base + 3, UI-SPEC "Probabilistic sub-line"), not
-            // column-aligned to the label field — a subordinate line under the whole row.
-            subLineHtml = "<span style=\"white-space:pre-wrap\">     " +
-              segments.join("") + "</span><br/>";
+            // Phase 19.1 gap closure (Task 2g): retires the last literal space-run indent
+            // in the detail markup (UI-SPEC "Probabilistic sub-line"), not column-aligned to
+            // the label field — a subordinate line under the whole row. inline-block +
+            // box-sizing:border-box draws the indent INSIDE the line's own content width;
+            // max-width:100% + overflow-wrap:anywhere keep it from ever exceeding the region
+            // cap; no ch, no font-family, no leading space run.
+            subLineHtml = "<span style=\"display:inline-block;box-sizing:border-box;" +
+              "max-width:100%;padding-left:" + DETAIL_SUBLINE_INDENT_REM + "rem;" +
+              "overflow-wrap:anywhere\">" + segments.join("") + "</span><br/>";
           }
         }
         return { labelSuffix: categoricalBadge, subLineHtml };
@@ -746,15 +810,17 @@
           : lookup(DIMENSION_LABELS, group.dimension, group.dimension)
         ));
         // UI-SPEC "New column contract": dimensionField keeps its own-account truncation
-        // (WR-04) but DROPS .padEnd() — detailFieldBox below supplies the floor width, not
-        // padded text.
-        // 19-REVIEW iteration-4 WR-02, restated for the box mechanism: ONE derived quantity
-        // drives the winner box, the BL-02 blank co-winner box AND the also: spacer below, so
-        // none of the three can disagree. The explicit Math.max is now REQUIRED, not merely
-        // defensive — unlike the retired padEnd() mechanism, dimensionField's raw .length is
-        // no longer guaranteed to be at least DIMENSION_FIELD_WIDTH, so omitting Math.max
-        // would silently narrow the column for every short (mapped) dimension name.
-        const dimensionFieldWidthCh = Math.max(DIMENSION_FIELD_WIDTH, dimensionField.length);
+        // (WR-04) but DROPS .padEnd() — the row's own grid track supplies the floor width,
+        // not padded text.
+        // 19-REVIEW iteration-4 WR-02, restated for the grid-track mechanism (Phase 19.1
+        // gap closure Task 3a): ONE derived quantity now sizes the first GRID TRACK on all
+        // three row kinds (winner, BL-02 blank co-winner, `also:`), rather than a `ch` box
+        // width — the ONE-derived-quantity invariant itself does not change, only the CSS
+        // property it feeds. The explicit Math.max is still REQUIRED for the same reason it
+        // was under the box mechanism: dimensionField's raw .length is not guaranteed to
+        // reach DIMENSION_FIELD_WIDTH, so omitting it would silently narrow the column for
+        // every short (mapped) dimension name.
+        const dimensionTrackFr = Math.max(DIMENSION_FIELD_WIDTH, dimensionField.length);
         // D-07: the convective augment is read PER ENTRY, not once for the group — its whole
         // input is `entry.detail` (plus the day's proximity subtree), so a co-winner carrying
         // its own detail keeps its own probabilistic sub-line and an entry without one
@@ -779,59 +845,42 @@
             ? convectiveDetailAugment(day, entry)
             : { labelSuffix: "", subLineHtml: "" };
           const labelContent = truncateHazardLabel(entryText(entry)) + augment.labelSuffix;
-          // 19-REVIEW BL-02, restated for the box mechanism: the dimension box is written on
-          // the group's FIRST winner row only; a co-winner row gets an EMPTY box of the same
-          // floor width (dimensionFieldWidthCh) — never a run of spaces, a `&nbsp;`, a
-          // `.repeat()` string, or a zero-width space — so the co-winner still reads as a
-          // peer of the row above it rather than a subordinate of it.
+          // 19-REVIEW BL-02, restated for the grid-track mechanism: the dimension cell is
+          // written on the group's FIRST winner row only; a co-winner row gets an EMPTY cell
+          // in a track of the same width — never a run of spaces, a `&nbsp;`, a `.repeat()`
+          // string, or a zero-width space — so the co-winner still reads as a peer of the
+          // row above it rather than a subordinate of it.
           const dimensionBoxContent = escapeHtml(i === 0 ? dimensionField : "");
-          const fieldBoxesHtml =
-            detailFieldBox(dimensionFieldWidthCh, dimensionBoxContent) +
-            detailFieldBox(DETAIL_LABEL_FIELD_WIDTH, escapeHtml(labelContent));
-          // Deliberate, documented deviation from UI-SPEC's Typography sentence ("never on an
-          // ancestor"): font-family is declared once at the ROW level, not only inside
-          // detailColoredWrapper. The "  " indent and detailSourceAttribution's "   — " run
-          // sit OUTSIDE any colored span, so under the retired padEnd() mechanism they
-          // rendered in the host's proportional font while the padded fields rendered
-          // monospace — invisible then because there was no `ch` unit to resolve. `ch`
-          // resolves against the element's OWN font (Pitfall 4), so declaring the monospace
-          // family once at the row level makes the whole row one monospace character stream,
-          // exactly what the wr02-* probe scenario's own comment already asserts ("the column
-          // contract is a property of the CHARACTER stream"). One visible consequence for
-          // plan 19.1-05's live check: the literal `also:` text and the `— SPC` attribution
-          // become monospace where they were proportional.
-          html += "<span style=\"white-space:pre-wrap;font-family:'DejaVu Sans Mono','Liberation Mono',monospace\">" +
-            "  " + detailColoredWrapper(entry.color, fieldBoxesHtml) +
-            detailSourceAttribution(entry.source) + "</span><br/>";
+          // Phase 19.1 gap closure (Task 3b): detailRowOpen(dimensionTrackFr) opens an
+          // inline-grid row whose three tracks line the dimension/label/source-attribution
+          // cells up across every row kind; the literal "  " indent is gone — padding-left
+          // on the row (DETAIL_ROW_INDENT_REM) carries it now. The row still closes with
+          // exactly one </span> and one <br/>, so the tag balance of the emitted stream is
+          // unchanged.
+          html += detailRowOpen(dimensionTrackFr) +
+            detailColoredWrapper(entry.color,
+              detailFieldCell(dimensionBoxContent) + detailFieldCell(escapeHtml(labelContent))) +
+            detailFieldCell(detailSourceAttribution(entry.source)) + "</span><br/>";
           if (augment.subLineHtml) html += augment.subLineHtml;
         }
         for (const competitor of group.competitors) {
-          // 19-REVIEW iteration-4 WR-02, restated for the box mechanism: the spacer's own
-          // `ch` width is measured against `dimensionFieldWidthCh` — the group's OWN rendered
-          // width, the same single derived quantity the winner box and the BL-02 blank box
-          // above use — rather than the nominal DIMENSION_FIELD_WIDTH, for exactly the reason
-          // the blank box above does. An unmapped dimension whose payload string overruns the
-          // field (a shipped path, 18 D-07) would otherwise push the winner row's em dash
-          // right while its own `also:` rows stayed at the nominal column — detaching the
-          // suppressed competitor from the block it belongs to. All three row kinds now
-          // derive their width from one quantity, so they cannot disagree. `ch` is the
-          // advance width of the `0` glyph in the element's own font and every glyph in a
-          // monospace font shares that advance, so this empty spacer box reproduces the exact
-          // same visual width the old `" ".repeat(2 + dimensionField.length + 2)` literal did
-          // — only the unit changes, from "N literal spaces" to "N ch" (UI-SPEC "Resolving
-          // the also: indent"). `alsoLabelFieldWidth` below needs no change: it is measured
-          // against the LABEL field, which is the same width on both rows.
-          const alsoIndent = detailFieldBox(2 + dimensionFieldWidthCh + 2, "");
-          // The label field's remaining width once "also: " (6 chars) has already
-          // consumed part of it — derived so the em dash still lands on the winner row's
-          // own column regardless of DETAIL_LABEL_FIELD_WIDTH/DIMENSION_FIELD_WIDTH.
-          const alsoLabelFieldWidth = DETAIL_LABEL_FIELD_WIDTH - 2 - "also: ".length;
-          // WR-04: same truncate-then-box order as the winner row above.
+          // 19-REVIEW iteration-4 WR-02, restated for the grid-track mechanism (Task 3c):
+          // all three row kinds still derive their first track from the SAME quantity
+          // (dimensionTrackFr), so an unmapped dimension name that overruns its field still
+          // cannot detach an `also:` row from the winner row above it. The two spacer
+          // variables that used to keep the em dash on-column by arithmetic under the
+          // retired ch-box mechanism are deleted entirely: the third grid track now
+          // guarantees that structurally, so arithmetic that could drift is replaced by a
+          // contract that cannot.
+          // WR-04: same truncate-then-cell order as the winner row above.
           const competitorLabel = truncateHazardLabel(entryText(competitor));
-          html += "<span style=\"white-space:pre-wrap;font-family:'DejaVu Sans Mono','Liberation Mono',monospace\">" +
-            alsoIndent + "also: " +
-            detailColoredWrapper(competitor.color, detailFieldBox(alsoLabelFieldWidth, escapeHtml(competitorLabel))) +
-            detailSourceAttribution(competitor.source) + "</span><br/>";
+          // The literal `also: ` token stays OUTSIDE any colour span — it is structural, not
+          // hazard data — and truncateHazardLabel is still applied to the competitor's own
+          // text (WR-04 order unchanged).
+          html += detailRowOpen(dimensionTrackFr) +
+            detailFieldCell("") +
+            detailFieldCell("also: " + detailColoredWrapper(competitor.color, escapeHtml(competitorLabel))) +
+            detailFieldCell(detailSourceAttribution(competitor.source)) + "</span><br/>";
         }
       }
       return html;
@@ -1221,19 +1270,32 @@
     // §10.3.7) to this wrapper's max-content width — the only lever this module controls
     // directly inside the region (RESEARCH.md Pitfall 2: the column fix above changes HOW a
     // row's width is produced, not how WIDE it is, and does not alone stop the region growing).
-    // Derivation, traceable not magic: 2 (indent) + DIMENSION_FIELD_WIDTH(13) +
-    // DETAIL_LABEL_FIELD_WIDTH(23) + 3 (gap) + 1 (dash) + 1 (space) + 11 ("WPC Hazards") ≈ 54
-    // monospace chars × ~0.6em assumed advance = 32.4em, expressed as `rem` against
-    // MagicMirror's `--font-size:20px` root (≈650px today) — recompute from this formula, never
-    // nudge independently, if the two field widths change. `rem` not `px` (tracks the host's
-    // root font-size instead of silently drifting from it) and not `ch` (resolves per-ELEMENT,
-    // and this wrapper mixes monospace detail rows with proportional compact/band content, so a
-    // `ch` cap would be ambiguous). Applies to ALL content here, not only detail rows — the
-    // compact line's "wrap naturally" policy and the band both wrap under the same cap, now
-    // actually enforceable. [ASSUMED — pending the live measurement in plan 19.1-05]: neither
-    // jsdom nor linkedom implements CSS layout, so no probe scenario can confirm this value is
-    // wide enough for the common case or narrow enough to clear the deployed centre column.
-    wrapper.style.maxWidth = "32.4rem";
+    //
+    // Phase 19.1 gap closure (Task 1a): re-derived AVAILABLE-SPACE-FIRST, replacing the
+    // superseded content-needs-only derivation (the retired 648px cap, disproven in METHOD,
+    // not only in value — see 19.1-LIVE-CHECK.md's Root Cause). Measured host geometry, in derivation
+    // order (source: 19.1-LIVE-CHECK.md, 2026-09-10, `ssh mm`):
+    //   - Panel geometry: 1080x1920, ROTATED (native mode 1920x1080).
+    //   - Body margins: 60px left, 60px right (--gap-body-left/right, main.css).
+    //   - Usable content width: 1080 - 60 - 60 = 960px.
+    //   - Root font-size: 20px (--font-size, main.css) -> 1rem = 20px.
+    //   - Body right edge: x = 1020. Screen centreline: x = 540.
+    //   - --gap-modules (module separation): 30px.
+    //   - Hard containment ceiling: 1020 - 540 = 480px (24rem) — the region must never cross
+    //     this or it overlaps the centre column outright.
+    //   - Working budget, backing off from the ceiling by the module gap:
+    //     1020 - 540 - 30 = 450px.
+    //   - Conversion at the 20px root: 450 / 20 = 22.5rem.
+    // Content is allocated INSIDE this budget by the grid-track builders below (Task 2), never
+    // the reverse — the budget is fixed first, then `fr` tracks distribute what already exists.
+    // `rem` not `px` (tracks the host's root font-size instead of silently drifting from it)
+    // and not `ch` (resolves per-ELEMENT and no longer applies — this mechanism swap removes
+    // every `ch` unit from the detail markup). Applies to ALL content here, not only detail
+    // rows — the compact line's "wrap naturally" policy and the band both wrap under the same
+    // cap. [PENDING LIVE CONFIRMATION — plan 19.1-09]: neither jsdom nor linkedom implements
+    // CSS layout, so a probe scenario can prove `wrapper.style.maxWidth` was ASSIGNED this
+    // value, never that the region actually stops short of the centreline on real hardware.
+    wrapper.style.maxWidth = REGION_CAP_REM + "rem";
     // Phase 19 (RPT-05/RPT-06): summary is read defensively everywhere below — an absent or
     // malformed summary can never throw out of getDom(), and can never be trusted to assert
     // a confident empty state either. A malformed summary falls through both guarded empty-
@@ -1353,8 +1415,8 @@
             // computeProximity — a LABEL property harvested from remote SPC GeoJSON — and
             // proximityBadge()'s plain-tier branch passes it through verbatim. Escaped here
             // for the same reason the three probabilistic sub-line call sites are (T-19-18):
-            // this branch reaches innerHTML without passing through detailColoredSpan's own
-            // escapeHtml, so it is the one badge call site that had no escape at all.
+            // this branch reaches innerHTML without passing through any leaf builder's own
+            // escapeHtml call, so it is the one badge call site that had no escape at all.
             wrapper.innerHTML += "<span style=\"white-space:pre-wrap\">" + prefix + " " +
               escapeHtml(proximityBadge(day.proximity && day.proximity.categorical, "outside")) +
               "</span><br/>";
