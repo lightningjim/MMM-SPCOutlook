@@ -497,6 +497,14 @@
       "spc-convective": "SPC", "spc-fire": "SPC Fire", "wpc-ero": "WPC ERO",
       "wpc-wssi": "WSSI", "wpc-hazards": "WPC Hazards", "heatrisk": "HeatRisk"
     };
+    // Phase 19.1 gap closure (grid-track column mechanism, Task 1b): the third grid track's
+    // width, derived from SOURCE_SHORT_NAMES' own longest mapped value plus the two
+    // characters of the "— " prefix — same "derive, never hardcode" idiom as
+    // DIMENSION_FIELD_WIDTH below. A future source addition widens this track automatically
+    // instead of silently truncating a longer short name against a stale magic constant.
+    const SOURCE_ATTRIBUTION_FIELD_WIDTH = Math.max(
+      ...Object.values(SOURCE_SHORT_NAMES).map((n) => n.length)
+    ) + 2;
     // Phase 19 (RPT-03/UI-SPEC "Detail line" column contract): derived from
     // DIMENSION_LABELS' own longest value plus one, never a bare 13 literal — a future
     // taxonomy addition widens this field automatically instead of silently breaking the
@@ -508,6 +516,21 @@
     // of every source-attribution string lands at the same column regardless of row content
     // length. This is the exact number the spec locks; do not round or approximate it.
     const DETAIL_LABEL_FIELD_WIDTH = 23;
+    // Phase 19.1 gap closure (Task 1a): the region-containment cap, re-derived from the
+    // module's DEPLOYED, MEASURED available space rather than from content needs. See the
+    // full available-space-first derivation above `wrapper.style.maxWidth` below, which
+    // reads this single constant; do not restate the arithmetic anywhere else in the file.
+    const REGION_CAP_REM = 22.5;
+    // Phase 19.1 gap closure (Task 1c): row-geometry constants that retire literal
+    // space-run indents now that column alignment comes from grid tracks, not a monospace
+    // character stream. Each name states the literal run it replaces so the retirement is
+    // traceable rather than looking like an unexplained new number.
+    // Retires the two-space "  " row indent (winner/co-winner row opener, pre-19.1-06).
+    const DETAIL_ROW_INDENT_REM = 0.6;
+    // Retires the three-space gap baked into detailSourceAttribution's "   — " literal.
+    const DETAIL_COLUMN_GAP_REM = 0.4;
+    // Retires the five-space run in the probabilistic sub-line ("     " at the old :630).
+    const DETAIL_SUBLINE_INDENT_REM = 1.4;
     // UI-SPEC "source attribution" — uncolored (structural, not hazard data), three literal
     // spaces then an em dash then one space then the source's short name. A source id with
     // no SOURCE_SHORT_NAMES entry falls back to its own (escaped) id rather than rendering
@@ -1221,19 +1244,32 @@
     // §10.3.7) to this wrapper's max-content width — the only lever this module controls
     // directly inside the region (RESEARCH.md Pitfall 2: the column fix above changes HOW a
     // row's width is produced, not how WIDE it is, and does not alone stop the region growing).
-    // Derivation, traceable not magic: 2 (indent) + DIMENSION_FIELD_WIDTH(13) +
-    // DETAIL_LABEL_FIELD_WIDTH(23) + 3 (gap) + 1 (dash) + 1 (space) + 11 ("WPC Hazards") ≈ 54
-    // monospace chars × ~0.6em assumed advance = 32.4em, expressed as `rem` against
-    // MagicMirror's `--font-size:20px` root (≈650px today) — recompute from this formula, never
-    // nudge independently, if the two field widths change. `rem` not `px` (tracks the host's
-    // root font-size instead of silently drifting from it) and not `ch` (resolves per-ELEMENT,
-    // and this wrapper mixes monospace detail rows with proportional compact/band content, so a
-    // `ch` cap would be ambiguous). Applies to ALL content here, not only detail rows — the
-    // compact line's "wrap naturally" policy and the band both wrap under the same cap, now
-    // actually enforceable. [ASSUMED — pending the live measurement in plan 19.1-05]: neither
-    // jsdom nor linkedom implements CSS layout, so no probe scenario can confirm this value is
-    // wide enough for the common case or narrow enough to clear the deployed centre column.
-    wrapper.style.maxWidth = "32.4rem";
+    //
+    // Phase 19.1 gap closure (Task 1a): re-derived AVAILABLE-SPACE-FIRST, replacing the
+    // superseded content-needs-only derivation (the retired 648px cap, disproven in METHOD,
+    // not only in value — see 19.1-LIVE-CHECK.md's Root Cause). Measured host geometry, in derivation
+    // order (source: 19.1-LIVE-CHECK.md, 2026-09-10, `ssh mm`):
+    //   - Panel geometry: 1080x1920, ROTATED (native mode 1920x1080).
+    //   - Body margins: 60px left, 60px right (--gap-body-left/right, main.css).
+    //   - Usable content width: 1080 - 60 - 60 = 960px.
+    //   - Root font-size: 20px (--font-size, main.css) -> 1rem = 20px.
+    //   - Body right edge: x = 1020. Screen centreline: x = 540.
+    //   - --gap-modules (module separation): 30px.
+    //   - Hard containment ceiling: 1020 - 540 = 480px (24rem) — the region must never cross
+    //     this or it overlaps the centre column outright.
+    //   - Working budget, backing off from the ceiling by the module gap:
+    //     1020 - 540 - 30 = 450px.
+    //   - Conversion at the 20px root: 450 / 20 = 22.5rem.
+    // Content is allocated INSIDE this budget by the grid-track builders below (Task 2), never
+    // the reverse — the budget is fixed first, then `fr` tracks distribute what already exists.
+    // `rem` not `px` (tracks the host's root font-size instead of silently drifting from it)
+    // and not `ch` (resolves per-ELEMENT and no longer applies — this mechanism swap removes
+    // every `ch` unit from the detail markup). Applies to ALL content here, not only detail
+    // rows — the compact line's "wrap naturally" policy and the band both wrap under the same
+    // cap. [PENDING LIVE CONFIRMATION — plan 19.1-09]: neither jsdom nor linkedom implements
+    // CSS layout, so a probe scenario can prove `wrapper.style.maxWidth` was ASSIGNED this
+    // value, never that the region actually stops short of the centreline on real hardware.
+    wrapper.style.maxWidth = REGION_CAP_REM + "rem";
     // Phase 19 (RPT-05/RPT-06): summary is read defensively everywhere below — an absent or
     // malformed summary can never throw out of getDom(), and can never be trusted to assert
     // a confident empty state either. A malformed summary falls through both guarded empty-
