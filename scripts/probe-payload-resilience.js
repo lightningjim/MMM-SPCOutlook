@@ -14012,6 +14012,37 @@ const scenarios = [
     // guard exists to prevent, one level up.
     name: "wr07-assert-inert-markup-accepts-module-tags-and-rejects-everything-else",
     run: async (_helper) => {
+      // Phase 19.1 gap closure (19.1-06/19.1-07): the grid-track detail-row opener is pulled
+      // from an ACTUAL render rather than hand-typed into the fixture list below — a hand-typed
+      // literal would keep passing even if getDom() itself started emitting a different tag
+      // shape, which is precisely the Phase 15 D-10 vacuity failure mode (a fixture that never
+      // reaches the code it claims to test). This is the executed proof, not an inspection, that
+      // the chosen remedy — CSS Grid expressed through style-attribute VALUES
+      // (display:inline-grid, grid-template-columns) on the EXISTING `<span style="...">` tag
+      // shape — needed no allowlist change. A future mechanism change that introduces a
+      // genuinely new tag shape (<div>, <table>/<tr>/<td>) WOULD require widening
+      // INERT_MARKUP_ALLOWLIST, and that widening must be a deliberate decision of its own, not
+      // an incidental side effect discovered here.
+      const frontend = loadFrontendModule();
+      const gridRowConfig = {
+        lat: PROBE_LAT, lon: PROBE_LON, extended: false, updateInterval: 60,
+        proximityWeighting: false, dayReportDetail: true, showWinterImpact: true
+      };
+      const gridRowPayload = unifiedPayload({});
+      gridRowPayload.days["2"].hazards = [
+        { dimension: "wind", source: "wpc-wssi", label: "Winner", text: "High Winds",
+          value: 3, color: "e69138", suppressedBy: null }
+      ];
+      gridRowPayload.summary.anyHazard = true;
+      const gridRowRendered = renderDom(frontend, { config: gridRowConfig, spcrisk: gridRowPayload });
+      const gridRowOpener = (gridRowRendered.match(/<span style="display:inline-grid;[^"]*">/) || [])[0];
+      if (!gridRowOpener) {
+        throw new Error(
+          `vacuity guard failed: expected a real render to produce a grid row opener to ` +
+          `self-test against, got: ${gridRowRendered}`
+        );
+      }
+
       const legitimate = [
         "<br/>",
         "<span style=\"white-space:pre-wrap\">Day 1 (Mon)</span><br/>",
@@ -14020,17 +14051,7 @@ const scenarios = [
         "<span style=\"color:#e06666;white-space:pre-wrap\">x</span>",
         "<i class=\"wi wi-tornado\"></i>10% ",
         "Extended Hazards:<br/>Wed (D3): <span style=\"color:#63be7b\">&lt;img&gt;</span><br/>",
-        // Phase 19.1 gap closure (19.1-06/19.1-07): the grid-track detail-row opener.
-        // Deliberately proves, by EXECUTION rather than inspection, that the chosen remedy —
-        // CSS Grid expressed through style-attribute VALUES (display:inline-grid,
-        // grid-template-columns) on the EXISTING `<span style="...">` tag shape — needed no
-        // allowlist change. A future mechanism change that introduces a genuinely new tag
-        // shape (<div>, <table>/<tr>/<td>) WOULD require widening INERT_MARKUP_ALLOWLIST, and
-        // that widening must be a deliberate decision of its own, not an incidental side
-        // effect discovered here.
-        "<span style=\"display:inline-grid;box-sizing:border-box;width:100%;padding-left:0.6rem;" +
-        "column-gap:0.4rem;align-items:baseline;" +
-        "grid-template-columns:minmax(0,13fr) minmax(0,23fr) minmax(0,13fr)\">"
+        gridRowOpener
       ];
       for (const markup of legitimate) {
         assertInertMarkup(markup, "self-test");
