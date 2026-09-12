@@ -1292,9 +1292,13 @@
     // and not `ch` (resolves per-ELEMENT and no longer applies — this mechanism swap removes
     // every `ch` unit from the detail markup). Applies to ALL content here, not only detail
     // rows — the compact line's "wrap naturally" policy and the band both wrap under the same
-    // cap. [PENDING LIVE CONFIRMATION — plan 19.1-09]: neither jsdom nor linkedom implements
-    // CSS layout, so a probe scenario can prove `wrapper.style.maxWidth` was ASSIGNED this
-    // value, never that the region actually stops short of the centreline on real hardware.
+    // cap. LIVE-CONFIRMED on the deployed hardware 2026-09-11 (plan 19.1-09, operator verdict
+    // against the 19-UAT test 5 baseline: the block no longer enters the centre column, and no
+    // row wraps at this cap). That confirmation does NOT make this claim probe-checkable and
+    // never will: neither jsdom nor linkedom implements CSS layout, so a probe scenario can
+    // prove `wrapper.style.maxWidth` was ASSIGNED this value, never that the region actually
+    // stops short of the centreline on real hardware. Any future change to this cap or to the
+    // grid mechanism needs another live check — see 19.1-LIVE-CHECK-2.md.
     wrapper.style.maxWidth = REGION_CAP_REM + "rem";
     // Phase 19 (RPT-05/RPT-06): summary is read defensively everywhere below — an absent or
     // malformed summary can never throw out of getDom(), and can never be trusted to assert
