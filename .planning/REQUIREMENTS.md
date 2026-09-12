@@ -8,22 +8,22 @@
 
 ### Excessive Rainfall Outlook (WPC)
 
-- [ ] **ERO-01**: User sees their location's WPC Excessive Rainfall Outlook risk tier for Days 1–5 when `showExcessiveRain` is enabled
+- [x] **ERO-01**: User sees their location's WPC Excessive Rainfall Outlook risk tier for Days 1–5 when `showExcessiveRain` is enabled
 - [x] **ERO-02**: User sees the correct tier label (MRGL/SLGT/MDT/HIGH) with ERO's own `dn` value domain, not the fire weather `DN` mapping
-- [ ] **ERO-03**: User sees no ERO row for a day where their location falls outside all ERO polygons
+- [x] **ERO-03**: User sees no ERO row for a day where their location falls outside all ERO polygons
 
 ### Winter Storm Severity Index (WPC)
 
-- [ ] **WSSI-01**: User sees their location's WSSI Overall Impact level for Days 1–3 when `showWinterImpact` is enabled
-- [ ] **WSSI-02**: User sees correct impact labels regardless of the source field's letter case (live payload returns ALL CAPS against mixed-case documentation)
-- [ ] **WSSI-03**: User sees no winter rows and no error when WSSI returns zero features out of season
+- [x] **WSSI-01**: User sees their location's WSSI Overall Impact level for Days 1–3 when `showWinterImpact` is enabled
+- [x] **WSSI-02**: User sees correct impact labels regardless of the source field's letter case (live payload returns ALL CAPS against mixed-case documentation)
+- [x] **WSSI-03**: User sees no winter rows and no error when WSSI returns zero features out of season
 
 ### Mesoscale Precipitation Discussion (WPC)
 
-- [ ] **MPD-01**: User sees an indicator when their location falls inside an active WPC Mesoscale Precipitation Discussion, when `showMPD` is enabled
-- [ ] **MPD-02**: User sees ALL concurrently active MPDs affecting their location, not only the most recent one
-- [ ] **MPD-03**: User sees the MPD's hazard type, extracted from the description CDATA where it actually lives
-- [ ] **MPD-04**: User sees correct MPD selection across a year boundary, when numbering resets and "highest number" no longer means "most recent"
+- [x] **MPD-01**: User sees an indicator when their location falls inside an active WPC Mesoscale Precipitation Discussion, when `showMPD` is enabled
+- [x] **MPD-02**: User sees ALL concurrently active MPDs affecting their location, not only the most recent one
+- [x] **MPD-03**: User sees the MPD's hazard type, extracted from the description CDATA where it actually lives
+- [x] **MPD-04**: User sees correct MPD selection across a year boundary, when numbering resets and "highest number" no longer means "most recent"
 
 ### Hazards Outlook (WPC Day 3–7 / CPC Day 8–14)
 
@@ -58,8 +58,8 @@
 
 ### Configuration and Performance
 
-- [ ] **CFG-01**: User enables each new product independently via its own boolean, all defaulting to false
-- [ ] **CFG-02**: User's existing SPC and fire weather configuration continues to work, with the `extended` flag no longer gating the payload shape
+- [x] **CFG-01**: User enables each new product independently via its own boolean, all defaulting to false
+- [x] **CFG-02**: User's existing SPC and fire weather configuration continues to work, with the `extended` flag no longer gating the payload shape
 - [x] **PERF-01**: User's Pi issues the new product fetches concurrently rather than sequentially, bounding cold-cache startup latency
 - [x] **PERF-02**: User's ETag/SHA256 cache stays effective, via consistent ArcGIS query-string construction that does not multiply cache keys
 - [x] **PERF-03**: User sees a measured cold-cache latency figure on target hardware before the milestone closes
@@ -104,22 +104,31 @@ Deferred to v2.x. Tracked but not in this roadmap.
 
 ## Traceability
 
+**Status legend** (added 2026-09-11 at v2.0 milestone close — before this, `Pending`
+was used inconsistently and conflated two different things):
+
+| Status | Meaning |
+|---|---|
+| `Complete` | Verified, **including** live observation on the deployed hardware. |
+| `Complete (live deferred)` | Code verified and mutation-proven by the probe suite, but live observation is deferred for a **documented** reason — a seasonal product out of season, an event-gated product with nothing active, or a condition not producible on demand. This is NOT "unfinished"; it is the strongest evidence obtainable today. Each has a row in STATE.md's deferred-items table. |
+| `Pending` | Not yet verified. |
+
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| CFG-01 | Phase 14 | Pending |
-| CFG-02 | Phase 14 | Pending |
+| CFG-01 | Phase 14 | Complete (live deferred) |
+| CFG-02 | Phase 14 | Complete |
 | DATA-01 | Phase 14 | Complete |
 | PERF-02 | Phase 14 | Complete |
-| ERO-01 | Phase 14 | Pending |
+| ERO-01 | Phase 14 | Complete |
 | ERO-02 | Phase 14 | Complete |
-| ERO-03 | Phase 14 | Pending |
-| WSSI-01 | Phase 15 | Pending |
-| WSSI-02 | Phase 15 | Pending |
-| WSSI-03 | Phase 15 | Pending |
-| MPD-01 | Phase 15 | Pending |
-| MPD-02 | Phase 15 | Pending |
-| MPD-03 | Phase 15 | Pending |
-| MPD-04 | Phase 15 | Pending |
+| ERO-03 | Phase 14 | Complete |
+| WSSI-01 | Phase 15 | Complete (live deferred) |
+| WSSI-02 | Phase 15 | Complete (live deferred) |
+| WSSI-03 | Phase 15 | Complete (live deferred) |
+| MPD-01 | Phase 15 | Complete (live deferred) |
+| MPD-02 | Phase 15 | Complete (live deferred) |
+| MPD-03 | Phase 15 | Complete |
+| MPD-04 | Phase 15 | Complete (live deferred) |
 | HAZ-01 | Phase 16 | Complete |
 | HAZ-02 | Phase 16 | Complete |
 | HAZ-03 | Phase 16 | Complete |
