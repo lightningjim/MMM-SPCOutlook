@@ -451,15 +451,15 @@ Phases execute in numeric order: 14 → 15 → 16 → 17 → 18 → 19
 **Goal:** Fix the three display/config defects Phase 19's UAT found against the unified day report: the detail-mode day report no longer widens its MagicMirror region or overlaps neighbouring columns; user-facing copy names the products the module actually aggregates rather than SPC alone; and a config key the module does not recognise is surfaced to the operator instead of being silently ignored.
 **Requirements**: none — defect-fix phase traced to 19-UAT.md tests 5, 11, 13 and 19.1-CONTEXT.md D-01..D-06 (no REQ-IDs exist for this phase)
 **Depends on:** Phase 19
-**Plans:** 7/9 plans executed
+**Plans:** 9/9 plans executed — **COMPLETE** (verified 2026-09-11, 10/10 truths, no blocking gaps)
 
 Plans:
 - [x] 19.1-01-PLAN.md — product-neutral copy: getHeader() three-state fallback, `Loading NWS outlooks...`, README (UAT 11, D-02..D-05)
 - [x] 19.1-02-PLAN.md — unrecognised-config-key warning at start() with a nearest-`defaults` suggestion (UAT 13)
 - [x] 19.1-03-PLAN.md — render width, both halves: inline-block `min-width:Nch` columns AND the wrapper `max-width` region cap (UAT 5, MAJOR)
 - [x] 19.1-04-PLAN.md — width regression guards: harness wrapper accessor plus three mutation-proven structural scenarios
-- [ ] 19.1-05-PLAN.md — live measurement on `ssh mm`, cap tuning, and parity-checklist/UI-SPEC reconciliation (checkpoint, not autonomous)
+- [x] 19.1-05-PLAN.md — live measurement on `ssh mm`, cap tuning, and parity-checklist/UI-SPEC reconciliation (checkpoint, not autonomous). Disproved the `32.4rem` cap AND its content-needs-only derivation method; operator escalated the remedy to gap closure rather than tuning. Closed 2026-09-11 once plans 06-09 landed that remedy.
 - [x] 19.1-06-PLAN.md — GAP CLOSURE: replace character-advance columns with CSS grid tracks and re-derive the region cap from measured available space (UAT 5, MAJOR — wave 1)
 - [x] 19.1-07-PLAN.md — GAP CLOSURE: re-express the three `uat05-*` guards against the grid mechanism, add a width-bounded guard, repair 7 collateral scenarios, mutation-prove each (wave 2)
 - [x] 19.1-08-PLAN.md — GAP CLOSURE: reconcile 19.1-UI-SPEC.md and 19.1-RESEARCH.md with the shipped mechanism; closes the deferred 19.1-05 Task 3 part (e) Typography contradiction (wave 2)
-- [ ] 19.1-09-PLAN.md — GAP CLOSURE: fresh on-hardware live check on `ssh mm`, cap tuning, parity-checklist/UI-SPEC value resolution (checkpoint, not autonomous — wave 3)
+- [x] 19.1-09-PLAN.md — GAP CLOSURE: fresh on-hardware live check on `ssh mm`, cap tuning, parity-checklist/UI-SPEC value resolution (checkpoint, not autonomous — wave 3). Operator verdict 2026-09-11 "Approved for all" (9 PASS / 1 NOT OBSERVABLE / 0 FAIL): the block no longer enters the centre column and nothing wraps at `REGION_CAP_REM = 22.5`. No tuning needed — the available-space-first derivation was correct as derived.

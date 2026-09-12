@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: WPC & CPC Integration + Unified Day Report
-status: executing
-stopped_at: Phase 19.1 wave 3 paused at 19.1-09 Task 1 blocker -- live mirror config.js reads dayReportDetail: false; operator declined the flip this session. Gap-closure code IS deployed and sha256-confirmed on the Pi (commit 2b54dc3). Resume /bm:execute-phase 19.1 at the Pi.
-last_updated: "2026-09-11T02:10:00.000Z"
-last_activity: 2026-09-11 -- Phase 19.1 gap closure: plans 19.1-06/07/08 complete and merged (probe suite 191 passed / 0 failed, net +1 guard). 19.1-09 paused at its blocking on-hardware checkpoint awaiting the live check.
+status: phase_complete
+stopped_at: Phase 19.1 COMPLETE (2026-09-11). All 9 plans executed; re-verification 10/10 truths, no blocking gaps. The blocking limb-1 width defect is closed and live-confirmed on the Pi at REGION_CAP_REM = 22.5. Next: Phase 19.1 is the last phase in v2.0 -- run /bm:verify-work 19.1 for phase UAT or /bm:complete-milestone.
+last_updated: "2026-09-11T10:00:00.000Z"
+last_activity: 2026-09-11 -- Phase 19.1 CLOSED. Plan 19.1-09 resumed from its dayReportDetail blocker under fresh operator authorisation; live check on the Pi returned 9 PASS / 1 NOT OBSERVABLE / 0 FAIL, operator "Approved for all". Zero code tuning needed. Re-verification: 7/10 with 2 blocking gaps -> 10/10, none blocking.
 progress:
   total_phases: 7
-  completed_phases: 6
+  completed_phases: 7
   total_plans: 67
-  completed_plans: 63
-  percent: 86
+  completed_plans: 67
+  percent: 100
 ---
 
 # Project State
@@ -25,10 +25,17 @@ See: .planning/PROJECT.md (updated 2026-08-15 after v2.0 scoping)
 
 ## Current Position
 
-Phase: 19.1 (day-report-render-width-product-neutral-copy-and-config-key-) — GAP CLOSURE 3/4 EXECUTED, PAUSED AT LIVE CHECK
-Plan: 8 of 9 executed (19.1-06/07/08 complete and merged; 19.1-09 paused at its blocking human-verify checkpoint)
-Status: Paused — 19.1-09 Task 1 stopped on a named blocker: the live mirror's config.js reads `dayReportDetail: false`, so the full every-day width observation cannot be made. The operator declined to flip it this session. Gap-closure code is deployed and sha256-confirmed on the Pi (2b54dc3); the 22.5rem cap remains UNPROVEN on hardware. Phase verification intentionally NOT run.
-Last activity: 2026-09-11 -- Phase 19.1 gap closure: plans 19.1-06/07/08 complete and merged (probe suite 191 passed / 0 failed, net +1 guard). 19.1-09 paused at its blocking on-hardware checkpoint awaiting the live check.
+Phase: 19.1 (day-report-render-width-product-neutral-copy-and-config-key-) — **COMPLETE**
+Plan: 9 of 9 executed
+Status: Phase closed 2026-09-11. Re-verification `10/10 must-haves verified`, `has_blocking_gaps: false` (was 7/10 with two blocking limb-1 failures). The MAJOR width defect from 19-UAT test 5 is fixed and confirmed on the deployed hardware.
+
+**What closed the gap:** the cap was not re-tuned — the MECHANISM was replaced. Character-advance alignment needed a monospace stream, and 450px of DejaVu Sans Mono at the host's 20px root fits ~37 characters while the column contract needed 54, so no `rem` value could ever have satisfied it. CSS grid tracks removed that coupling, and the cap was then re-derived available-space-first (`1020 − 540 − 30 = 450px` → `REGION_CAP_REM = 22.5`) instead of from content needs alone. It was correct as derived; plan 19.1-09 applied zero code changes.
+
+**Carried forward, non-blocking:** item 5 (co-equal hazards rendering as peers) is NOT OBSERVABLE — no co-equal hazard pair was live at the OKC coordinate. It is the one leg of the column-alignment regression check that got no live coverage across the mechanism swap. Mutation-proven probe scenarios stand as its evidence; same disposition class as the deferred live-observation rows in Phases 15, 16 and 18.
+
+**Standing rule established this phase:** a passing live check makes a layout claim TRUE, never machine-checkable. No headless DOM implements CSS layout, so `19.1-UI-SPEC.md`'s Verification Honesty rows stay `MANUAL ONLY` permanently and any future change to this cap or mechanism requires another human looking at hardware.
+
+Last activity: 2026-09-11 — Phase 19.1 closed.
 
 Progress: [██████████] 100%
 
