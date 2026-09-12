@@ -9,9 +9,30 @@ files:
 
 ## Problem
 
-`node_helper.js` still emits eight legacy payload blocks (`day1..day8`, `fireWeather`,
-`excessiveRain`, `winterImpact`, `hazardsOutlook`, `heatRisk`, `advisories`) that no render path
-reads. Plan 19-06 made the unified day report (`spcrisk.days[]` / `spcrisk.windowBand`) the sole
+> **CORRECTION (v2.0 milestone audit, 2026-09-11) — READ BEFORE EXECUTING THIS TODO.**
+> The inventory below was wrong in two ways, and acting on it as originally written would have
+> broken the live display. Both corrections are verified by source read at HEAD.
+>
+> 1. **`advisories` is NOT dead — it is the sole transport for the MPD / SPC MD band.**
+>    `MMM-SPCOutlook.js:967` reads `this.spcrisk.advisories` inside `enabledAdvisories()`, consumed
+>    by the band render loop at `:1498-1511`. Deleting it deletes MPD-01/02/03 and SPC MD from the
+>    screen. Note the `rpt01-getdom-reads-no-legacy-payload-block` probe's own legacy-accessor list
+>    correctly OMITS `spcrisk.advisories` — the probe and this todo contradicted each other, and the
+>    probe was right. **`advisories` is removed from the retirement scope.**
+> 2. **`day48Risk` (`node_helper.js:5391`) is a ninth emitted legacy key** that is genuinely unread
+>    and was missing from this inventory. **Added to scope**, so it does not survive by omission.
+>
+> Also: this is **not a pure deletion**. The RPT-04 window band is PRODUCED inside the legacy
+> `hazardsOutlook` block — `windowEntries` is filled only by `_bucketHazardMatch`, assembled as
+> `block.windowBand`, and the top-level `windowBand` at `:5464-5466` is a REFERENCE to that same
+> array. The helpers `_hazardDayOffset`, `_todayUtcMs` and `_isFullNominalWindow` are likewise
+> load-bearing for the unified render (band-vs-grid routing reads them at `:2909-2911`).
+> `windowEntries`/`windowBand` assembly and those three helpers must be EXTRACTED before the
+> `hazardsOutlook` block is removed, or RPT-04 breaks.
+
+`node_helper.js` still emits legacy payload blocks (`day1..day8`, `day48Risk`, `fireWeather`,
+`excessiveRain`, `winterImpact`, `hazardsOutlook`, `heatRisk`) that no render path
+reads. (`advisories` was listed here originally and is NOT one of them — see the correction above.) Plan 19-06 made the unified day report (`spcrisk.days[]` / `spcrisk.windowBand`) the sole
 reader, pinned by the permanent probe scenario `rpt01-getdom-reads-no-legacy-payload-block`. The
 legacy blocks are dead payload weight crossing the backend->frontend socket, and two known
 defects still live inside them, un-discharged from the emitted payload (only discharged from the
