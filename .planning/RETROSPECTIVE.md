@@ -143,6 +143,61 @@
 
 ---
 
+## Milestone: v2.0 — WPC & CPC Integration + Unified Day Report
+
+**Shipped:** 2026-09-12
+**Phases:** 7 (14–19.1) | **Plans:** 67 | **Tasks:** 175 | **Duration:** 28 days (2026-08-15 → 2026-09-12, 600 commits)
+
+### What Was Built
+
+- **Product registry foundation** (Phase 14): `productRegistry.js` with a host-allowlisted, byte-stable ArcGIS query builder and a `kind` discriminator (`arcgis-day-layers`, `kml-advisory`, `raster-identify`); the `if (!extended)` early-return fork removed from `getSpcOutlook` so the payload shape no longer depends on config; per-product `products.*` toggle convention, all default false; WPC Excessive Rainfall Outlook Days 1–5.
+- **Four more NOAA products** (Phases 15–17): WSSI Overall Impact Days 1–3; SPC MD + WPC MPD advisories with liveness decided by each candidate's own `ValidEndTi`; WPC Day 3–7 / CPC Day 8–14 Hazards Outlook with per-day entries, a separate window-labelled band, and weekday-aware staleness (84h budget); NWS/WPC HeatRisk Days 1–7 via ArcGIS ImageServer `identify` with Web Mercator reprojection. All new fetches parallelized — PERF-01 closed against a measured 2303 ms median cold-cache backend interval on the target Pi.
+- **Merge, precedence, unified payload** (Phase 18, 16 plans — the largest phase in project history): valid-time day attribution, cross-source dedup through a research-derived precedence table keyed by hazard dimension rather than source label, and one precomputed `days`/`summary`/`sources`/`advisories` payload the display consumes without recomputing anything.
+- **Unified day report** (Phases 19, 19.1): `getDom()` rewritten from per-product sections into one merged block per day, compact by default with a detail toggle, verified for behaviour parity against four milestones of accumulated display logic. 19.1 closed the three defects 19's UAT found — detail-mode width overflow (MAJOR), SPC-only user-facing copy, and silently-ignored config keys.
+- **Offline probe suite**: `scripts/probe-payload-resilience.js` + `scripts/probe-lib/module-stubs.js` grew to a dependency-free, zero-network harness running 191 mutation-proven scenarios at close.
+
+### What Worked
+
+- **Registry-first sequencing.** Phase 14 paid the abstraction cost once — query builder, toggle convention, `kind` discriminator, day-loop runner — and Phases 15–17 each added a product by adding a registry row plus a runner, not by adding a bespoke fetch path. The `_runArcGisDayProduct` extraction in Phase 15 drove both ERO and WSSI with every shipped ERO scenario byte-identical.
+- **Data sources before merge before display**, strictly. Phase 18 had every product's real payload to write precedence against; Phase 19 had a frozen, precomputed contract to render against. No payload-shape thrashing in the highest-risk phase.
+- **Mutation-proving every probe scenario individually.** This is the practice that made a 191-scenario suite trustworthy instead of decorative, and it caught two distinct classes of vacuous test — an assertion that observes nothing, and a fixture that cannot express its own condition.
+- **Live captures as the source of truth for upstream behaviour.** Nearly every non-obvious defect this milestone came from real data contradicting a reasonable assumption: `_final` does not mean expired; the `wpc-hazards` feed mixes inclusive and exclusive `end_date` conventions in the same poll; SPC MD's allowlist was prefix-matching `https://` against a live `http://` URL and silently returning nothing.
+- **Escalating from tuning to mechanism replacement in 19.1.** Plan 19.1-05's live measurement disproved not just the `32.4rem` cap but the entire content-needs-first derivation method. The operator escalated to gap closure rather than another tuning pass — and plan 19.1-09's fresh hardware check then confirmed the re-derived cap needed zero adjustment.
+
+### What Was Inefficient
+
+- **The width defect cost a whole inserted phase and two hardware sessions** because the original mechanism was never checked against the host's actual font metrics. Character-advance alignment silently assumed a monospace stream; 450px of DejaVu Sans Mono at a 20px root fits ~37 characters against a 54-character column contract, so no `rem` value could ever have worked. One measurement at design time would have ruled out the mechanism before it shipped.
+- **23 live-observation deferrals accumulated**, each individually justified (seasonal WSSI, event-gated MPD/ERO, location-gated products) but collectively a real verification debt. Phase 16 alone contributed 3 and its VERIFICATION.md still reads `human_needed` at milestone close.
+- **Legacy payload retirement was scoped as a deletion and is not one.** The RPT-04 window band is produced *inside* the legacy `hazardsOutlook` block, three helpers must be extracted first, and `advisories` — initially mis-listed as dead — is the sole transport for the MPD/SPC MD band. Executing the todo as originally written would have deleted MPD from the display. The measured cost (172 `assertPayloadIntact` call sites, 157 scenarios, no incremental path) is why it deferred.
+- **11 REQUIREMENTS.md traceability rows sat at `Pending`** while their phases were complete and verified, and Phase 14's VERIFICATION.md predated its own fix passes. Both were bookkeeping, not implementation — but both had to be found by the milestone audit rather than being kept current.
+- **Phase 18 at 16 plans was oversized.** It is coherent work, but a phase that large concentrates risk and makes partial progress hard to reason about.
+
+### Patterns Established
+
+- **Registry row + runner, never a bespoke fetch path.** A new product is a `PRODUCT_REGISTRY` entry with a `kind`, and the runner for that kind. Adding a product should not add a code path.
+- **Precedence keyed by hazard dimension, never by source label.** `hazardTaxonomy.js` derives its label key set from the registry's own `displayColor` at `require()` time and throws at load if the registry ever renders a colour it cannot dimension — so a registry change cannot silently desynchronise the taxonomy.
+- **Tolerate both upstream conventions rather than special-casing one.** `Math.max(gridStart, gridEnd - 1)` handles inclusive/zero-duration and exclusive `end_date` alike, because the feed genuinely mixes them.
+- **Derive UI bounds available-space-first.** Measure the space the region actually has, then check whether the content fits — not the reverse. Content-needs-first derivation produced a cap the region could never honor.
+- **Mark layout claims `MANUAL ONLY` permanently in the UI-SPEC.** Verification-honesty rows that can never be machine-checked should say so in the artifact, so no future phase re-litigates it.
+- **An offline, dependency-free probe suite is compatible with "no automated test framework".** Zero network, zero installed packages, one command, exit code — it is a regression net without being a framework.
+
+### Key Lessons
+
+1. **Measure the host before choosing a layout mechanism.** The single most expensive defect this milestone was a mechanism whose precondition (a monospace stream at a width that fits the column contract) was never checked against real font metrics on real hardware.
+2. **A passing live check makes a claim TRUE, never machine-checkable.** No headless DOM implements CSS layout. Write this into the spec so the next change to the cap or the grid mechanism knows it needs a human on hardware.
+3. **Upstream naming conventions are not semantics.** `_final` meant "graphic finalized". Implementing it as an expiry marker would have made MPD find nothing, ever, while appearing perfectly healthy — the worst failure shape there is.
+4. **Split phases above ~10 plans.** Phase 18's 16 plans were coherent but concentrated risk; the same work as 18a/18b would have had a verifiable midpoint.
+5. **Keep traceability current at plan close, not at audit.** Every bookkeeping gap this milestone (11 `Pending` rows, Phase 14's stale VERIFICATION.md) was discovered by the audit rather than prevented. The audit should confirm, not discover.
+6. **Deferral is legitimate; undocumented deferral is not.** All 23 live-observation deferrals carry a reason and a closing condition, which is why they could be acknowledged at close rather than blocking it.
+
+### Cost Observations
+
+- Model mix: Opus (planner, researcher); Sonnet (executor, verifier, integration checker, plan-checker) — `model_profile: balanced`
+- Sessions: many, across 28 days; `mode: yolo` with `parallelization: true` throughout
+- Notable: the two checkpoint plans (19.1-05 and 19.1-09) were deliberately non-autonomous, requiring operator action on real hardware. They were the highest-value-per-token work in the milestone — 19.1-05 invalidated a whole derivation method, and 19.1-09 confirmed the replacement needed zero tuning.
+
+---
+
 ## Cross-Milestone Trends
 
 | Milestone | Phases | Plans | Unplanned Gaps | Nyquist Compliant |
@@ -150,3 +205,31 @@
 | v1.0 | 7 (5 planned + 2 gap-closure) | 13 | 2 (Ph6, Ph7) | 1/7 |
 | v1.1 | 3 (all planned) | 3 | 0 | 0/3 |
 | v1.2 | 3 (all planned) | 8 | 0 | n/a (gate disabled mid-milestone — manual UAT is the project's strategy) |
+| v2.0 | 7 (6 planned + 1 inserted) | 67 | 1 (Ph19.1, from 19-UAT tests 5/11/13) | n/a (gate disabled) |
+
+### Scale Trend
+
+| Milestone | Duration | Commits | Plans | Plans/phase | Net LOC |
+|-----------|----------|---------|-------|-------------|---------|
+| v1.0 | 8 days | — | 13 | 1.9 | ~942 total |
+| v1.1 | 1 day | — | 3 | 1.0 | +92 |
+| v1.2 | 8 days | 36 | 8 | 2.7 | +333 / −43 |
+| v2.0 | 28 days | 600 | 67 | 9.6 | +24,109 / −547 |
+
+v2.0 is a step change in scale, not a continuation: 8× the plans of any prior milestone and roughly
+70× the net LOC. The plans/phase ratio rising from 2.7 to 9.6 is the signal behind Key Lesson 4 —
+phases stopped being the right unit of decomposition somewhere around Phase 18.
+
+### Verification Debt Trend
+
+| Milestone | Live-observation deferrals at close | Verifications not fully passing at close |
+|-----------|-------------------------------------|------------------------------------------|
+| v1.0 | 0 | 1 (Ph2, backfilled) |
+| v1.1 | 1 (extended fire weather, needs season) | 0 |
+| v1.2 | 4 (stale-indicator edge cases) | 1 (Ph11, backfilled) |
+| v2.0 | 23 | 1 (Ph16, `human_needed`, non-blocking) |
+
+The deferral count tracks product count, not process quality — each new product adds seasonal,
+event-gated, or location-gated conditions that cannot be manufactured. The mitigation that held:
+every deferral carries a documented reason and a stated closing condition, plus mutation-proven
+synthetic coverage standing as evidence in the interim.

@@ -2,10 +2,10 @@
 gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: WPC & CPC Integration + Unified Day Report
-status: milestone_ready
-stopped_at: Phase 19.1 VERIFIED (2026-09-12). All 9 plans executed, re-verification 10/10 truths, and phase UAT complete -- 12 passed, 0 issues, 0 skipped. 19.1 is the last phase in v2.0 and every v2.0 phase is now complete and verified. Next: /bm:complete-milestone.
-last_updated: "2026-09-12T14:00:00.000Z"
-last_activity: 2026-09-12 -- Phase 19.1 UAT complete (12/12 passed, 0 issues); VERIFICATION.md status human_needed -> verified. The co-equal-hazards-render-as-peers leg -- the one leg of the column-alignment regression check with no live coverage across the grid-track mechanism swap -- is CLOSED ON OBSERVATION (operator saw a live Flash Flood / HeatRisk co-equal pair render as peers). Nine further checks run end-to-end against the shipped module at UAT: getHeader three-state, product-neutral loading string, and the config-key validator positive path (warn + nearest-key suggestion, never throws, never discloses values, no over-fire). Probe suite 191/0/0. Previously: 2026-09-11 -- Phase 19.1 CLOSED. Plan 19.1-09 resumed from its dayReportDetail blocker under fresh operator authorisation; live check on the Pi returned 9 PASS / 1 NOT OBSERVABLE / 0 FAIL, operator "Approved for all". Zero code tuning needed. Re-verification: 7/10 with 2 blocking gaps -> 10/10, none blocking.
+status: Awaiting next milestone
+stopped_at: v2.0 milestone closed and archived 2026-09-12; awaiting /bm:new-milestone
+last_updated: "2026-09-12T16:40:56.104Z"
+last_activity: 2026-09-12 — Milestone v2.0 completed and archived
 progress:
   total_phases: 7
   completed_phases: 7
@@ -18,57 +18,17 @@ progress:
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-08-15 after v2.0 scoping)
+See: .planning/PROJECT.md (updated 2026-09-12 after v2.0 milestone)
 
 **Core value:** Accurately and efficiently tell the user if they're in a weather risk zone right now — no false negatives, no unnecessary CPU burn on the RPi.
-**Current focus:** v2.0 milestone close — all 7 phases complete and verified, 67/67 plans
+**Current focus:** Planning the next milestone. v2.0 shipped 2026-09-12 — 7 phases, 67 plans, 37/37 requirements, tagged `v2.0`.
 
 ## Current Position
 
-Phase: 19.1 (day-report-render-width-product-neutral-copy-and-config-key-) — **COMPLETE & VERIFIED**
-Plan: 9 of 9 executed | UAT: 12/12 passed, 0 issues
-Status: Phase closed 2026-09-11. Re-verification `10/10 must-haves verified`, `has_blocking_gaps: false` (was 7/10 with two blocking limb-1 failures). The MAJOR width defect from 19-UAT test 5 is fixed and confirmed on the deployed hardware.
-
-**What closed the gap:** the cap was not re-tuned — the MECHANISM was replaced. Character-advance alignment needed a monospace stream, and 450px of DejaVu Sans Mono at the host's 20px root fits ~37 characters while the column contract needed 54, so no `rem` value could ever have satisfied it. CSS grid tracks removed that coupling, and the cap was then re-derived available-space-first (`1020 − 540 − 30 = 450px` → `REGION_CAP_REM = 22.5`) instead of from content needs alone. It was correct as derived; plan 19.1-09 applied zero code changes.
-
-**Carried forward, non-blocking:** item 5 (co-equal hazards rendering as peers) is NOT OBSERVABLE — no co-equal hazard pair was live at the OKC coordinate. It is the one leg of the column-alignment regression check that got no live coverage across the mechanism swap. Mutation-proven probe scenarios stand as its evidence; same disposition class as the deferred live-observation rows in Phases 15, 16 and 18.
-
-**Standing rule established this phase:** a passing live check makes a layout claim TRUE, never machine-checkable. No headless DOM implements CSS layout, so `19.1-UI-SPEC.md`'s Verification Honesty rows stay `MANUAL ONLY` permanently and any future change to this cap or mechanism requires another human looking at hardware.
-
-Last activity: 2026-09-12 — Phase 19.1 UAT complete, phase verified.
-
-**UAT outcome (2026-09-12):** 12 tests, 12 passed, 0 issues. Eight of them carry the operator's own
-2026-09-11 hardware verdicts from `19.1-LIVE-CHECK-2.md` rather than re-asking questions already
-answered — legitimate because the deployed file was re-confirmed at SHA256 `e951fb51…c266e28`,
-behaviourally identical to local HEAD (sole difference: comment-only commit `0a0e2ca`).
-
-**What this UAT actually added beyond the live check:**
-
-1. **Item 5 closed on observation.** Co-equal hazards DO render as peers — the operator saw it with a
-   live Flash Flood / HeatRisk pair. On 2026-09-11 this was NOT OBSERVABLE (only one hazard live at
-   OKC), and re-running `scripts/hazards-at.js` on 2026-09-12 showed the same single-hazard picture,
-   so it would have been carried forward again had the operator not already seen it. This retires the
-   last leg of the column-alignment regression check that the character-advance → grid-track
-   mechanism swap had no live coverage for.
-2. **Nine checks run end-to-end against the shipped `MMM-SPCOutlook.js`,** exercising exactly what the
-   live check could not: `getHeader()` all three states (absent → `NWS Hazard Outlooks`, `header: ""`
-   preserved, configured value passed through), the product-neutral loading string, and the
-   config-key validator's POSITIVE path — `dayReportDetials` warns with `did you mean
-   "dayReportDetail"?` (the exact typo that invalidated the 19-08 observation), unknown keys warn
-   without a suggestion, config VALUES are never logged, `start()` never throws, legitimate defaults
-   never warn.
-
-**Residual, non-blocking, deliberately NOT closed:** three optional live observations (header fallback
-on the mirror, transient loading string during restart, misspelled key on the real deployed config).
-Each was strengthened from "mutation-proven probe only" to "exercised against the real shipped file",
-but none is the deployed-mirror observation the row asks for. Same disposition class as the deferred
-live-observation rows in Phases 15, 16 and 18.
-
-**Roadmap corrections made during transition:** the Phase 15 progress row read `6/9 In Progress`
-against 9 executed plans and a `passed` verification — corrected to `9/9 Complete 2026-08-24`. Phase
-19.1 was missing from the progress table entirely — added.
-
-Progress: [██████████] 100%
+Phase: Milestone v2.0 complete
+Plan: —
+Status: Awaiting next milestone
+Last activity: 2026-09-12 — Milestone v2.0 completed and archived
 
 ## Performance Metrics
 
@@ -91,55 +51,53 @@ v2.0 Phase 17 P09 (2026-09-01) — mutation inventory + DATA-03 spot check + hum
 
 ## Accumulated Context
 
-### Roadmap Evolution
+*Pruned at v2.0 close. The full decision log lives in `PROJECT.md`'s Key Decisions table; the full
+per-phase record is in `.planning/milestones/v2.0-ROADMAP.md` and the phase SUMMARY files.*
 
-- Phase 19.1 inserted after Phase 19: Day report render width, product-neutral copy, and config key validation (URGENT)
+### Durable Lessons (carry into the next milestone)
 
-### Decisions
+- **Mutation-prove every probe scenario individually.** A scenario can pass forever while proving
+  nothing — either because the assertion observes nothing (the fixture never reached the render
+  path) or because the fixture cannot express its own condition. Required mechanism: break the exact
+  line the scenario covers, confirm RED with a diagnosable message, restore. Add a precondition
+  guard that throws if setup did not produce the state under test, and a control assertion proving
+  the gate is not simply never firing.
+- **Layout claims are MANUAL ONLY, permanently.** No headless DOM implements CSS layout. A passing
+  live check makes a layout claim true, never machine-checkable. Any change to `REGION_CAP_REM` or
+  the grid-track mechanism requires another human looking at real hardware.
+- **Live verification of location-gated products requires temporarily moving `lat`/`lon`.** Waiting
+  for a product to appear over the deployed coordinate is not viable. Verify the substitute
+  coordinate with a real point-in-polygon test against the live data — a bounding-box check is not
+  sufficient. Restore the production coordinate afterwards and confirm it.
+- **Upstream filename conventions are not semantics.** WPC's `_final` suffix means "graphic
+  finalized", not "expired"; advisory liveness must come from each candidate's own `ValidEndTi`.
+- **Upstream feeds are not internally consistent about endpoint conventions.** The `wpc-hazards`
+  feed mixed inclusive/zero-duration and exclusive `end_date` shapes within a single 2026-09-05
+  poll. Tolerate both rather than special-casing one.
 
-Decisions are logged in PROJECT.md Key Decisions table. Recent decisions affecting current work:
+### Open Blockers/Concerns (carried forward)
 
-- v2.0 scoping: data sources widened to SPC + WPC + CPC; unified day report is the sole render path (no legacy fallback); default-off byte-identity invariant does not carry forward.
-- **Mutation-proof every probe scenario individually (Phase 15 D-10, blocking).** A scenario can pass forever while proving nothing. Two distinct mechanisms produced this in Phase 15 and they present identically: (a) an assertion that observes nothing — 15-05's mutation yielded zero RED scenarios because the fixture never reached the render path; (b) a fixture that cannot express its own condition — 15-02's KMZ round-trip was vacuous because `adm-zip` sorts entries alphabetically, so the out-of-order entry under test never existed in the bytes. Required mechanism: break the exact line a scenario covers, confirm RED **with a diagnosable message**, restore. A scenario green under its own mutation is a fixture defect, not a pass. Cheap preventatives now proven in this suite: a **precondition guard** that throws if setup didn't produce the state under test, and a **control assertion** proving the gate isn't simply never firing.
-- **Live verification of location-gated products requires temporarily moving `lat`/`lon`.** Waiting for a product to appear over the deployed coordinate is not viable: MPDs are regional and live 3–6h, and on 2026-08-24 four were issued and none covered the operator. Documented procedure: move the coordinate into an active polygon (verify with a point-in-polygon test against the live KMZ — a bounding-box check is not sufficient, Phoenix fell inside MPD_1122's bbox but outside its polygon), confirm the render, restore. This corrects an optimistic assumption in D-10.
-- **WPC's `_final` filename suffix means "graphic finalized", NOT "expired".** Live-confirmed 2026-08-24: `MPD_1122_final.kmz` was active until 00:30Z while already named `_final`. `MPD_FILENAME_PATTERN` (`/^MPD_(\d+)_final\.kmz$/`) correctly requires it, and `MPD_latest.kmz` correctly fails to match so the same MPD isn't double-counted. Implementing `_final` as an expiry marker would have made MPD find nothing, ever, while appearing healthy.
-- Roadmap sequencing (binding, from research + user decisions): CFG-02 payload-shape decoupling precedes all data-source phases; data sources land ERO → WSSI/MPD → Hazards Outlook → HeatRisk; merge/precedence logic (Phase 18) follows all data sources and is validated against live captured payloads; getDom() rewrite (Phase 19) is strictly last and single-purpose.
-- [Phase 17-09]: HEAT-04 UAT accepted on fixture evidence (heatrisk-duplicate-validtime-keeps-latest-filedate) rather than live observation — upstream has never served a duplicate idp_validtime to observe
-- [Phase 17-09]: PERF-01 corroborated live on deployed hardware: 10 consecutive new-product batch settled-in log lines over 3h15m uptime, wall clock tracking the slowest member (2275ms) rather than the summed member time (4392ms)
-- [Phase 18]: hazardTaxonomy.js derives wpc-hazards' label key set from PRODUCT_REGISTRY.hazardsOutlook.displayColor at require() time rather than restating the label list, throwing load-time if the registry ever renders a colour this file cannot dimension
-- [Phase 18-02]: Resolved Open Question 1 — reuse _hazardDayOffset verbatim, anchored to EXPIRE_ISO minus 24 hours, never raw VALID_ISO.
-- [Phase 18-02]: Case C (heavily truncated 01:00Z anchor) coincidentally computed the correct grid day, refuting the plan's own predicted failure for that case; only Case B (live-observed 13:00Z truncation) actually failed. The nominal-anchor rule stands regardless.
-- [Phase 18]: 18-04: ERO's long-form taxonomy vocabulary has no registry-owned map; a small tier-value-derived translation table bridges it rather than a second (source,label)->dimension map, and spc-fire's tier token is recovered the same way by reversing fireRiskToValue.
-- [Phase ?]: [Phase 18-05]: _resolveGridDayPrecedence's reportedDays parameter never changes which source wins a dimension; it only keeps 'rank source absent' and 'rank source reported below floor' as two distinct, individually commented code branches per D-14's absent-vs-below-floor requirement.
-- [Phase ?]: [Phase 18-05]: sources[].reporting is gated on enabled for every source, not only the two advisory ones the plan's literal formula named -- a disabled wpc-ero/wpc-wssi must never claim reporting: true. The underlying reportedDays-array over-population is logged in deferred-items.md rather than fixed in 18-04's already-committed code.
-- [Phase 18-06]: SPC convective/fire-weather PERF-03 timing recorded as one spc-inline memberTimings entry, not two per-source entries — The code is genuinely interleaved (fire-weather runs between two convective code regions, not after them); a two-key split would need to sum disjoint code regions with no established idiom for it.
-- [Phase 18]: [Phase 18-07]: merge-grid-anchor-malformed-valid-iso-degrades-to-estimated's mutation (removing _spcGridAnchor's Number.isFinite(expireMs) guard) has a much wider blast radius than its own scenario (73/98 scenarios failed). — Accepted per the plan's own 'more than its own target may fail' rule since no narrower guard in the code matches the plan's generic Number.isFinite(d.getTime()) description.
-- [Phase 18]: [Phase 18-07]: two-phase run/control merge-grid-* scenarios route both runtime calls through one shared closure. — Keeps assertPayloadIntact's per-scenario textual occurrence at one, matching the plan's literal grep-count acceptance criterion of exactly 7.
-- [Phase 18-08]: Two mutation-testing generic descriptions were adapted to the code's actual structure -- the heatrisk-null path is protected by three independent layered guards (a type gate, the floor predicate's own null check, and a hardcoded dimension:null branch for out-of-range categories), not one, so the plan's literal NO_RISK_FLOOR.heatrisk mutation cannot reach it; hazardTaxonomy.js's own assertTaxonomyIntegrity() also throws at load time on a single-line Heavy Rain -> flash-flood remap unless PRECEDENCE.flash-flood is updated to match, so that mutation needed a companion edit to exercise the resolver rather than the integrity check.
-- [Phase 18-09] (D-18): Phase 18 ships a permanent, always-on cold-start timing instrument, logged once per process with no config flag (D-18 in 18-CONTEXT.md); the local baseline figure (backend interval 4004ms, slowest source spc-inline at 2914ms, measured on a development workstation, not the target Pi) lives in `18-LIVE-CAPTURE.md`.
-- [Phase ?]: [Phase 18-10]: _addHazardsOutlookGridEntries's lastGridDay bound changed to Math.max(gridStart, gridEnd - 1) to tolerate both the inclusive/zero-duration and exclusive end_date conventions the live wpc-hazards feed mixes -- MERGE-01's live-observed silent-drop defect closed and mutation-proven with two new probe scenarios (116 to 118 passing).
-- [Phase 18-11]: _addRegistryDayGridEntries's toggle gate is a bare early return before the whole day loop, mirroring _runHeatRiskProduct's empty-gridTuples-when-off shape rather than a per-day skip or a second, differently-shaped gate
-- [Phase 18-11]: _buildSourceHealth's reporting-gated-on-enabled mitigation from 18-05 is kept in place unchanged, now redundant defense-in-depth rather than load-bearing, since the reportedDays over-population it worked around is fixed at its source in _addRegistryDayGridEntries
-- [Phase 18-10]: The emission bound became Math.max(gridStart, gridEnd - 1) rather than a narrower start_date === end_date special case, because the upstream feed is not internally consistent about the end_date endpoint convention -- both shapes (inclusive/zero-duration and exclusive) were observed in the same 2026-09-05 poll, Precipitation ("Heavy Rain") inclusive and Temperature ("High Winds") exclusive.
-- [Phase 18-11]: _addRegistryDayGridEntries now takes the request's productToggles snapshot as a sixth parameter and skips notes.noteReported (and the whole day loop) when the product's own toggle reads off, mirroring _runHeatRiskProduct's toggle-off path, so reportedDays no longer claims an answer that was never asked for.
-- [Phase 18-12]: Operator approved the re-presented 18-09 Task 3 checkpoint (criteria verdicts as re-validated: 1 PASS/replay, 2 NOT OBSERVABLE(payload)/PASS(code), 4 PASS(under-merge)/NOT OBSERVABLE(over-merge), 5 PASS, 6 deferred to milestone per D-19), without requesting a fresh live poll. The operator separately observed a pre-existing, non-regression HeatRisk display defect during the same live check and routed it to Phase 19 rather than a Phase 18 code fix -- see deferred-items.md and the resolves_phase:19 todo.
+- **Multi-instance defects, deliberately unfixed (Phase 14).** `_geoJsonCache` is keyed by URL while
+  storing location-resolved risk, and `SPC_DATA_RESULT` carries no instance correlation. Unreachable
+  with one instance at one fixed location; **both become live defects the moment a second module
+  instance or a second location is configured.** Revisit before any multi-location work.
+- **Two helper-global fields sampled per run** (`_unusableFeatureCount`, `_oldestStaleAt`) are safe
+  only because CR-03's `_inFlight` guard makes chain overlap unreachable. If that guard is ever
+  removed or bypassed, these must be revisited.
+- **The window band and the day grid disagree about day numbers for 12 of every 24 hours** — the band
+  was never re-anchored to 12Z in Phase 18.
+- **The `rpt01` sole-render-path guard is a literal string scan**; bracket, destructure, or alias
+  access would evade it (zero violations at HEAD).
+- **The SPC inline chain is serial and dominates cold-cache latency** (~55% of total in every Pi run);
+  PERF-01 scoped only the new product fetches.
 
 ### Pending Todos
 
-- Phase 14 IN-01..IN-08 (8 Info/CONVENTION findings) left unfixed — ERO palette sourcing, unused `dayNValidTime`, unescaped `innerHTML` (traced: no live XSS, bounded by the `includesFeat` filter), mutable registry exports, loose vs strict equality, duplicated day-indexed idioms, and two places the ERO day span is declared outside the registry. See 14-REVIEW.md.
-- `.planning/todos/pending/2026-09-05-fix-legacy-heatrisk-day1-7-block-dropping-day-7-during-00z-1.md` (`resolves_phase: 19`) — legacy `heatRisk.day1..day7` block drops day 7 for ~12h/day (00Z-12Z window); pre-existing `feat(17-04)` defect, not a Phase 18 regression, does not block Phase 18. Auto-closes when Phase 19 completes.
-
-### Blockers/Concerns
-
-- **RESOLVED (18-VERIFICATION re-run, 2026-09-06): all 3 blocking gaps closed by 18-13/18-14/18-15/18-16.** Confirmed by independent source read at HEAD: inclusive `end_date` endpoint (`node_helper.js:2899`, D-21), elapsed-`EXPIRE_ISO` rejection (`:2541`), HeatRisk bounded by `GRID_DAY_COUNT` alone (`:3007`), and three nullable-payload guards (`:3293`, `:4923`, `:5076`). Probe suite 119 -> 123 passing, 0 failed.
-- RESOLVED (Phase 15 close): WSSI-03 out-of-season handling verified structurally and accepted. Phase 16/17 live seasonal data (fire weather, HeatRisk) still may only be fully UAT-verifiable in-season — structural verification remains the fallback per REQUIREMENTS.md quality notes.
-- **RESOLVED (2026-09-06): Phase 18 PERF-03 cold-cache measurement taken on the target Raspberry Pi 4 Model B** (aarch64, Node v24.13.1, reached via `ssh mm`). Three cold starts with all seven product toggles enabled: backend interval 4094 / 2159 / 2303 ms (median 2303 ms; run 1 carries first-contact DNS/TLS cost), wall clock to first result 4096 / 2161 / 2305 ms, slowest source `spc-inline` in every run at ~55% of total. Pi is not slower than the x86 dev baseline (4004 ms, 18-06-SUMMARY.md). Evidence in `18-HUMAN-UAT.md`.
-- Phase 14 left two defects deliberately unfixed as DEFERRED-BY-OWNER (single-instance deployment): `_geoJsonCache` is keyed by URL while storing location-resolved risk, and `SPC_DATA_RESULT` carries no instance correlation. Deep review independently confirmed neither is reachable with one instance at one fixed location. **Both become live defects the moment a second module instance or a second location is configured** — revisit before any multi-location work.
-- Phase 14 introduced two helper-global fields sampled per run (`_unusableFeatureCount`, `_oldestStaleAt`) rather than threading values through ~25 call sites. They are safe only because CR-03's `_inFlight` guard makes chain overlap unreachable. If that guard is removed or bypassed in Phase 17's `Promise.all` parallelization, these must be revisited — PERF-01 is exactly the requirement that touches this.
-- Phase 18 MERGE-01 (UTC valid-time window attribution) will consume `excessiveRain.dayNValidTime`, which has no consumer today. WR-07 made its winning-polygon scan correct, but the field is unexercised end-to-end until Phase 18.
-- Phase 19 carries the milestone's highest regression risk (getDom() rewrite with no legacy fallback, no automated tests) — requires a full per-requirement-ID behavior-parity checklist per research's Display-Rewrite Risk finding.
-- **NOT a Phase 18 blocker (found at 18-12 Task 3, operator live check 2026-09-05): legacy HeatRisk day-7 drop.** The legacy `heatRisk.day1..day7` block (distinct from Phase 18's unified `days[]` grid, which is unaffected) drops day 7 for roughly 12 of every 24 hours (the 00Z-12Z UTC window) due to a `feat(17-04)` filter in `_runHeatRiskProduct` that predates Phase 18. Confirmed by the operator's live display check to be pre-existing, not introduced by this phase's fixes. Routed to Phase 19 (which removes the legacy path entirely) via `.planning/todos/pending/2026-09-05-fix-legacy-heatrisk-day1-7-block-dropping-day-7-during-00z-1.md` (`resolves_phase: 19`) and `deferred-items.md`. Does not block Phase 18 close.
-- **RESOLVED (18-10, gap closure): MERGE-01 near-boundary drop.** A live `wpc-hazards` Precipitation-group feature with `start_date === end_date` (a genuine zero-duration single-day shape), captured 2026-09-05 near Kotzebue, AK, was silently dropped from the unified `days[]` grid by `_addHazardsOutlookGridEntries`'s exclusive-end assumption (node_helper.js:2874-2919), while still reaching the legacy `hazardsOutlook` block correctly. Root-caused and traced in `18-LIVE-CAPTURE.md`'s Criterion 1 section and `deferred-items.md`. Fixed by 18-10: `lastGridDay` changed to `Math.max(gridStart, gridEnd - 1)`, tolerating both the inclusive/zero-duration and exclusive `end_date` conventions the live feed mixes, pinned by two mutation-proven scenarios (`merge-grid-hazards-start-equals-end-live-shape-lands-on-its-own-grid-day`, `merge-grid-hazards-multi-day-exclusive-span-still-ends-on-its-last-covered-day`). Criterion 1 re-validated PASS against this same live capture in `18-LIVE-CAPTURE.md`'s "Re-validation after the 18-10 fix" subsection (18-12).
+- `.planning/todos/pending/2026-09-07-delete-legacy-payload-block-emission-and-migrate-probe-suite.md`
+  — deferred by operator 2026-09-07. Not a pure deletion; see the Deferred Items row below.
+- `.planning/todos/pending/2026-09-11-pin-fetchgeojsoncached-network-error-branch.md`
+  — pin `fetchGeoJsonCached`'s network-error hard-failure branch.
+- Phase 14 IN-01..IN-08 (8 Info/CONVENTION findings) left unfixed. See `14-REVIEW.md`.
 
 ## Deferred Items
 
@@ -182,7 +140,17 @@ Items acknowledged and carried forward from previous milestone close:
 | Verification | **Checklist rows 1, 2 and 8 have NO evidence from either verification leg** — `MANUAL ONLY` in Probe Coverage (no scenario constructs an unset-`spcrisk` render, an `{error}` render, or a real `moment().fromNow()` age string, which the harness stubs to a constant) AND `NOT OBSERVABLE` in both run columns | Disclosed gap, not blocking — all three are unchanged-verbatim passthroughs. Cheap to close: force the error state with an invalid coordinate, force staleness by pulling the network | Phase 19-08 |
 | Operational | Restore the deployed MagicMirror's `lat`/`lon` and config to production values after the Run A/Run B/supplementary substitute-coordinate testing on 2026-09-07 | **RESOLVED 2026-09-07** — operator confirmed the deployed config is back on the OKC production coordinate | Phase 19-08 |
 | Correctness | Legacy `hazardsOutlook.dayN` keys are labelled by raw (0-based) offset rather than the 1-based NWS day they hold (`node_helper.js:920`) — cannot represent an offset-2 (NWS Day 3) feature at all; the unified `days[]` grid is unaffected | Documented, not fixed — 19-09 retires the legacy block | Phase 19-08 (gap-closure commit `fb18000`) |
+| Verification | Phase 16 `16-VERIFICATION.md` remains `human_needed` | Acknowledged at v2.0 close — `has_blocking_gaps: false`, 5/5 must-haves verified code-side and mutation-proven; the 3 outstanding rows are the live-observation deferrals already listed above (HAZ-01 bucketing, HAZ-04 Flooding half, DATA-02 weekend cadence) | v2.0 close |
+| Verification | Phase 14 `14-UAT-FIXTURES.md` flagged by `audit-open` as an unresolved UAT artifact | Acknowledged at v2.0 close — scanner false positive; the file is a fixtures document (live-derived ERO coordinates with a staleness warning), not a UAT result. 0 pending scenarios. Phase 14's UAT was signed off 2026-08-19 | v2.0 close |
+| Scope | Pin `fetchGeoJsonCached`'s network-error hard-failure branch | Acknowledged at v2.0 close — `.planning/todos/pending/2026-09-11-pin-fetchgeojsoncached-network-error-branch.md` | v2.0 close |
 | Scope | Delete the eight legacy payload blocks from `node_helper.js` and migrate the probe suite off them | **Deferred by operator decision 2026-09-07** (plan 19-09 Task 2, option-a). The unified report is already the sole RENDER path (19-06, gated by `rpt01-getdom-reads-no-legacy-payload-block`); what remains is dead payload weight. Measured cost: 172 `assertPayloadIntact` call sites, 198 legacy-field assertions, 157 scenarios — and `assertPayloadIntact` throws on any undeclared registry row kind, so there is no incremental path, only a whole-suite migration with 15 D-10 mutation proof re-established per scenario. Until it lands, the legacy `heatRisk.day1..day7` day-7 drop and the `hazardsOutlook.dayN` raw-offset labelling both remain live in the emitted payload (unreachable on screen). See `19-LEGACY-RETIREMENT.md` and `.planning/todos/pending/2026-09-07-delete-legacy-payload-block-emission-and-migrate-probe-suite.md` | Phase 19-09 |
+
+### Plan Execution Metrics (Phase 18)
+
+*(Misfiled into the Deferred Items table by an earlier append; retained here for velocity data.)*
+
+| Plan | Duration | Tasks | Files |
+|------|----------|-------|-------|
 | Phase 18 P01 | 15min | 2 tasks | 1 files |
 | Phase 18 P02 | ~15min | 3 tasks | 1 files |
 | Phase 18 P04 | ~20min | 3 tasks | 1 files |
@@ -196,6 +164,12 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-09-10T01:00:31.153Z
-Stopped at: Phase 19.1 UI-SPEC approved
-Resume file: .planning/phases/19.1-day-report-render-width-product-neutral-copy-and-config-key-/19.1-UI-SPEC.md
+Last session: 2026-09-12 — v2.0 milestone closed and archived
+Stopped at: Milestone complete. No phase in progress.
+Resume file: none — start the next milestone with `/bm:new-milestone`
+
+## Operator Next Steps
+
+- `/clear`, then `/bm:new-milestone` to scope the next version
+- `/bm:review-backlog` to review the carried-forward candidates in PROJECT.md
+- `/bm:check-todos` to pick up the two pending todos
