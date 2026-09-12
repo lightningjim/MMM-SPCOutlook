@@ -2,10 +2,10 @@
 gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: WPC & CPC Integration + Unified Day Report
-status: phase_complete
-stopped_at: Phase 19.1 COMPLETE (2026-09-11). All 9 plans executed; re-verification 10/10 truths, no blocking gaps. The blocking limb-1 width defect is closed and live-confirmed on the Pi at REGION_CAP_REM = 22.5. Next: Phase 19.1 is the last phase in v2.0 -- run /bm:verify-work 19.1 for phase UAT or /bm:complete-milestone.
-last_updated: "2026-09-11T10:00:00.000Z"
-last_activity: 2026-09-11 -- Phase 19.1 CLOSED. Plan 19.1-09 resumed from its dayReportDetail blocker under fresh operator authorisation; live check on the Pi returned 9 PASS / 1 NOT OBSERVABLE / 0 FAIL, operator "Approved for all". Zero code tuning needed. Re-verification: 7/10 with 2 blocking gaps -> 10/10, none blocking.
+status: milestone_ready
+stopped_at: Phase 19.1 VERIFIED (2026-09-12). All 9 plans executed, re-verification 10/10 truths, and phase UAT complete -- 12 passed, 0 issues, 0 skipped. 19.1 is the last phase in v2.0 and every v2.0 phase is now complete and verified. Next: /bm:complete-milestone.
+last_updated: "2026-09-12T14:00:00.000Z"
+last_activity: 2026-09-12 -- Phase 19.1 UAT complete (12/12 passed, 0 issues); VERIFICATION.md status human_needed -> verified. The co-equal-hazards-render-as-peers leg -- the one leg of the column-alignment regression check with no live coverage across the grid-track mechanism swap -- is CLOSED ON OBSERVATION (operator saw a live Flash Flood / HeatRisk co-equal pair render as peers). Nine further checks run end-to-end against the shipped module at UAT: getHeader three-state, product-neutral loading string, and the config-key validator positive path (warn + nearest-key suggestion, never throws, never discloses values, no over-fire). Probe suite 191/0/0. Previously: 2026-09-11 -- Phase 19.1 CLOSED. Plan 19.1-09 resumed from its dayReportDetail blocker under fresh operator authorisation; live check on the Pi returned 9 PASS / 1 NOT OBSERVABLE / 0 FAIL, operator "Approved for all". Zero code tuning needed. Re-verification: 7/10 with 2 blocking gaps -> 10/10, none blocking.
 progress:
   total_phases: 7
   completed_phases: 7
@@ -21,12 +21,12 @@ progress:
 See: .planning/PROJECT.md (updated 2026-08-15 after v2.0 scoping)
 
 **Core value:** Accurately and efficiently tell the user if they're in a weather risk zone right now — no false negatives, no unnecessary CPU burn on the RPi.
-**Current focus:** Phase 19.1 — day-report-render-width-product-neutral-copy-and-config-key-
+**Current focus:** v2.0 milestone close — all 7 phases complete and verified, 67/67 plans
 
 ## Current Position
 
-Phase: 19.1 (day-report-render-width-product-neutral-copy-and-config-key-) — **COMPLETE**
-Plan: 9 of 9 executed
+Phase: 19.1 (day-report-render-width-product-neutral-copy-and-config-key-) — **COMPLETE & VERIFIED**
+Plan: 9 of 9 executed | UAT: 12/12 passed, 0 issues
 Status: Phase closed 2026-09-11. Re-verification `10/10 must-haves verified`, `has_blocking_gaps: false` (was 7/10 with two blocking limb-1 failures). The MAJOR width defect from 19-UAT test 5 is fixed and confirmed on the deployed hardware.
 
 **What closed the gap:** the cap was not re-tuned — the MECHANISM was replaced. Character-advance alignment needed a monospace stream, and 450px of DejaVu Sans Mono at the host's 20px root fits ~37 characters while the column contract needed 54, so no `rem` value could ever have satisfied it. CSS grid tracks removed that coupling, and the cap was then re-derived available-space-first (`1020 − 540 − 30 = 450px` → `REGION_CAP_REM = 22.5`) instead of from content needs alone. It was correct as derived; plan 19.1-09 applied zero code changes.
@@ -35,7 +35,38 @@ Status: Phase closed 2026-09-11. Re-verification `10/10 must-haves verified`, `h
 
 **Standing rule established this phase:** a passing live check makes a layout claim TRUE, never machine-checkable. No headless DOM implements CSS layout, so `19.1-UI-SPEC.md`'s Verification Honesty rows stay `MANUAL ONLY` permanently and any future change to this cap or mechanism requires another human looking at hardware.
 
-Last activity: 2026-09-11 — Phase 19.1 closed.
+Last activity: 2026-09-12 — Phase 19.1 UAT complete, phase verified.
+
+**UAT outcome (2026-09-12):** 12 tests, 12 passed, 0 issues. Eight of them carry the operator's own
+2026-09-11 hardware verdicts from `19.1-LIVE-CHECK-2.md` rather than re-asking questions already
+answered — legitimate because the deployed file was re-confirmed at SHA256 `e951fb51…c266e28`,
+behaviourally identical to local HEAD (sole difference: comment-only commit `0a0e2ca`).
+
+**What this UAT actually added beyond the live check:**
+
+1. **Item 5 closed on observation.** Co-equal hazards DO render as peers — the operator saw it with a
+   live Flash Flood / HeatRisk pair. On 2026-09-11 this was NOT OBSERVABLE (only one hazard live at
+   OKC), and re-running `scripts/hazards-at.js` on 2026-09-12 showed the same single-hazard picture,
+   so it would have been carried forward again had the operator not already seen it. This retires the
+   last leg of the column-alignment regression check that the character-advance → grid-track
+   mechanism swap had no live coverage for.
+2. **Nine checks run end-to-end against the shipped `MMM-SPCOutlook.js`,** exercising exactly what the
+   live check could not: `getHeader()` all three states (absent → `NWS Hazard Outlooks`, `header: ""`
+   preserved, configured value passed through), the product-neutral loading string, and the
+   config-key validator's POSITIVE path — `dayReportDetials` warns with `did you mean
+   "dayReportDetail"?` (the exact typo that invalidated the 19-08 observation), unknown keys warn
+   without a suggestion, config VALUES are never logged, `start()` never throws, legitimate defaults
+   never warn.
+
+**Residual, non-blocking, deliberately NOT closed:** three optional live observations (header fallback
+on the mirror, transient loading string during restart, misspelled key on the real deployed config).
+Each was strengthened from "mutation-proven probe only" to "exercised against the real shipped file",
+but none is the deployed-mirror observation the row asks for. Same disposition class as the deferred
+live-observation rows in Phases 15, 16 and 18.
+
+**Roadmap corrections made during transition:** the Phase 15 progress row read `6/9 In Progress`
+against 9 executed plans and a `passed` verification — corrected to `9/9 Complete 2026-08-24`. Phase
+19.1 was missing from the progress table entirely — added.
 
 Progress: [██████████] 100%
 

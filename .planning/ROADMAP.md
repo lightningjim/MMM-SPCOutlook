@@ -415,7 +415,7 @@ Plans:
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 14 → 15 → 16 → 17 → 18 → 19
+Phases execute in numeric order: 14 → 15 → 16 → 17 → 18 → 19 → 19.1
 
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
@@ -433,11 +433,12 @@ Phases execute in numeric order: 14 → 15 → 16 → 17 → 18 → 19
 | 12. Proximity Backend Foundation | v1.2 | 3/3 | Complete | 2026-05-02 |
 | 13. Proximity Frontend Render | v1.2 | 3/3 | Complete | 2026-05-03 |
 | 14. Foundation & WPC Excessive Rainfall Outlook | v2.0 | 7/7 | Complete | 2026-08-23 |
-| 15. WPC Winter Storm Severity & Mesoscale Precipitation Discussion | v2.0 | 6/9 | In Progress|  |
+| 15. WPC Winter Storm Severity & Mesoscale Precipitation Discussion | v2.0 | 9/9 | Complete    | 2026-08-24 |
 | 16. WPC Day 3–7 / CPC Day 8–14 Hazards Outlook | v2.0 | 8/8 | Complete    | 2026-08-27 |
 | 17. NWS/WPC HeatRisk & Parallelized Fetching | v2.0 | 9/9 | Complete    | 2026-09-01 |
 | 18. Merge, Precedence & Unified Payload Schema | v2.0 | 16/16 | Complete    | 2026-09-06 |
 | 19. Unified Day Report — getDom() Rewrite | v2.0 | 9/9 | Complete   | 2026-09-07 |
+| 19.1. Day Report Render Width, Product-Neutral Copy & Config Key Validation | v2.0 | 9/9 | Complete   | 2026-09-12 |
 
 ## Backlog
 
@@ -451,7 +452,7 @@ Phases execute in numeric order: 14 → 15 → 16 → 17 → 18 → 19
 **Goal:** Fix the three display/config defects Phase 19's UAT found against the unified day report: the detail-mode day report no longer widens its MagicMirror region or overlaps neighbouring columns; user-facing copy names the products the module actually aggregates rather than SPC alone; and a config key the module does not recognise is surfaced to the operator instead of being silently ignored.
 **Requirements**: none — defect-fix phase traced to 19-UAT.md tests 5, 11, 13 and 19.1-CONTEXT.md D-01..D-06 (no REQ-IDs exist for this phase)
 **Depends on:** Phase 19
-**Plans:** 9/9 plans executed — **COMPLETE** (verified 2026-09-11, 10/10 truths, no blocking gaps)
+**Plans:** 9/9 plans executed — **COMPLETE** (verified 2026-09-11, 10/10 truths, no blocking gaps; UAT complete 2026-09-12, 12 passed / 0 issues — the co-equal-peers leg closed on live observation)
 
 Plans:
 - [x] 19.1-01-PLAN.md — product-neutral copy: getHeader() three-state fallback, `Loading NWS outlooks...`, README (UAT 11, D-02..D-05)
