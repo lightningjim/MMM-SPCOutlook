@@ -7,8 +7,10 @@ final_probe_result: "161 passed, 0 failed, 0 skipped"
 # 19-REVIEW fix pass (post-sign-off): rows 36-38 added, rows 24 and 30 corrected.
 review_fix_probe_result: "168 passed, 0 failed, 0 skipped"
 # Phase 19.1 (post-sign-off): row 1's loading string updated (D-03); see "Phase 19.1 Addendum".
-# UAT test 5's width defect is NOT resolved by phase 19.1 — see 19.1-LIVE-CHECK.md.
+# UAT test 5's width defect was NOT resolved by phase 19.1's first pass (plans 01-05) — 19.1-LIVE-CHECK.md.
+# It IS resolved by phase 19.1's gap closure (plans 06-09), live-confirmed 2026-09-11 — 19.1-LIVE-CHECK-2.md.
 phase_19_1_probe_result: "190 passed, 0 failed, 0 skipped"
+phase_19_1_gap_probe_result: "191 passed, 0 failed, 0 skipped"
 ---
 
 # Phase 19 RPT-06 Behavior-Parity Checklist
@@ -407,21 +409,88 @@ layout-based alignment) rather than tuned inside plan 19.1-05 — see `19.1-LIVE
   shipped, is deployed (byte-identical, confirmed by `19.1-LIVE-CHECK.md`'s code-presence markers),
   and is probe-pinned against regression.
 
-**New Probe Coverage from Phase 19.1 (width mechanism, all `MANUAL ONLY` for the layout claim
-itself):**
+**Probe Coverage from Phase 19.1 (width mechanism, all `MANUAL ONLY` for the layout claim itself).**
 
-- `uat05-wrapper-declares-both-region-containment-contracts`
-- `uat05-detail-fields-carry-no-space-run-padding-and-declare-a-ch-floor`
-- `uat05-co-winner-and-also-rows-derive-their-boxes-from-the-groups-own-width`
+*Superseded list, kept as history — plans 19.1-01..05 shipped these three against the retired
+`display:inline-block;min-width:Nch` box mechanism:*
 
-These three scenarios pin today's mechanism (the `display:inline-block;min-width:Nch` column
-boxes and the `wrapper.style.maxWidth` declaration) exactly as designed — they are mutation-proven
-and green (suite: `190 passed, 0 failed, 0 skipped`, per this file's `phase_19_1_probe_result`).
-**They do not, and structurally cannot, prove the region does not overlap the centre column** — no
-scenario in this harness has a layout engine (RESEARCH.md Pitfall 1, restated in `19.1-UI-SPEC.md`
-Verification Honesty). That overlap claim is `MANUAL ONLY` and is now confirmed FAILING per the
-paragraph above. **When the gap-closure phase replaces the alignment mechanism, these three
-`uat05-*` scenarios must be RE-EXPRESSED against the replacement mechanism (layout-based alignment
-— CSS grid or a fixed-layout table), not simply deleted** — they are correct about today's
-mechanism and encode real regression value (no space-run padding, a declared floor width, boxes
-derived from the group's own width) that the replacement will need re-pinned in its own terms.
+- ~~`uat05-wrapper-declares-both-region-containment-contracts`~~
+- ~~`uat05-detail-fields-carry-no-space-run-padding-and-declare-a-ch-floor`~~
+- ~~`uat05-co-winner-and-also-rows-derive-their-boxes-from-the-groups-own-width`~~
+
+*Current list — the FOUR scenarios that exist after the gap closure (plan 19.1-07, names verbatim
+from `19.1-07-SUMMARY.md`):*
+
+- `uat05-wrapper-declares-both-region-containment-contracts` — **name unchanged**; its asserted
+  `wrapper.style.maxWidth` literal was updated `"32.4rem"` → `"22.5rem"`.
+- `uat05-detail-rows-carry-no-space-run-padding-and-declare-fixed-grid-tracks` — **renamed.** The old
+  name (`...-detail-fields-...-declare-a-ch-floor`) encoded the retired mechanism in the name itself:
+  there is no `ch` floor any more, so a name promising one would have described a guard that no longer
+  exists. The no-space-run assertion also drops both of its retired exemptions.
+- `uat05-co-winner-and-also-rows-derive-their-grid-tracks-from-the-groups-own-width` — **renamed**, for
+  the same reason: "boxes" → "grid tracks". The one-derived-quantity invariant it pins is unchanged in
+  substance; only the quantity's mechanism changed.
+- `uat05-detail-row-grid-is-width-bounded-and-cannot-widen-the-region` — **new.** Pins that every
+  detail row is `width:100%`/`box-sizing:border-box` with zero-floored (`minmax(0,Nfr)`) tracks. This
+  is the guard the retired set never had, and it is the structural half of the fix: under the old
+  mechanism the cap merely PERMITTED a width, whereas this pins that a row CANNOT exceed its wrapper.
+
+All four are mutation-proven individually (six mutation cycles, `19.1-07-SUMMARY.md`) and green:
+suite `191 passed, 0 failed, 0 skipped`. `INERT_MARKUP_ALLOWLIST` is unchanged by the gap closure.
+
+**They still do not, and structurally cannot, prove the region does not overlap the centre column** —
+no scenario in this harness has a layout engine (RESEARCH.md Pitfall 1, restated in `19.1-UI-SPEC.md`
+Verification Honesty). That claim remains `MANUAL ONLY` permanently, and it is now confirmed **PASSING**
+by human observation on hardware (below) rather than confirmed failing. A passing live check does not
+promote it to machine-checkable; the next change to this cap or mechanism needs another human looking
+at hardware.
+
+---
+
+## Phase 19.1 Gap-Closure Addendum (2026-09-11)
+
+**UAT test 5 (the MAJOR width defect) IS resolved by Phase 19.1's gap closure (plans 19.1-06..09).**
+This supersedes the 2026-09-10 addendum's "NOT resolved" finding above, which was correct for plans
+19.1-01..05 and is left in place as history.
+
+**Mechanism change, in one line:** character-advance alignment via a monospace stream and
+`min-width:Nch` boxes was replaced by CSS grid tracks (`display:inline-grid` with `minmax(0,Nfr)`
+columns), and the region cap was re-derived available-space-first — `1020 − 540 − 30 = 450px` →
+`REGION_CAP_REM = 22.5` at the measured 20px root — rather than from content needs alone.
+`INERT_MARKUP_ALLOWLIST` unchanged.
+
+**Why the old cap could never have worked, stated once:** alignment by character advance required a
+monospace stream, and 450px of DejaVu Sans Mono at a 20px root fits ~37 characters while the column
+contract needed 54. The old `32.4rem`/648px value was not a bad guess to be nudged — it was the
+arithmetic consequence of a mechanism that could not fit the budget at any value. Re-tuning the number
+alone would have failed again, which is why plan 19.1-05 escalated to a mechanism replacement.
+
+**Live confirmation (`19.1-LIVE-CHECK-2.md`, 2026-09-11, deployed Pi via `ssh mm`):** 9 PASS, 1 NOT
+OBSERVABLE, 0 FAIL across items 1-10. Operator disposition verbatim: `"Approved for all"`.
+
+- Item 1 — the block no longer extends into the centre column, stated directly against the 19-UAT
+  test 5 baseline screenshot. This is the blocking limb-1 truth.
+- Item 2 — compact rows no longer displaced. Item 3 — no wrapping anywhere, so the cap is not too
+  tight either; the value needed no tuning and none was applied (zero code diff for plan 19.1-09).
+- Items 4, 6, 8 — column alignment, `also:`-row indentation and vertical rhythm all survived the
+  mechanism swap. Item 6 is a genuine upgrade in evidence: the first live check recorded it at the
+  hedged strength "I believe so", and it is now an observed PASS against a visible `also:` row.
+- Item 7 — the typeface reversal (detail rows back to the host's proportional font) was accepted as an
+  improvement, verbatim "yes, actually better".
+- Item 5 — **NOT OBSERVABLE**, recorded as such rather than folded into the approval: co-equal hazard
+  peering needs a day carrying two co-equal hazards, and none was live at the OKC coordinate. Its
+  mutation-proven probe scenario stands as the evidence, the same disposition class as the deferred
+  live-observation rows in Phases 15, 16 and 18.
+
+**Both preconditions that invalidated earlier width observations were excluded before the observation
+was taken,** not assumed: the deployed file was byte-identical to the local commit (and two ABSENCE
+markers proved the retired mechanism was gone from the *deployed* file, not merely the local one), and
+`dayReportDetail: true` was confirmed active by re-reading and parsing the deployed config. This is
+what makes this observation trustworthy where 19-08's was not.
+
+**Test 11's disposition is UNCHANGED by the gap closure** — still "code shipped, deployed and
+probe-pinned", not "observed working on the mirror". The deployed config still sets `header: "SPC
+Forecast"` explicitly, so the `getHeader()` fallback string remains unexercised on this mirror; item 9
+of the second live check confirms the configured header renders, which is not the same claim. Test
+13's disposition is likewise unchanged and was re-confirmed: no `unrecognized config key` warning in
+the restart-onward log window, the correct result for a well-formed config (item 10).
